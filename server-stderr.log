@@ -1,0 +1,4 @@
+2026-05-14 07:12:09.820	INFO	bootstrap/app.go:50	database migrations applied
+2026-05-14 07:12:09.861	INFO	bootstrap/app.go:94	server started	{"port": 10008, "env": "dev", "mode": "all"}
+2026-05-14 07:12:09.862	ERROR	server/main.go:20	server exited	{"error": "listen tcp :10008: bind: Only one usage of each socket address (protocol/network address/port) is normally permitted."}
+exit status 1
