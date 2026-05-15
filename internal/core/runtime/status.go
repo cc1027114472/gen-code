@@ -397,6 +397,175 @@ func toThreadDescriptor(item session.Thread) runtimecontract.ThreadDescriptor {
 	}
 }
 
+// Messages returns the message descriptors under the given thread.
+func (s *Service) Messages(_ context.Context, threadID string) ([]runtimecontract.MessageDescriptor, error) {
+	items, ok := s.session.Messages(threadID)
+	if !ok {
+		return nil, xerror.NotFound(1004, "thread not found")
+	}
+
+	result := make([]runtimecontract.MessageDescriptor, 0, len(items))
+	for _, item := range items {
+		result = append(result, runtimecontract.MessageDescriptor{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Role:      item.Role,
+			Content:   item.Content,
+			CreatedAt: item.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return result, nil
+}
+
+// AppendMessage appends a message under the given thread.
+func (s *Service) AppendMessage(_ context.Context, threadID string, request runtimecontract.CreateMessageRequest) (runtimecontract.MessageDescriptor, error) {
+	item, err := s.session.AppendMessage(threadID, session.AppendMessageInput{
+		Role:    request.Role,
+		Content: request.Content,
+	})
+	if err != nil {
+		if errors.Is(err, session.ErrThreadNotFound) {
+			return runtimecontract.MessageDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		return runtimecontract.MessageDescriptor{}, xerror.Internal(2001, "failed to append message")
+	}
+
+	return runtimecontract.MessageDescriptor{
+		ID:        item.ID,
+		ThreadID:  item.ThreadID,
+		Role:      item.Role,
+		Content:   item.Content,
+		CreatedAt: item.CreatedAt.Format(time.RFC3339),
+	}, nil
+}
+
+// ToolCalls returns the tool call descriptors under the given thread.
+func (s *Service) ToolCalls(_ context.Context, threadID string) ([]runtimecontract.ToolCallDescriptor, error) {
+	items, ok := s.session.ToolCalls(threadID)
+	if !ok {
+		return nil, xerror.NotFound(1004, "thread not found")
+	}
+
+	result := make([]runtimecontract.ToolCallDescriptor, 0, len(items))
+	for _, item := range items {
+		result = append(result, runtimecontract.ToolCallDescriptor{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			ToolID:    item.ToolID,
+			Status:    item.Status,
+			Summary:   item.Summary,
+			CreatedAt: item.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return result, nil
+}
+
+// AppendToolCall appends a tool call under the given thread.
+func (s *Service) AppendToolCall(_ context.Context, threadID string, request runtimecontract.CreateToolCallRequest) (runtimecontract.ToolCallDescriptor, error) {
+	item, err := s.session.AppendToolCall(threadID, session.AppendToolCallInput{
+		ToolID:  request.ToolID,
+		Status:  request.Status,
+		Summary: request.Summary,
+	})
+	if err != nil {
+		if errors.Is(err, session.ErrThreadNotFound) {
+			return runtimecontract.ToolCallDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		return runtimecontract.ToolCallDescriptor{}, xerror.Internal(2001, "failed to append tool call")
+	}
+
+	return runtimecontract.ToolCallDescriptor{
+		ID:        item.ID,
+		ThreadID:  item.ThreadID,
+		ToolID:    item.ToolID,
+		Status:    item.Status,
+		Summary:   item.Summary,
+		CreatedAt: item.CreatedAt.Format(time.RFC3339),
+	}, nil
+}
+
+// Artifacts returns the artifact descriptors under the given thread.
+func (s *Service) Artifacts(_ context.Context, threadID string) ([]runtimecontract.ArtifactDescriptor, error) {
+	items, ok := s.session.Artifacts(threadID)
+	if !ok {
+		return nil, xerror.NotFound(1004, "thread not found")
+	}
+
+	result := make([]runtimecontract.ArtifactDescriptor, 0, len(items))
+	for _, item := range items {
+		result = append(result, runtimecontract.ArtifactDescriptor{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Path:      item.Path,
+			Kind:      item.Kind,
+			CreatedAt: item.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return result, nil
+}
+
+// AppendArtifact appends an artifact under the given thread.
+func (s *Service) AppendArtifact(_ context.Context, threadID string, request runtimecontract.CreateArtifactRequest) (runtimecontract.ArtifactDescriptor, error) {
+	item, err := s.session.AppendArtifact(threadID, session.AppendArtifactInput{
+		Path: request.Path,
+		Kind: request.Kind,
+	})
+	if err != nil {
+		if errors.Is(err, session.ErrThreadNotFound) {
+			return runtimecontract.ArtifactDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		return runtimecontract.ArtifactDescriptor{}, xerror.Internal(2001, "failed to append artifact")
+	}
+
+	return runtimecontract.ArtifactDescriptor{
+		ID:        item.ID,
+		ThreadID:  item.ThreadID,
+		Path:      item.Path,
+		Kind:      item.Kind,
+		CreatedAt: item.CreatedAt.Format(time.RFC3339),
+	}, nil
+}
+
+// RuntimeFlags returns the runtime flag descriptors under the given thread.
+func (s *Service) RuntimeFlags(_ context.Context, threadID string) ([]runtimecontract.RuntimeFlagDescriptor, error) {
+	items, ok := s.session.RuntimeFlags(threadID)
+	if !ok {
+		return nil, xerror.NotFound(1004, "thread not found")
+	}
+
+	result := make([]runtimecontract.RuntimeFlagDescriptor, 0, len(items))
+	for _, item := range items {
+		result = append(result, runtimecontract.RuntimeFlagDescriptor{
+			ThreadID:  item.ThreadID,
+			Key:       item.Key,
+			Value:     item.Value,
+			UpdatedAt: item.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	return result, nil
+}
+
+// SetRuntimeFlag upserts a runtime flag under the given thread.
+func (s *Service) SetRuntimeFlag(_ context.Context, threadID string, request runtimecontract.SetRuntimeFlagRequest) (runtimecontract.RuntimeFlagDescriptor, error) {
+	item, err := s.session.SetRuntimeFlag(threadID, session.SetRuntimeFlagInput{
+		Key:   request.Key,
+		Value: request.Value,
+	})
+	if err != nil {
+		if errors.Is(err, session.ErrThreadNotFound) {
+			return runtimecontract.RuntimeFlagDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		return runtimecontract.RuntimeFlagDescriptor{}, xerror.Internal(2001, "failed to set runtime flag")
+	}
+
+	return runtimecontract.RuntimeFlagDescriptor{
+		ThreadID:  item.ThreadID,
+		Key:       item.Key,
+		Value:     item.Value,
+		UpdatedAt: item.UpdatedAt.Format(time.RFC3339),
+	}, nil
+}
+
 func groupSource(group skill.Group) string {
 	switch group {
 	case skill.Codex:

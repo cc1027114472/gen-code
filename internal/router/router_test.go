@@ -95,6 +95,66 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			wantBody:       []string{`"items":[{"id":"task-1","threadId":"thread-1","title":"Task 1","status":"queued"`},
 		},
 		{
+			name:           "messages",
+			method:         http.MethodGet,
+			path:           "/api/threads/thread-1/messages",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"message-1","threadId":"thread-1","role":"user","content":"Draft spec"`},
+		},
+		{
+			name:           "append message",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-1/messages",
+			body:           `{"role":"assistant","content":"Sure"}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"message-2"`, `"role":"assistant"`, `"content":"Sure"`},
+		},
+		{
+			name:           "tool calls",
+			method:         http.MethodGet,
+			path:           "/api/threads/thread-1/tool-calls",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"toolcall-1","threadId":"thread-1","toolId":"bridge.check","status":"completed","summary":"Bridge ok"`},
+		},
+		{
+			name:           "append tool call",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-1/tool-calls",
+			body:           `{"toolId":"skills.list","status":"queued","summary":"Pending"}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"toolcall-2"`, `"toolId":"skills.list"`, `"summary":"Pending"`},
+		},
+		{
+			name:           "artifacts",
+			method:         http.MethodGet,
+			path:           "/api/threads/thread-1/artifacts",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"artifact-1","threadId":"thread-1","path":"D:\\artifacts\\spec.md","kind":"markdown"`},
+		},
+		{
+			name:           "append artifact",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-1/artifacts",
+			body:           `{"path":"D:\\artifacts\\report.json","kind":"json"}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"artifact-2"`, `"kind":"json"`},
+		},
+		{
+			name:           "runtime flags",
+			method:         http.MethodGet,
+			path:           "/api/threads/thread-1/runtime-flags",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"threadId":"thread-1","key":"preview","value":"ready"`},
+		},
+		{
+			name:           "set runtime flag",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-1/runtime-flags",
+			body:           `{"key":"draft","value":"saved"}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"threadId":"thread-1"`, `"key":"draft"`, `"value":"saved"`},
+		},
+		{
 			name:           "create task",
 			method:         http.MethodPost,
 			path:           "/api/threads/thread-1/tasks",
@@ -394,6 +454,86 @@ func (stubRuntimeService) Tasks(context.Context, string) ([]runtimecontract.Task
 	}}, nil
 }
 
+func (stubRuntimeService) Messages(context.Context, string) ([]runtimecontract.MessageDescriptor, error) {
+	return []runtimecontract.MessageDescriptor{{
+		ID:        "message-1",
+		ThreadID:  "thread-1",
+		Role:      "user",
+		Content:   "Draft spec",
+		CreatedAt: "2026-05-15T00:00:00Z",
+	}}, nil
+}
+
+func (stubRuntimeService) AppendMessage(_ context.Context, threadID string, request runtimecontract.CreateMessageRequest) (runtimecontract.MessageDescriptor, error) {
+	return runtimecontract.MessageDescriptor{
+		ID:        "message-2",
+		ThreadID:  threadID,
+		Role:      request.Role,
+		Content:   request.Content,
+		CreatedAt: "2026-05-15T00:01:00Z",
+	}, nil
+}
+
+func (stubRuntimeService) ToolCalls(context.Context, string) ([]runtimecontract.ToolCallDescriptor, error) {
+	return []runtimecontract.ToolCallDescriptor{{
+		ID:        "toolcall-1",
+		ThreadID:  "thread-1",
+		ToolID:    "bridge.check",
+		Status:    "completed",
+		Summary:   "Bridge ok",
+		CreatedAt: "2026-05-15T00:00:00Z",
+	}}, nil
+}
+
+func (stubRuntimeService) AppendToolCall(_ context.Context, threadID string, request runtimecontract.CreateToolCallRequest) (runtimecontract.ToolCallDescriptor, error) {
+	return runtimecontract.ToolCallDescriptor{
+		ID:        "toolcall-2",
+		ThreadID:  threadID,
+		ToolID:    request.ToolID,
+		Status:    request.Status,
+		Summary:   request.Summary,
+		CreatedAt: "2026-05-15T00:02:00Z",
+	}, nil
+}
+
+func (stubRuntimeService) Artifacts(context.Context, string) ([]runtimecontract.ArtifactDescriptor, error) {
+	return []runtimecontract.ArtifactDescriptor{{
+		ID:        "artifact-1",
+		ThreadID:  "thread-1",
+		Path:      `D:\artifacts\spec.md`,
+		Kind:      "markdown",
+		CreatedAt: "2026-05-15T00:00:00Z",
+	}}, nil
+}
+
+func (stubRuntimeService) AppendArtifact(_ context.Context, threadID string, request runtimecontract.CreateArtifactRequest) (runtimecontract.ArtifactDescriptor, error) {
+	return runtimecontract.ArtifactDescriptor{
+		ID:        "artifact-2",
+		ThreadID:  threadID,
+		Path:      request.Path,
+		Kind:      request.Kind,
+		CreatedAt: "2026-05-15T00:03:00Z",
+	}, nil
+}
+
+func (stubRuntimeService) RuntimeFlags(context.Context, string) ([]runtimecontract.RuntimeFlagDescriptor, error) {
+	return []runtimecontract.RuntimeFlagDescriptor{{
+		ThreadID:  "thread-1",
+		Key:       "preview",
+		Value:     "ready",
+		UpdatedAt: "2026-05-15T00:00:00Z",
+	}}, nil
+}
+
+func (stubRuntimeService) SetRuntimeFlag(_ context.Context, threadID string, request runtimecontract.SetRuntimeFlagRequest) (runtimecontract.RuntimeFlagDescriptor, error) {
+	return runtimecontract.RuntimeFlagDescriptor{
+		ThreadID:  threadID,
+		Key:       request.Key,
+		Value:     request.Value,
+		UpdatedAt: "2026-05-15T00:04:00Z",
+	}, nil
+}
+
 func (stubRuntimeService) CreateTask(_ context.Context, threadID string, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
 	if threadID == "missing" {
 		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
@@ -535,6 +675,38 @@ func (errorRuntimeService) Tasks(context.Context, string) ([]runtimecontract.Tas
 
 func (errorRuntimeService) CreateTask(context.Context, string, runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
 	return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Messages(context.Context, string) ([]runtimecontract.MessageDescriptor, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) AppendMessage(context.Context, string, runtimecontract.CreateMessageRequest) (runtimecontract.MessageDescriptor, error) {
+	return runtimecontract.MessageDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) ToolCalls(context.Context, string) ([]runtimecontract.ToolCallDescriptor, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) AppendToolCall(context.Context, string, runtimecontract.CreateToolCallRequest) (runtimecontract.ToolCallDescriptor, error) {
+	return runtimecontract.ToolCallDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Artifacts(context.Context, string) ([]runtimecontract.ArtifactDescriptor, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) AppendArtifact(context.Context, string, runtimecontract.CreateArtifactRequest) (runtimecontract.ArtifactDescriptor, error) {
+	return runtimecontract.ArtifactDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) RuntimeFlags(context.Context, string) ([]runtimecontract.RuntimeFlagDescriptor, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) SetRuntimeFlag(context.Context, string, runtimecontract.SetRuntimeFlagRequest) (runtimecontract.RuntimeFlagDescriptor, error) {
+	return runtimecontract.RuntimeFlagDescriptor{}, xerror.Internal(2001, "runtime unavailable")
 }
 
 func (errorRuntimeService) UpdateTaskStatus(context.Context, string, string, runtimecontract.UpdateTaskStatusRequest) (runtimecontract.TaskDescriptor, error) {

@@ -38,9 +38,9 @@ func TestThreadsRemainIsolated(t *testing.T) {
 	first := registry.CreateThread(CreateThreadInput{Name: "First"})
 	second := registry.CreateThread(CreateThreadInput{Name: "Second"})
 
-	first.MessageHistory = append(first.MessageHistory, "hello")
-	first.ToolHistory = append(first.ToolHistory, "bridge.check")
-	first.ArtifactPaths = append(first.ArtifactPaths, "a.txt")
+	first.MessageHistory = append(first.MessageHistory, MessageRecord{ID: "message-1"})
+	first.ToolHistory = append(first.ToolHistory, ToolCallRecord{ID: "toolcall-1"})
+	first.ArtifactPaths = append(first.ArtifactPaths, ArtifactRecord{ID: "artifact-1"})
 
 	gotFirst, ok := registry.Thread(first.ID)
 	require.True(t, ok)
@@ -53,6 +53,38 @@ func TestThreadsRemainIsolated(t *testing.T) {
 	require.Equal(t, 0, gotSecond.MessageHistoryCount)
 	require.Equal(t, 0, gotSecond.ToolCallCount)
 	require.Equal(t, 0, gotSecond.ArtifactCount)
+}
+
+func TestThreadContextAppendAndRestore(t *testing.T) {
+	registry := NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+	thread := registry.CreateThread(CreateThreadInput{Name: "Context"})
+
+	message, err := registry.AppendMessage(thread.ID, AppendMessageInput{Role: "user", Content: "Hello"})
+	require.NoError(t, err)
+	require.Equal(t, "user", message.Role)
+
+	toolCall, err := registry.AppendToolCall(thread.ID, AppendToolCallInput{ToolID: "bridge.check", Status: "completed", Summary: "ok"})
+	require.NoError(t, err)
+	require.Equal(t, "bridge.check", toolCall.ToolID)
+
+	artifact, err := registry.AppendArtifact(thread.ID, AppendArtifactInput{Path: `D:\artifacts\hello.md`, Kind: "markdown"})
+	require.NoError(t, err)
+	require.Equal(t, "markdown", artifact.Kind)
+
+	flag, err := registry.SetRuntimeFlag(thread.ID, SetRuntimeFlagInput{Key: "preview", Value: "ready"})
+	require.NoError(t, err)
+	require.Equal(t, "ready", flag.Value)
+
+	reloaded, ok := registry.Thread(thread.ID)
+	require.True(t, ok)
+	require.Equal(t, 1, reloaded.MessageHistoryCount)
+	require.Equal(t, 1, reloaded.ToolCallCount)
+	require.Equal(t, 1, reloaded.ArtifactCount)
+
+	flags, ok := registry.RuntimeFlags(thread.ID)
+	require.True(t, ok)
+	require.Len(t, flags, 1)
+	require.Equal(t, "preview", flags[0].Key)
 }
 
 func TestActivateThreadOnlySwitchesPointer(t *testing.T) {
@@ -126,6 +158,14 @@ func TestRegistryRestoresAndPersistsViaSQLiteStore(t *testing.T) {
 	updated, err := registry.UpdateTaskStatus(thread.ID, task.ID, UpdateTaskStatusInput{Status: "completed"})
 	require.NoError(t, err)
 	require.Equal(t, "completed", updated.Status)
+	_, err = registry.AppendMessage(thread.ID, AppendMessageInput{Role: "user", Content: "persist this"})
+	require.NoError(t, err)
+	_, err = registry.AppendToolCall(thread.ID, AppendToolCallInput{ToolID: "bridge.check", Status: "completed", Summary: "ok"})
+	require.NoError(t, err)
+	_, err = registry.AppendArtifact(thread.ID, AppendArtifactInput{Path: `D:\artifacts\persist.md`, Kind: "markdown"})
+	require.NoError(t, err)
+	_, err = registry.SetRuntimeFlag(thread.ID, SetRuntimeFlagInput{Key: "draft", Value: "saved"})
+	require.NoError(t, err)
 
 	require.NoError(t, store.Close())
 	store, err = state.Open(projectRoot)
@@ -144,7 +184,27 @@ func TestRegistryRestoresAndPersistsViaSQLiteStore(t *testing.T) {
 	require.Len(t, tasks, 1)
 	require.Equal(t, "completed", tasks[0].Status)
 
+	messages, ok := reloaded.Messages(thread.ID)
+	require.True(t, ok)
+	require.Len(t, messages, 1)
+	require.Equal(t, "persist this", messages[0].Content)
+
+	toolCalls, ok := reloaded.ToolCalls(thread.ID)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 1)
+	require.Equal(t, "bridge.check", toolCalls[0].ToolID)
+
+	artifacts, ok := reloaded.Artifacts(thread.ID)
+	require.True(t, ok)
+	require.Len(t, artifacts, 1)
+	require.Equal(t, "markdown", artifacts[0].Kind)
+
+	flags, ok := reloaded.RuntimeFlags(thread.ID)
+	require.True(t, ok)
+	require.Len(t, flags, 1)
+	require.Equal(t, "saved", flags[0].Value)
+
 	events, ok := reloaded.Events(thread.ID)
 	require.True(t, ok)
-	require.Len(t, events, 3)
+	require.Len(t, events, 7)
 }

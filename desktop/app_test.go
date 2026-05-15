@@ -62,6 +62,15 @@ func TestDesktopFallbackThreadTaskFlow(t *testing.T) {
 	if afterAdvance.Tasks[0].Status != "running" {
 		t.Fatalf("expected running task, got %q", afterAdvance.Tasks[0].Status)
 	}
+	if len(afterAdvance.Messages) != 0 {
+		t.Fatalf("expected no messages in pure task fallback flow, got %d", len(afterAdvance.Messages))
+	}
+	if len(afterAdvance.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls in pure task fallback flow, got %d", len(afterAdvance.ToolCalls))
+	}
+	if len(afterAdvance.Artifacts) != 0 {
+		t.Fatalf("expected no artifacts in pure task fallback flow, got %d", len(afterAdvance.Artifacts))
+	}
 	if len(afterAdvance.Events) == 0 {
 		t.Fatal("expected events after task transition")
 	}
@@ -100,6 +109,9 @@ func TestDesktopFallbackPersistsAcrossAppRestart(t *testing.T) {
 	}
 	if len(reloaded.Tasks) != 1 {
 		t.Fatalf("expected 1 restored task, got %d", len(reloaded.Tasks))
+	}
+	if reloaded.Messages == nil || reloaded.ToolCalls == nil || reloaded.Artifacts == nil {
+		t.Fatal("expected recovered thread context collections")
 	}
 	if reloaded.Tasks[0].Title != "Resume after restart" {
 		t.Fatalf("expected restored task title, got %q", reloaded.Tasks[0].Title)

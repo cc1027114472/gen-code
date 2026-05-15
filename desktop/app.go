@@ -52,6 +52,9 @@ type RuntimeStatus struct {
 	ActiveThreadID        string              `json:"activeThreadId"`
 	Threads               []ThreadSummary     `json:"threads"`
 	Tasks                 []TaskSummary       `json:"tasks"`
+	Messages              []MessageSummary    `json:"messages"`
+	ToolCalls             []ToolCallSummary   `json:"toolCalls"`
+	Artifacts             []ArtifactSummary   `json:"artifacts"`
 	Events                []EventSummary      `json:"events"`
 	DesktopReady          bool                `json:"desktopReady"`
 	RuntimeState          string              `json:"runtimeState"`
@@ -87,6 +90,31 @@ type TaskSummary struct {
 	Title     string `json:"title"`
 	Status    string `json:"status"`
 	UpdatedAt string `json:"updatedAt"`
+}
+
+type MessageSummary struct {
+	ID        string `json:"id"`
+	ThreadID  string `json:"threadId"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type ToolCallSummary struct {
+	ID        string `json:"id"`
+	ThreadID  string `json:"threadId"`
+	ToolID    string `json:"toolId"`
+	Status    string `json:"status"`
+	Summary   string `json:"summary"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type ArtifactSummary struct {
+	ID        string `json:"id"`
+	ThreadID  string `json:"threadId"`
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	CreatedAt string `json:"createdAt"`
 }
 
 type EventSummary struct {
@@ -134,6 +162,31 @@ type apiTask struct {
 	Title     string `json:"title"`
 	Status    string `json:"status"`
 	UpdatedAt string `json:"updatedAt"`
+}
+
+type apiMessage struct {
+	ID        string `json:"id"`
+	ThreadID  string `json:"threadId"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type apiToolCall struct {
+	ID        string `json:"id"`
+	ThreadID  string `json:"threadId"`
+	ToolID    string `json:"toolId"`
+	Status    string `json:"status"`
+	Summary   string `json:"summary"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type apiArtifact struct {
+	ID        string `json:"id"`
+	ThreadID  string `json:"threadId"`
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	CreatedAt string `json:"createdAt"`
 }
 
 type apiEvent struct {
@@ -193,6 +246,31 @@ type persistedTask struct {
 	Title     string
 	Status    string
 	UpdatedAt string
+}
+
+type persistedMessage struct {
+	ID        string
+	ThreadID  string
+	Role      string
+	Content   string
+	CreatedAt string
+}
+
+type persistedToolCall struct {
+	ID        string
+	ThreadID  string
+	ToolID    string
+	Status    string
+	Summary   string
+	CreatedAt string
+}
+
+type persistedArtifact struct {
+	ID        string
+	ThreadID  string
+	Path      string
+	Kind      string
+	CreatedAt string
 }
 
 type persistedEvent struct {
@@ -399,12 +477,30 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	tasksPayload := struct {
 		Items []apiTask `json:"items"`
 	}{}
+	messagesPayload := struct {
+		Items []apiMessage `json:"items"`
+	}{}
+	toolCallsPayload := struct {
+		Items []apiToolCall `json:"items"`
+	}{}
+	artifactsPayload := struct {
+		Items []apiArtifact `json:"items"`
+	}{}
 	eventsPayload := struct {
 		Items []apiEvent `json:"items"`
 	}{}
 	if runtimeStatus.ActiveThreadID != "" {
 		threadID := url.PathEscape(runtimeStatus.ActiveThreadID)
 		if err := client.fetchEnvelope("/api/threads/"+threadID+"/tasks", &tasksPayload); err != nil {
+			return RuntimeStatus{}, err
+		}
+		if err := client.fetchEnvelope("/api/threads/"+threadID+"/messages", &messagesPayload); err != nil {
+			return RuntimeStatus{}, err
+		}
+		if err := client.fetchEnvelope("/api/threads/"+threadID+"/tool-calls", &toolCallsPayload); err != nil {
+			return RuntimeStatus{}, err
+		}
+		if err := client.fetchEnvelope("/api/threads/"+threadID+"/artifacts", &artifactsPayload); err != nil {
 			return RuntimeStatus{}, err
 		}
 		if err := client.fetchEnvelope("/api/threads/"+threadID+"/events", &eventsPayload); err != nil {
@@ -420,6 +516,9 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	status.ActiveThreadID = runtimeStatus.ActiveThreadID
 	status.Threads = mapThreads(threadPayload.Items)
 	status.Tasks = mapTasks(tasksPayload.Items)
+	status.Messages = mapMessages(messagesPayload.Items)
+	status.ToolCalls = mapToolCalls(toolCallsPayload.Items)
+	status.Artifacts = mapArtifacts(artifactsPayload.Items)
 	status.Events = mapEvents(eventsPayload.Items)
 	status.RuntimeState = runtimeStatus.State
 	status.RuntimeReady = runtimeStatus.Ready
@@ -436,7 +535,7 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	status.SkillsByGroup = groupSkills(skillsPayload.Items)
 	status.ToolsByGroup = groupTools(toolsPayload.Items)
 	status.MCPByGroup = groupMCPServers(mcpPayload.Items)
-	status.RecoverySummary = fmt.Sprintf("Live runtime connected. Active thread: %s, tasks: %d.", fallbackText(runtimeStatus.ActiveThreadID, "none"), len(status.Tasks))
+	status.RecoverySummary = fmt.Sprintf("Live runtime connected. Active thread: %s, tasks: %d, messages: %d, tool calls: %d, artifacts: %d.", fallbackText(runtimeStatus.ActiveThreadID, "none"), len(status.Tasks), len(status.Messages), len(status.ToolCalls), len(status.Artifacts))
 	status.UpdatedAt = time.Now().Format(time.RFC3339)
 	return status, nil
 }
@@ -655,6 +754,45 @@ func decodeEnvelope(response *http.Response, target any) error {
 			return fmt.Errorf("request failed: %s", envelope.Message)
 		}
 		*typed = envelope.Data
+	case *struct {
+		Items []apiMessage `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []apiMessage `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
+		Items []apiToolCall `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []apiToolCall `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
+		Items []apiArtifact `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []apiArtifact `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
 	case *apiBridgeCheck:
 		var envelope apiEnvelope[apiBridgeCheck]
 		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
@@ -753,6 +891,49 @@ func mapTasks(items []apiTask) []TaskSummary {
 			Title:     item.Title,
 			Status:    item.Status,
 			UpdatedAt: item.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func mapMessages(items []apiMessage) []MessageSummary {
+	result := make([]MessageSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, MessageSummary{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Role:      item.Role,
+			Content:   item.Content,
+			CreatedAt: item.CreatedAt,
+		})
+	}
+	return result
+}
+
+func mapToolCalls(items []apiToolCall) []ToolCallSummary {
+	result := make([]ToolCallSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, ToolCallSummary{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			ToolID:    item.ToolID,
+			Status:    item.Status,
+			Summary:   item.Summary,
+			CreatedAt: item.CreatedAt,
+		})
+	}
+	return result
+}
+
+func mapArtifacts(items []apiArtifact) []ArtifactSummary {
+	result := make([]ArtifactSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, ArtifactSummary{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Path:      item.Path,
+			Kind:      item.Kind,
+			CreatedAt: item.CreatedAt,
 		})
 	}
 	return result
@@ -1060,6 +1241,35 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 			updated_at TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS thread_messages (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS thread_tool_calls (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			tool_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS thread_artifacts (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			path TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS thread_runtime_flags (
+			thread_id TEXT NOT NULL,
+			key TEXT NOT NULL,
+			value TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(thread_id, key)
+		)`,
 		`CREATE TABLE IF NOT EXISTS events (
 			id TEXT PRIMARY KEY,
 			thread_id TEXT NOT NULL,
@@ -1110,6 +1320,18 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	if err != nil {
 		return RuntimeStatus{}, err
 	}
+	messages, err := s.readMessages(workspaceRecord.ActiveThreadID)
+	if err != nil {
+		return RuntimeStatus{}, err
+	}
+	toolCalls, err := s.readToolCalls(workspaceRecord.ActiveThreadID)
+	if err != nil {
+		return RuntimeStatus{}, err
+	}
+	artifacts, err := s.readArtifacts(workspaceRecord.ActiveThreadID)
+	if err != nil {
+		return RuntimeStatus{}, err
+	}
 	events, err := s.readEvents(workspaceRecord.ActiveThreadID)
 	if err != nil {
 		return RuntimeStatus{}, err
@@ -1122,6 +1344,9 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	status.ActiveThreadID = workspaceRecord.ActiveThreadID
 	status.Threads = toThreadSummaries(threads)
 	status.Tasks = toTaskSummaries(tasks)
+	status.Messages = toMessageSummaries(messages)
+	status.ToolCalls = toToolCallSummaries(toolCalls)
+	status.Artifacts = toArtifactSummaries(artifacts)
 	status.Events = toEventSummaries(events)
 	status.RuntimeState = "fallback"
 	status.RuntimeReady = true
@@ -1133,7 +1358,7 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	status.StateStore = "sqlite"
 	status.StatePath = defaultStateStorePath(base.WorkspaceRoot)
 	status.UsesProjectLocalStore = true
-	status.RecoverySummary = fmt.Sprintf("Recovered %d thread(s), %d task(s), %d event(s) from project-local state store.", len(threads), len(tasks), len(events))
+	status.RecoverySummary = fmt.Sprintf("Recovered %d thread(s), %d task(s), %d message(s), %d tool call(s), %d artifact(s), %d event(s) from project-local state store.", len(threads), len(tasks), len(messages), len(toolCalls), len(artifacts), len(events))
 	status.UpdatedAt = time.Now().Format(time.RFC3339)
 	return status, nil
 }
@@ -1235,6 +1460,93 @@ func (s *localRuntimeStore) readTasks(threadID string) ([]persistedTask, error) 
 	return result, rows.Err()
 }
 
+func (s *localRuntimeStore) readMessages(threadID string) ([]persistedMessage, error) {
+	query := `
+		SELECT id, thread_id, role, content, created_at
+		FROM thread_messages
+	`
+	args := []any{}
+	if strings.TrimSpace(threadID) != "" {
+		query += ` WHERE thread_id = ?`
+		args = append(args, threadID)
+	}
+	query += ` ORDER BY datetime(created_at) DESC, id DESC LIMIT 12`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []persistedMessage{}
+	for rows.Next() {
+		var item persistedMessage
+		if err := rows.Scan(&item.ID, &item.ThreadID, &item.Role, &item.Content, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *localRuntimeStore) readToolCalls(threadID string) ([]persistedToolCall, error) {
+	query := `
+		SELECT id, thread_id, tool_id, status, summary, created_at
+		FROM thread_tool_calls
+	`
+	args := []any{}
+	if strings.TrimSpace(threadID) != "" {
+		query += ` WHERE thread_id = ?`
+		args = append(args, threadID)
+	}
+	query += ` ORDER BY datetime(created_at) DESC, id DESC LIMIT 12`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []persistedToolCall{}
+	for rows.Next() {
+		var item persistedToolCall
+		if err := rows.Scan(&item.ID, &item.ThreadID, &item.ToolID, &item.Status, &item.Summary, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *localRuntimeStore) readArtifacts(threadID string) ([]persistedArtifact, error) {
+	query := `
+		SELECT id, thread_id, path, kind, created_at
+		FROM thread_artifacts
+	`
+	args := []any{}
+	if strings.TrimSpace(threadID) != "" {
+		query += ` WHERE thread_id = ?`
+		args = append(args, threadID)
+	}
+	query += ` ORDER BY datetime(created_at) DESC, id DESC LIMIT 12`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []persistedArtifact{}
+	for rows.Next() {
+		var item persistedArtifact
+		if err := rows.Scan(&item.ID, &item.ThreadID, &item.Path, &item.Kind, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 func (s *localRuntimeStore) readEvents(threadID string) ([]persistedEvent, error) {
 	query := `
 		SELECT id, thread_id, type, message, created_at
@@ -1288,6 +1600,49 @@ func toTaskSummaries(items []persistedTask) []TaskSummary {
 			Title:     item.Title,
 			Status:    item.Status,
 			UpdatedAt: item.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func toMessageSummaries(items []persistedMessage) []MessageSummary {
+	result := make([]MessageSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, MessageSummary{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Role:      item.Role,
+			Content:   item.Content,
+			CreatedAt: item.CreatedAt,
+		})
+	}
+	return result
+}
+
+func toToolCallSummaries(items []persistedToolCall) []ToolCallSummary {
+	result := make([]ToolCallSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, ToolCallSummary{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			ToolID:    item.ToolID,
+			Status:    item.Status,
+			Summary:   item.Summary,
+			CreatedAt: item.CreatedAt,
+		})
+	}
+	return result
+}
+
+func toArtifactSummaries(items []persistedArtifact) []ArtifactSummary {
+	result := make([]ArtifactSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, ArtifactSummary{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Path:      item.Path,
+			Kind:      item.Kind,
+			CreatedAt: item.CreatedAt,
 		})
 	}
 	return result

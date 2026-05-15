@@ -47,6 +47,42 @@ type TaskRecord struct {
 	UpdatedAt time.Time
 }
 
+// MessageRecord is the persisted thread message row.
+type MessageRecord struct {
+	ID        string
+	ThreadID  string
+	Role      string
+	Content   string
+	CreatedAt time.Time
+}
+
+// ToolCallRecord is the persisted thread tool call row.
+type ToolCallRecord struct {
+	ID        string
+	ThreadID  string
+	ToolID    string
+	Status    string
+	Summary   string
+	CreatedAt time.Time
+}
+
+// ArtifactRecord is the persisted thread artifact row.
+type ArtifactRecord struct {
+	ID        string
+	ThreadID  string
+	Path      string
+	Kind      string
+	CreatedAt time.Time
+}
+
+// RuntimeFlagRecord is the persisted thread runtime flag row.
+type RuntimeFlagRecord struct {
+	ThreadID  string
+	Key       string
+	Value     string
+	UpdatedAt time.Time
+}
+
 // EventRecord is the persisted event row.
 type EventRecord struct {
 	ID        string
@@ -61,6 +97,10 @@ type Snapshot struct {
 	Workspace WorkspaceRecord
 	Threads   []ThreadRecord
 	Tasks     []TaskRecord
+	Messages  []MessageRecord
+	ToolCalls []ToolCallRecord
+	Artifacts []ArtifactRecord
+	Flags     []RuntimeFlagRecord
 	Events    []EventRecord
 }
 
@@ -182,6 +222,98 @@ func (s *Store) Load() (Snapshot, error) {
 		snapshot.Tasks = append(snapshot.Tasks, item)
 	}
 
+	messageRows, err := s.db.Query(`
+		SELECT id, thread_id, role, content, created_at
+		FROM thread_messages
+		ORDER BY created_at ASC, id ASC
+	`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load messages: %w", err)
+	}
+	defer messageRows.Close()
+
+	for messageRows.Next() {
+		var item MessageRecord
+		var created string
+		if err := messageRows.Scan(&item.ID, &item.ThreadID, &item.Role, &item.Content, &created); err != nil {
+			return Snapshot{}, fmt.Errorf("scan message: %w", err)
+		}
+		item.CreatedAt, err = time.Parse(time.RFC3339, created)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse message created_at: %w", err)
+		}
+		snapshot.Messages = append(snapshot.Messages, item)
+	}
+
+	toolCallRows, err := s.db.Query(`
+		SELECT id, thread_id, tool_id, status, summary, created_at
+		FROM thread_tool_calls
+		ORDER BY created_at ASC, id ASC
+	`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load tool calls: %w", err)
+	}
+	defer toolCallRows.Close()
+
+	for toolCallRows.Next() {
+		var item ToolCallRecord
+		var created string
+		if err := toolCallRows.Scan(&item.ID, &item.ThreadID, &item.ToolID, &item.Status, &item.Summary, &created); err != nil {
+			return Snapshot{}, fmt.Errorf("scan tool call: %w", err)
+		}
+		item.CreatedAt, err = time.Parse(time.RFC3339, created)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse tool call created_at: %w", err)
+		}
+		snapshot.ToolCalls = append(snapshot.ToolCalls, item)
+	}
+
+	artifactRows, err := s.db.Query(`
+		SELECT id, thread_id, path, kind, created_at
+		FROM thread_artifacts
+		ORDER BY created_at ASC, id ASC
+	`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load artifacts: %w", err)
+	}
+	defer artifactRows.Close()
+
+	for artifactRows.Next() {
+		var item ArtifactRecord
+		var created string
+		if err := artifactRows.Scan(&item.ID, &item.ThreadID, &item.Path, &item.Kind, &created); err != nil {
+			return Snapshot{}, fmt.Errorf("scan artifact: %w", err)
+		}
+		item.CreatedAt, err = time.Parse(time.RFC3339, created)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse artifact created_at: %w", err)
+		}
+		snapshot.Artifacts = append(snapshot.Artifacts, item)
+	}
+
+	flagRows, err := s.db.Query(`
+		SELECT thread_id, key, value, updated_at
+		FROM thread_runtime_flags
+		ORDER BY thread_id ASC, key ASC
+	`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load runtime flags: %w", err)
+	}
+	defer flagRows.Close()
+
+	for flagRows.Next() {
+		var item RuntimeFlagRecord
+		var updated string
+		if err := flagRows.Scan(&item.ThreadID, &item.Key, &item.Value, &updated); err != nil {
+			return Snapshot{}, fmt.Errorf("scan runtime flag: %w", err)
+		}
+		item.UpdatedAt, err = time.Parse(time.RFC3339, updated)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse runtime flag updated_at: %w", err)
+		}
+		snapshot.Flags = append(snapshot.Flags, item)
+	}
+
 	eventRows, err := s.db.Query(`
 		SELECT id, thread_id, type, message, created_at
 		FROM events
@@ -262,6 +394,57 @@ func (s *Store) SaveTask(item TaskRecord) error {
 	return nil
 }
 
+// SaveMessage inserts a thread message row.
+func (s *Store) SaveMessage(item MessageRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO thread_messages (id, thread_id, role, content, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, item.ID, item.ThreadID, item.Role, item.Content, item.CreatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("save message: %w", err)
+	}
+	return nil
+}
+
+// SaveToolCall inserts a thread tool call row.
+func (s *Store) SaveToolCall(item ToolCallRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO thread_tool_calls (id, thread_id, tool_id, status, summary, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, item.ID, item.ThreadID, item.ToolID, item.Status, item.Summary, item.CreatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("save tool call: %w", err)
+	}
+	return nil
+}
+
+// SaveArtifact inserts a thread artifact row.
+func (s *Store) SaveArtifact(item ArtifactRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO thread_artifacts (id, thread_id, path, kind, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, item.ID, item.ThreadID, item.Path, item.Kind, item.CreatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("save artifact: %w", err)
+	}
+	return nil
+}
+
+// SaveRuntimeFlag upserts a thread runtime flag row.
+func (s *Store) SaveRuntimeFlag(item RuntimeFlagRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO thread_runtime_flags (thread_id, key, value, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(thread_id, key) DO UPDATE SET
+			value=excluded.value,
+			updated_at=excluded.updated_at
+	`, item.ThreadID, item.Key, item.Value, item.UpdatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("save runtime flag: %w", err)
+	}
+	return nil
+}
+
 // SaveEvent inserts an event row.
 func (s *Store) SaveEvent(item EventRecord) error {
 	_, err := s.db.Exec(`
@@ -302,6 +485,35 @@ func (s *Store) migrate() error {
 			status TEXT NOT NULL,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS thread_messages (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS thread_tool_calls (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			tool_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS thread_artifacts (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			path TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS thread_runtime_flags (
+			thread_id TEXT NOT NULL,
+			key TEXT NOT NULL,
+			value TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(thread_id, key)
 		)`,
 		`CREATE TABLE IF NOT EXISTS events (
 			id TEXT PRIMARY KEY,

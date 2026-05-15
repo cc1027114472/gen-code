@@ -26,6 +26,31 @@ type TaskSummary = {
   updatedAt: string;
 };
 
+type MessageSummary = {
+  id: string;
+  threadId: string;
+  role: string;
+  content: string;
+  createdAt: string;
+};
+
+type ToolCallSummary = {
+  id: string;
+  threadId: string;
+  toolId: string;
+  status: string;
+  summary: string;
+  createdAt: string;
+};
+
+type ArtifactSummary = {
+  id: string;
+  threadId: string;
+  path: string;
+  kind: string;
+  createdAt: string;
+};
+
 type EventSummary = {
   id: string;
   threadId: string;
@@ -50,6 +75,9 @@ type RuntimeStatus = {
   activeThreadId: string;
   threads: ThreadSummary[];
   tasks: TaskSummary[];
+  messages: MessageSummary[];
+  toolCalls: ToolCallSummary[];
+  artifacts: ArtifactSummary[];
   events: EventSummary[];
   desktopReady: boolean;
   runtimeState: string;
@@ -230,6 +258,12 @@ export default function App() {
   const statusTone = error ? "warning" : runtimeStatus?.runtimeReady || bridgeResult?.ok ? "good" : "muted";
   const taskSummary = useMemo(() => summarizeTaskCounts(runtimeStatus?.tasks), [runtimeStatus]);
   const capabilitySummary = useMemo(() => summarizeGroups(runtimeStatus?.skillsByGroup), [runtimeStatus]);
+  const threadContextSummary = useMemo(() => {
+    if (!runtimeStatus) {
+      return "loading";
+    }
+    return `messages ${runtimeStatus.messages.length} / tool calls ${runtimeStatus.toolCalls.length} / artifacts ${runtimeStatus.artifacts.length}`;
+  }, [runtimeStatus]);
   const runtimeSourceLabel = useMemo(() => {
     if (!runtimeStatus) {
       return "loading";
@@ -271,6 +305,11 @@ export default function App() {
         tone: runtimeStatus?.tasks?.length ? "good" : "muted",
       },
       {
+        label: "线程上下文",
+        value: threadContextSummary,
+        tone: runtimeStatus && (runtimeStatus.messages.length + runtimeStatus.toolCalls.length + runtimeStatus.artifacts.length) > 0 ? "good" : "muted",
+      },
+      {
         label: "刷新模式",
         value: streamState,
         tone: sseEnabled ? "good" : "muted",
@@ -281,7 +320,7 @@ export default function App() {
         tone: "muted",
       },
     ],
-    [lastCheckedAt, runtimeSourceLabel, runtimeStatus?.activeThreadId, runtimeStatus?.statePath, runtimeStatus?.stateStore, runtimeStatus?.tasks, runtimeStatus?.usesProjectLocalStore, sseEnabled, streamState, taskSummary],
+    [lastCheckedAt, runtimeSourceLabel, runtimeStatus, sseEnabled, streamState, taskSummary, threadContextSummary],
   );
 
   return (
@@ -380,7 +419,7 @@ export default function App() {
 
               <article className="card stat-card">
                 <p className="section-title">恢复链路</p>
-                <strong>{taskSummary}</strong>
+                <strong>{threadContextSummary}</strong>
                 <span>{runtimeStatus?.recoverySummary || "等待恢复摘要..."}</span>
               </article>
             </div>
@@ -480,23 +519,74 @@ export default function App() {
               <div className="task-panel card">
                 <div className="thread-strip__header">
                   <div>
-                    <p className="section-title">Events</p>
-                    <h3>恢复后的活动时间线</h3>
+                    <p className="section-title">Thread Context</p>
+                    <h3>私有上下文恢复概览</h3>
                   </div>
-                  <span className="mini-chip">{`Count ${runtimeStatus?.events.length ?? 0}`}</span>
+                  <span className="mini-chip">{threadContextSummary}</span>
                 </div>
-                <div className="event-list">
-                  {(runtimeStatus?.events ?? []).length === 0 ? (
-                    <div className="thread-empty">暂无事件记录。</div>
-                  ) : (
-                    runtimeStatus?.events.map((event) => (
-                      <div className="event-item" key={event.id}>
-                        <p>{event.type}</p>
-                        <strong>{event.message}</strong>
-                      </div>
-                    ))
-                  )}
+                <div className="context-grid">
+                  <div className="context-column">
+                    <p className="section-title">Messages</p>
+                    {(runtimeStatus?.messages ?? []).length === 0 ? (
+                      <div className="thread-empty">暂无 message 记录。</div>
+                    ) : (
+                      runtimeStatus?.messages.slice(0, 3).map((item) => (
+                        <div className="event-item" key={item.id}>
+                          <p>{item.role}</p>
+                          <strong>{item.content}</strong>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="context-column">
+                    <p className="section-title">Tool Calls</p>
+                    {(runtimeStatus?.toolCalls ?? []).length === 0 ? (
+                      <div className="thread-empty">暂无 tool call 记录。</div>
+                    ) : (
+                      runtimeStatus?.toolCalls.slice(0, 3).map((item) => (
+                        <div className="event-item" key={item.id}>
+                          <p>{`${item.toolId} / ${item.status}`}</p>
+                          <strong>{item.summary}</strong>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="context-column">
+                    <p className="section-title">Artifacts</p>
+                    {(runtimeStatus?.artifacts ?? []).length === 0 ? (
+                      <div className="thread-empty">暂无 artifact 记录。</div>
+                    ) : (
+                      runtimeStatus?.artifacts.slice(0, 3).map((item) => (
+                        <div className="event-item" key={item.id}>
+                          <p>{item.kind}</p>
+                          <strong>{item.path}</strong>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
+              </div>
+            </div>
+
+            <div className="task-panel card">
+              <div className="thread-strip__header">
+                <div>
+                  <p className="section-title">Events</p>
+                  <h3>恢复后的活动时间线</h3>
+                </div>
+                <span className="mini-chip">{`Count ${runtimeStatus?.events.length ?? 0}`}</span>
+              </div>
+              <div className="event-list">
+                {(runtimeStatus?.events ?? []).length === 0 ? (
+                  <div className="thread-empty">暂无事件记录。</div>
+                ) : (
+                  runtimeStatus?.events.map((event) => (
+                    <div className="event-item" key={event.id}>
+                      <p>{event.type}</p>
+                      <strong>{event.message}</strong>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 

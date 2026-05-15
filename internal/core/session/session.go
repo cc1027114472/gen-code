@@ -23,22 +23,22 @@ type Workspace struct {
 
 // Thread describes an isolated work session under a workspace.
 type Thread struct {
-	ID                  string      `json:"id"`
-	WorkspaceID         string      `json:"workspace_id"`
-	Name                string      `json:"name"`
-	Status              string      `json:"status"`
-	ActiveModel         string      `json:"active_model"`
-	PermissionMode      policy.Mode `json:"permission_mode"`
-	MessageHistory      []string    `json:"message_history"`
-	ToolHistory         []string    `json:"tool_history"`
-	TaskState           []string    `json:"task_state"`
-	ArtifactPaths       []string    `json:"artifact_paths"`
-	RuntimeFlags        []string    `json:"runtime_flags"`
-	CreatedAt           time.Time   `json:"created_at"`
-	MessageHistoryCount int         `json:"message_history_count"`
-	ToolCallCount       int         `json:"tool_call_count"`
-	ArtifactCount       int         `json:"artifact_count"`
-	IsActive            bool        `json:"is_active"`
+	ID                  string              `json:"id"`
+	WorkspaceID         string              `json:"workspace_id"`
+	Name                string              `json:"name"`
+	Status              string              `json:"status"`
+	ActiveModel         string              `json:"active_model"`
+	PermissionMode      policy.Mode         `json:"permission_mode"`
+	MessageHistory      []MessageRecord     `json:"message_history"`
+	ToolHistory         []ToolCallRecord    `json:"tool_history"`
+	TaskState           []string            `json:"task_state"`
+	ArtifactPaths       []ArtifactRecord    `json:"artifact_paths"`
+	RuntimeFlags        []RuntimeFlagRecord `json:"runtime_flags"`
+	CreatedAt           time.Time           `json:"created_at"`
+	MessageHistoryCount int                 `json:"message_history_count"`
+	ToolCallCount       int                 `json:"tool_call_count"`
+	ArtifactCount       int                 `json:"artifact_count"`
+	IsActive            bool                `json:"is_active"`
 }
 
 // Task describes a minimal task tracked under a thread.
@@ -48,6 +48,42 @@ type Task struct {
 	Title     string    `json:"title"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// MessageRecord describes a persisted thread-local message.
+type MessageRecord struct {
+	ID        string    `json:"id"`
+	ThreadID  string    `json:"thread_id"`
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ToolCallRecord describes a persisted thread-local tool call summary.
+type ToolCallRecord struct {
+	ID        string    `json:"id"`
+	ThreadID  string    `json:"thread_id"`
+	ToolID    string    `json:"tool_id"`
+	Status    string    `json:"status"`
+	Summary   string    `json:"summary"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ArtifactRecord describes a persisted thread-local artifact reference.
+type ArtifactRecord struct {
+	ID        string    `json:"id"`
+	ThreadID  string    `json:"thread_id"`
+	Path      string    `json:"path"`
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// RuntimeFlagRecord describes a persisted thread-local runtime flag.
+type RuntimeFlagRecord struct {
+	ThreadID  string    `json:"thread_id"`
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -70,6 +106,31 @@ type CreateThreadInput struct {
 // CreateTaskInput collects the minimum task fields for a thread-local task.
 type CreateTaskInput struct {
 	Title string
+}
+
+// AppendMessageInput collects the minimum message fields for a thread-local message.
+type AppendMessageInput struct {
+	Role    string
+	Content string
+}
+
+// AppendToolCallInput collects the minimum fields for a thread-local tool call.
+type AppendToolCallInput struct {
+	ToolID  string
+	Status  string
+	Summary string
+}
+
+// AppendArtifactInput collects the minimum fields for a thread-local artifact.
+type AppendArtifactInput struct {
+	Path string
+	Kind string
+}
+
+// SetRuntimeFlagInput collects the minimum fields for a thread-local runtime flag.
+type SetRuntimeFlagInput struct {
+	Key   string
+	Value string
 }
 
 // UpdateTaskStatusInput collects the minimum fields required to update a task status.
@@ -99,6 +160,9 @@ type Registry struct {
 	nextThreadNumber int
 	nextTaskNumber   int
 	nextEventNumber  int
+	nextMessageNum   int
+	nextToolCallNum  int
+	nextArtifactNum  int
 }
 
 // NewRegistry creates the default single-workspace registry for the given project root.
@@ -137,6 +201,9 @@ func NewRegistryWithStore(projectRoot string, store *state.Store) (*Registry, er
 		nextThreadNumber: 1,
 		nextTaskNumber:   1,
 		nextEventNumber:  1,
+		nextMessageNum:   1,
+		nextToolCallNum:  1,
+		nextArtifactNum:  1,
 	}
 
 	if store != nil {
@@ -222,11 +289,11 @@ func (r *Registry) CreateThread(input CreateThreadInput) Thread {
 		Status:         "idle",
 		ActiveModel:    input.ActiveModel,
 		PermissionMode: mode,
-		MessageHistory: []string{},
-		ToolHistory:    []string{},
+		MessageHistory: []MessageRecord{},
+		ToolHistory:    []ToolCallRecord{},
 		TaskState:      []string{},
-		ArtifactPaths:  []string{},
-		RuntimeFlags:   []string{},
+		ArtifactPaths:  []ArtifactRecord{},
+		RuntimeFlags:   []RuntimeFlagRecord{},
 		CreatedAt:      time.Now().UTC(),
 	}
 
@@ -283,6 +350,58 @@ func (r *Registry) Events(threadID string) ([]Event, bool) {
 	return items, true
 }
 
+// Messages returns the recorded thread-local messages.
+func (r *Registry) Messages(threadID string) ([]MessageRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return nil, false
+	}
+	items := append([]MessageRecord(nil), thread.MessageHistory...)
+	return items, true
+}
+
+// ToolCalls returns the recorded thread-local tool calls.
+func (r *Registry) ToolCalls(threadID string) ([]ToolCallRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return nil, false
+	}
+	items := append([]ToolCallRecord(nil), thread.ToolHistory...)
+	return items, true
+}
+
+// Artifacts returns the recorded thread-local artifacts.
+func (r *Registry) Artifacts(threadID string) ([]ArtifactRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return nil, false
+	}
+	items := append([]ArtifactRecord(nil), thread.ArtifactPaths...)
+	return items, true
+}
+
+// RuntimeFlags returns the recorded thread-local runtime flags.
+func (r *Registry) RuntimeFlags(threadID string) ([]RuntimeFlagRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return nil, false
+	}
+	items := append([]RuntimeFlagRecord(nil), thread.RuntimeFlags...)
+	return items, true
+}
+
 // CreateTask registers a new queued task under the given thread.
 func (r *Registry) CreateTask(threadID string, input CreateTaskInput) (Task, bool) {
 	r.mu.Lock()
@@ -317,6 +436,120 @@ func (r *Registry) CreateTask(threadID string, input CreateTaskInput) (Task, boo
 	_ = r.persistTaskLocked(task)
 	_ = r.persistThreadLocked(thread)
 	return task, true
+}
+
+// AppendMessage appends a thread-local message and persists it.
+func (r *Registry) AppendMessage(threadID string, input AppendMessageInput) (MessageRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return MessageRecord{}, ErrThreadNotFound
+	}
+
+	record := MessageRecord{
+		ID:        fmt.Sprintf("message-%d", r.nextMessageNum),
+		ThreadID:  threadID,
+		Role:      input.Role,
+		Content:   input.Content,
+		CreatedAt: time.Now().UTC(),
+	}
+	r.nextMessageNum++
+	thread.MessageHistory = append(thread.MessageHistory, record)
+	r.threads[threadID] = thread
+	r.appendEventLocked(threadID, "message.appended", fmt.Sprintf("%s message appended on %s", record.Role, thread.Name))
+	_ = r.persistMessageLocked(record)
+	_ = r.persistThreadLocked(thread)
+	return record, nil
+}
+
+// AppendToolCall appends a thread-local tool call and persists it.
+func (r *Registry) AppendToolCall(threadID string, input AppendToolCallInput) (ToolCallRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return ToolCallRecord{}, ErrThreadNotFound
+	}
+
+	record := ToolCallRecord{
+		ID:        fmt.Sprintf("toolcall-%d", r.nextToolCallNum),
+		ThreadID:  threadID,
+		ToolID:    input.ToolID,
+		Status:    input.Status,
+		Summary:   input.Summary,
+		CreatedAt: time.Now().UTC(),
+	}
+	r.nextToolCallNum++
+	thread.ToolHistory = append(thread.ToolHistory, record)
+	r.threads[threadID] = thread
+	r.appendEventLocked(threadID, "toolcall.appended", fmt.Sprintf("%s tool call recorded on %s", record.ToolID, thread.Name))
+	_ = r.persistToolCallLocked(record)
+	_ = r.persistThreadLocked(thread)
+	return record, nil
+}
+
+// AppendArtifact appends a thread-local artifact and persists it.
+func (r *Registry) AppendArtifact(threadID string, input AppendArtifactInput) (ArtifactRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return ArtifactRecord{}, ErrThreadNotFound
+	}
+
+	record := ArtifactRecord{
+		ID:        fmt.Sprintf("artifact-%d", r.nextArtifactNum),
+		ThreadID:  threadID,
+		Path:      input.Path,
+		Kind:      input.Kind,
+		CreatedAt: time.Now().UTC(),
+	}
+	r.nextArtifactNum++
+	thread.ArtifactPaths = append(thread.ArtifactPaths, record)
+	r.threads[threadID] = thread
+	r.appendEventLocked(threadID, "artifact.appended", fmt.Sprintf("%s artifact recorded on %s", record.Kind, thread.Name))
+	_ = r.persistArtifactLocked(record)
+	_ = r.persistThreadLocked(thread)
+	return record, nil
+}
+
+// SetRuntimeFlag upserts a thread-local runtime flag and persists it.
+func (r *Registry) SetRuntimeFlag(threadID string, input SetRuntimeFlagInput) (RuntimeFlagRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return RuntimeFlagRecord{}, ErrThreadNotFound
+	}
+
+	record := RuntimeFlagRecord{
+		ThreadID:  threadID,
+		Key:       input.Key,
+		Value:     input.Value,
+		UpdatedAt: time.Now().UTC(),
+	}
+	replaced := false
+	for index, item := range thread.RuntimeFlags {
+		if item.Key != input.Key {
+			continue
+		}
+		thread.RuntimeFlags[index] = record
+		replaced = true
+		break
+	}
+	if !replaced {
+		thread.RuntimeFlags = append(thread.RuntimeFlags, record)
+	}
+	r.threads[threadID] = thread
+	r.appendEventLocked(threadID, "runtimeflag.updated", fmt.Sprintf("%s flag updated on %s", record.Key, thread.Name))
+	_ = r.persistRuntimeFlagLocked(record)
+	_ = r.persistThreadLocked(thread)
+	return record, nil
 }
 
 // UpdateTaskStatus updates the lifecycle state for a task under the given thread.
@@ -357,11 +590,11 @@ func snapshotThread(thread Thread, activeThreadID string) Thread {
 	thread.ToolCallCount = len(thread.ToolHistory)
 	thread.ArtifactCount = len(thread.ArtifactPaths)
 	thread.IsActive = thread.ID == activeThreadID
-	thread.MessageHistory = append([]string(nil), thread.MessageHistory...)
-	thread.ToolHistory = append([]string(nil), thread.ToolHistory...)
+	thread.MessageHistory = append([]MessageRecord(nil), thread.MessageHistory...)
+	thread.ToolHistory = append([]ToolCallRecord(nil), thread.ToolHistory...)
 	thread.TaskState = append([]string(nil), thread.TaskState...)
-	thread.ArtifactPaths = append([]string(nil), thread.ArtifactPaths...)
-	thread.RuntimeFlags = append([]string(nil), thread.RuntimeFlags...)
+	thread.ArtifactPaths = append([]ArtifactRecord(nil), thread.ArtifactPaths...)
+	thread.RuntimeFlags = append([]RuntimeFlagRecord(nil), thread.RuntimeFlags...)
 	return thread
 }
 
@@ -435,11 +668,11 @@ func (r *Registry) restoreFromStore() error {
 			Status:         item.Status,
 			ActiveModel:    item.ActiveModel,
 			PermissionMode: policy.Mode(item.PermissionMode),
-			MessageHistory: []string{},
-			ToolHistory:    []string{},
+			MessageHistory: []MessageRecord{},
+			ToolHistory:    []ToolCallRecord{},
 			TaskState:      []string{},
-			ArtifactPaths:  []string{},
-			RuntimeFlags:   []string{},
+			ArtifactPaths:  []ArtifactRecord{},
+			RuntimeFlags:   []RuntimeFlagRecord{},
 			CreatedAt:      item.CreatedAt,
 		}
 		r.threads[item.ID] = thread
@@ -458,6 +691,54 @@ func (r *Registry) restoreFromStore() error {
 		r.tasks[item.ThreadID] = append(r.tasks[item.ThreadID], task)
 		thread := r.threads[item.ThreadID]
 		thread.TaskState = append(thread.TaskState, item.ID)
+		r.threads[item.ThreadID] = thread
+	}
+
+	for _, item := range snapshot.Messages {
+		thread := r.threads[item.ThreadID]
+		thread.MessageHistory = append(thread.MessageHistory, MessageRecord{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Role:      item.Role,
+			Content:   item.Content,
+			CreatedAt: item.CreatedAt,
+		})
+		r.threads[item.ThreadID] = thread
+	}
+
+	for _, item := range snapshot.ToolCalls {
+		thread := r.threads[item.ThreadID]
+		thread.ToolHistory = append(thread.ToolHistory, ToolCallRecord{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			ToolID:    item.ToolID,
+			Status:    item.Status,
+			Summary:   item.Summary,
+			CreatedAt: item.CreatedAt,
+		})
+		r.threads[item.ThreadID] = thread
+	}
+
+	for _, item := range snapshot.Artifacts {
+		thread := r.threads[item.ThreadID]
+		thread.ArtifactPaths = append(thread.ArtifactPaths, ArtifactRecord{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Path:      item.Path,
+			Kind:      item.Kind,
+			CreatedAt: item.CreatedAt,
+		})
+		r.threads[item.ThreadID] = thread
+	}
+
+	for _, item := range snapshot.Flags {
+		thread := r.threads[item.ThreadID]
+		thread.RuntimeFlags = append(thread.RuntimeFlags, RuntimeFlagRecord{
+			ThreadID:  item.ThreadID,
+			Key:       item.Key,
+			Value:     item.Value,
+			UpdatedAt: item.UpdatedAt,
+		})
 		r.threads[item.ThreadID] = thread
 	}
 
@@ -496,6 +777,33 @@ func (r *Registry) restoreFromStore() error {
 	r.nextEventNumber = state.MaxSuffix(eventIDs, "event-") + 1
 	if r.nextEventNumber == 1 && len(eventIDs) == 0 {
 		r.nextEventNumber = 1
+	}
+
+	messageIDs := make([]string, 0)
+	toolCallIDs := make([]string, 0)
+	artifactIDs := make([]string, 0)
+	for _, thread := range r.threads {
+		for _, item := range thread.MessageHistory {
+			messageIDs = append(messageIDs, item.ID)
+		}
+		for _, item := range thread.ToolHistory {
+			toolCallIDs = append(toolCallIDs, item.ID)
+		}
+		for _, item := range thread.ArtifactPaths {
+			artifactIDs = append(artifactIDs, item.ID)
+		}
+	}
+	r.nextMessageNum = state.MaxSuffix(messageIDs, "message-") + 1
+	if r.nextMessageNum == 1 && len(messageIDs) == 0 {
+		r.nextMessageNum = 1
+	}
+	r.nextToolCallNum = state.MaxSuffix(toolCallIDs, "toolcall-") + 1
+	if r.nextToolCallNum == 1 && len(toolCallIDs) == 0 {
+		r.nextToolCallNum = 1
+	}
+	r.nextArtifactNum = state.MaxSuffix(artifactIDs, "artifact-") + 1
+	if r.nextArtifactNum == 1 && len(artifactIDs) == 0 {
+		r.nextArtifactNum = 1
 	}
 
 	return nil
@@ -553,5 +861,57 @@ func (r *Registry) persistEventLocked(event Event) error {
 		Type:      event.Type,
 		Message:   event.Message,
 		CreatedAt: event.CreatedAt,
+	})
+}
+
+func (r *Registry) persistMessageLocked(item MessageRecord) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.SaveMessage(state.MessageRecord{
+		ID:        item.ID,
+		ThreadID:  item.ThreadID,
+		Role:      item.Role,
+		Content:   item.Content,
+		CreatedAt: item.CreatedAt,
+	})
+}
+
+func (r *Registry) persistToolCallLocked(item ToolCallRecord) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.SaveToolCall(state.ToolCallRecord{
+		ID:        item.ID,
+		ThreadID:  item.ThreadID,
+		ToolID:    item.ToolID,
+		Status:    item.Status,
+		Summary:   item.Summary,
+		CreatedAt: item.CreatedAt,
+	})
+}
+
+func (r *Registry) persistArtifactLocked(item ArtifactRecord) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.SaveArtifact(state.ArtifactRecord{
+		ID:        item.ID,
+		ThreadID:  item.ThreadID,
+		Path:      item.Path,
+		Kind:      item.Kind,
+		CreatedAt: item.CreatedAt,
+	})
+}
+
+func (r *Registry) persistRuntimeFlagLocked(item RuntimeFlagRecord) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.SaveRuntimeFlag(state.RuntimeFlagRecord{
+		ThreadID:  item.ThreadID,
+		Key:       item.Key,
+		Value:     item.Value,
+		UpdatedAt: item.UpdatedAt,
 	})
 }

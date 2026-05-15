@@ -16,6 +16,10 @@ const (
 	errCodeInvalidCreateThreadBody   = 1002
 	errCodeInvalidCreateTaskBody     = 1005
 	errCodeInvalidTaskStatusBody     = 1001
+	errCodeInvalidMessageBody        = 1006
+	errCodeInvalidToolCallBody       = 1008
+	errCodeInvalidArtifactBody       = 1009
+	errCodeInvalidRuntimeFlagBody    = 1010
 )
 
 // RuntimeHandler exposes codex-style runtime discovery and bridge endpoints.
@@ -126,6 +130,118 @@ func (h *RuntimeHandler) CreateTask(c *gin.Context) {
 	}
 
 	data, err := h.runtime.CreateTask(c.Request.Context(), c.Param("id"), payload)
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
+// Messages returns the messages under the given thread.
+func (h *RuntimeHandler) Messages(c *gin.Context) {
+	data, err := h.runtime.Messages(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, gin.H{"items": data})
+}
+
+// AppendMessage appends a message under the given thread.
+func (h *RuntimeHandler) AppendMessage(c *gin.Context) {
+	var payload runtimecontract.CreateMessageRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		xresp.BadRequest(c, errCodeInvalidMessageBody, "invalid create message payload")
+		return
+	}
+
+	data, err := h.runtime.AppendMessage(c.Request.Context(), c.Param("id"), payload)
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
+// ToolCalls returns the tool calls under the given thread.
+func (h *RuntimeHandler) ToolCalls(c *gin.Context) {
+	data, err := h.runtime.ToolCalls(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, gin.H{"items": data})
+}
+
+// AppendToolCall appends a tool call under the given thread.
+func (h *RuntimeHandler) AppendToolCall(c *gin.Context) {
+	var payload runtimecontract.CreateToolCallRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		xresp.BadRequest(c, errCodeInvalidToolCallBody, "invalid create tool call payload")
+		return
+	}
+
+	data, err := h.runtime.AppendToolCall(c.Request.Context(), c.Param("id"), payload)
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
+// Artifacts returns the artifacts under the given thread.
+func (h *RuntimeHandler) Artifacts(c *gin.Context) {
+	data, err := h.runtime.Artifacts(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, gin.H{"items": data})
+}
+
+// AppendArtifact appends an artifact under the given thread.
+func (h *RuntimeHandler) AppendArtifact(c *gin.Context) {
+	var payload runtimecontract.CreateArtifactRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		xresp.BadRequest(c, errCodeInvalidArtifactBody, "invalid create artifact payload")
+		return
+	}
+
+	data, err := h.runtime.AppendArtifact(c.Request.Context(), c.Param("id"), payload)
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
+// RuntimeFlags returns the runtime flags under the given thread.
+func (h *RuntimeHandler) RuntimeFlags(c *gin.Context) {
+	data, err := h.runtime.RuntimeFlags(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, gin.H{"items": data})
+}
+
+// SetRuntimeFlag upserts a runtime flag under the given thread.
+func (h *RuntimeHandler) SetRuntimeFlag(c *gin.Context) {
+	var payload runtimecontract.SetRuntimeFlagRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		xresp.BadRequest(c, errCodeInvalidRuntimeFlagBody, "invalid runtime flag payload")
+		return
+	}
+
+	data, err := h.runtime.SetRuntimeFlag(c.Request.Context(), c.Param("id"), payload)
 	if err != nil {
 		writeRuntimeError(c, err)
 		return

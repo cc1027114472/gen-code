@@ -69,7 +69,7 @@ func run(ctx context.Context, args []string) error {
 		return printWorkspace(ctx, runtimeFacade)
 	case "threads":
 		if len(args) < 2 {
-			return errors.New("usage: gen-code threads <list|create|activate>")
+			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts>")
 		}
 		switch args[1] {
 		case "list":
@@ -98,8 +98,57 @@ func run(ctx context.Context, args []string) error {
 				return errors.New("usage: gen-code threads activate --id=<threadId>")
 			}
 			return activateThread(ctx, runtimeFacade, id)
+		case "messages":
+			var id string
+			for _, arg := range args[2:] {
+				if strings.HasPrefix(arg, "--id=") {
+					id = strings.TrimSpace(strings.TrimPrefix(arg, "--id="))
+				}
+			}
+			if id == "" {
+				return errors.New("usage: gen-code threads messages --id=<threadId>")
+			}
+			return printMessages(ctx, runtimeFacade, id)
+		case "message-add":
+			var id, role, content string
+			for _, arg := range args[2:] {
+				switch {
+				case strings.HasPrefix(arg, "--id="):
+					id = strings.TrimSpace(strings.TrimPrefix(arg, "--id="))
+				case strings.HasPrefix(arg, "--role="):
+					role = strings.TrimSpace(strings.TrimPrefix(arg, "--role="))
+				case strings.HasPrefix(arg, "--content="):
+					content = strings.TrimSpace(strings.TrimPrefix(arg, "--content="))
+				}
+			}
+			if id == "" || role == "" || content == "" {
+				return errors.New("usage: gen-code threads message-add --id=<threadId> --role=<role> --content=...")
+			}
+			return appendMessage(ctx, runtimeFacade, id, role, content)
+		case "tool-calls":
+			var id string
+			for _, arg := range args[2:] {
+				if strings.HasPrefix(arg, "--id=") {
+					id = strings.TrimSpace(strings.TrimPrefix(arg, "--id="))
+				}
+			}
+			if id == "" {
+				return errors.New("usage: gen-code threads tool-calls --id=<threadId>")
+			}
+			return printToolCalls(ctx, runtimeFacade, id)
+		case "artifacts":
+			var id string
+			for _, arg := range args[2:] {
+				if strings.HasPrefix(arg, "--id=") {
+					id = strings.TrimSpace(strings.TrimPrefix(arg, "--id="))
+				}
+			}
+			if id == "" {
+				return errors.New("usage: gen-code threads artifacts --id=<threadId>")
+			}
+			return printArtifacts(ctx, runtimeFacade, id)
 		default:
-			return errors.New("usage: gen-code threads <list|create|activate>")
+			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts>")
 		}
 	case "tasks":
 		if len(args) < 2 {
@@ -185,6 +234,10 @@ func printUsage() {
 	fmt.Println("  threads list")
 	fmt.Println("  threads create [--name=...] [--model=...] [--permission=...]")
 	fmt.Println("  threads activate --id=<threadId>")
+	fmt.Println("  threads messages --id=<threadId>")
+	fmt.Println("  threads message-add --id=<threadId> --role=<role> --content=...")
+	fmt.Println("  threads tool-calls --id=<threadId>")
+	fmt.Println("  threads artifacts --id=<threadId>")
 	fmt.Println("  tasks list --thread=<threadId>")
 	fmt.Println("  tasks create --thread=<threadId> [--title=...]")
 	fmt.Println("  tasks update-status --thread=<threadId> --task=<taskId> --status=<status>")
@@ -284,6 +337,42 @@ func (f *runtimeFacade) updateTaskStatus(ctx context.Context, threadID string, t
 	}
 	f.source = "local-fallback"
 	return f.service.UpdateTaskStatus(ctx, threadID, taskID, request)
+}
+
+func (f *runtimeFacade) messages(ctx context.Context, threadID string) ([]runtimecontract.MessageDescriptor, error) {
+	if items, err := f.client.messages(threadID); err == nil {
+		f.source = "remote-app-server"
+		return items, nil
+	}
+	f.source = "local-fallback"
+	return f.service.Messages(ctx, threadID)
+}
+
+func (f *runtimeFacade) appendMessage(ctx context.Context, threadID string, request runtimecontract.CreateMessageRequest) (runtimecontract.MessageDescriptor, error) {
+	if item, err := f.client.appendMessage(threadID, request); err == nil {
+		f.source = "remote-app-server"
+		return item, nil
+	}
+	f.source = "local-fallback"
+	return f.service.AppendMessage(ctx, threadID, request)
+}
+
+func (f *runtimeFacade) toolCalls(ctx context.Context, threadID string) ([]runtimecontract.ToolCallDescriptor, error) {
+	if items, err := f.client.toolCalls(threadID); err == nil {
+		f.source = "remote-app-server"
+		return items, nil
+	}
+	f.source = "local-fallback"
+	return f.service.ToolCalls(ctx, threadID)
+}
+
+func (f *runtimeFacade) artifacts(ctx context.Context, threadID string) ([]runtimecontract.ArtifactDescriptor, error) {
+	if items, err := f.client.artifacts(threadID); err == nil {
+		f.source = "remote-app-server"
+		return items, nil
+	}
+	f.source = "local-fallback"
+	return f.service.Artifacts(ctx, threadID)
 }
 
 func (f *runtimeFacade) tools(ctx context.Context) ([]runtimecontract.Tool, error) {
@@ -474,6 +563,68 @@ func activateThread(ctx context.Context, facade *runtimeFacade, id string) error
 	return nil
 }
 
+func printMessages(ctx context.Context, facade *runtimeFacade, threadID string) error {
+	items, err := facade.messages(ctx, threadID)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("thread messages")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  thread: %s\n", threadID)
+	for _, item := range items {
+		fmt.Printf("  - %s (%s): %s\n", item.ID, item.Role, item.Content)
+	}
+	return nil
+}
+
+func appendMessage(ctx context.Context, facade *runtimeFacade, threadID string, role string, content string) error {
+	item, err := facade.appendMessage(ctx, threadID, runtimecontract.CreateMessageRequest{
+		Role:    role,
+		Content: content,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("thread message appended")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  id: %s\n", item.ID)
+	fmt.Printf("  role: %s\n", item.Role)
+	fmt.Printf("  content: %s\n", item.Content)
+	return nil
+}
+
+func printToolCalls(ctx context.Context, facade *runtimeFacade, threadID string) error {
+	items, err := facade.toolCalls(ctx, threadID)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("thread tool calls")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  thread: %s\n", threadID)
+	for _, item := range items {
+		fmt.Printf("  - %s (%s, %s): %s\n", item.ID, item.ToolID, item.Status, item.Summary)
+	}
+	return nil
+}
+
+func printArtifacts(ctx context.Context, facade *runtimeFacade, threadID string) error {
+	items, err := facade.artifacts(ctx, threadID)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("thread artifacts")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  thread: %s\n", threadID)
+	for _, item := range items {
+		fmt.Printf("  - %s (%s): %s\n", item.ID, item.Kind, item.Path)
+	}
+	return nil
+}
+
 func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) error {
 	items, err := facade.tasks(ctx, threadID)
 	if err != nil {
@@ -650,6 +801,36 @@ func (c *remoteRuntimeClient) tasks(threadID string) ([]runtimecontract.TaskDesc
 	return payload.Items, err
 }
 
+func (c *remoteRuntimeClient) messages(threadID string) ([]runtimecontract.MessageDescriptor, error) {
+	var payload struct {
+		Items []runtimecontract.MessageDescriptor `json:"items"`
+	}
+	err := c.fetchEnvelope("/api/threads/"+url.PathEscape(threadID)+"/messages", &payload)
+	return payload.Items, err
+}
+
+func (c *remoteRuntimeClient) appendMessage(threadID string, request runtimecontract.CreateMessageRequest) (runtimecontract.MessageDescriptor, error) {
+	var item runtimecontract.MessageDescriptor
+	err := c.postEnvelope("/api/threads/"+url.PathEscape(threadID)+"/messages", request, &item)
+	return item, err
+}
+
+func (c *remoteRuntimeClient) toolCalls(threadID string) ([]runtimecontract.ToolCallDescriptor, error) {
+	var payload struct {
+		Items []runtimecontract.ToolCallDescriptor `json:"items"`
+	}
+	err := c.fetchEnvelope("/api/threads/"+url.PathEscape(threadID)+"/tool-calls", &payload)
+	return payload.Items, err
+}
+
+func (c *remoteRuntimeClient) artifacts(threadID string) ([]runtimecontract.ArtifactDescriptor, error) {
+	var payload struct {
+		Items []runtimecontract.ArtifactDescriptor `json:"items"`
+	}
+	err := c.fetchEnvelope("/api/threads/"+url.PathEscape(threadID)+"/artifacts", &payload)
+	return payload.Items, err
+}
+
 func (c *remoteRuntimeClient) createTask(threadID string, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
 	var item runtimecontract.TaskDescriptor
 	err := c.postEnvelope("/api/threads/"+url.PathEscape(threadID)+"/tasks", request, &item)
@@ -755,6 +936,15 @@ func decodeEnvelope(response *http.Response, target any) error {
 			return fmt.Errorf("request failed: %s", envelope.Message)
 		}
 		*typed = envelope.Data
+	case *runtimecontract.MessageDescriptor:
+		var envelope apiEnvelope[runtimecontract.MessageDescriptor]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
 	case *struct {
 		Items []runtimecontract.ThreadDescriptor `json:"items"`
 	}:
@@ -773,6 +963,45 @@ func decodeEnvelope(response *http.Response, target any) error {
 	}:
 		var envelope apiEnvelope[struct {
 			Items []runtimecontract.TaskDescriptor `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
+		Items []runtimecontract.MessageDescriptor `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []runtimecontract.MessageDescriptor `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
+		Items []runtimecontract.ToolCallDescriptor `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []runtimecontract.ToolCallDescriptor `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
+		Items []runtimecontract.ArtifactDescriptor `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []runtimecontract.ArtifactDescriptor `json:"items"`
 		}]
 		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 			return err

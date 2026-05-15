@@ -75,6 +75,35 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.Equal(t, "running", updatedTask.Status)
 	require.NotEmpty(t, updatedTask.UpdatedAt)
 
+	message, err := service.AppendMessage(context.Background(), created.ID, runtimecontract.CreateMessageRequest{
+		Role:    "user",
+		Content: "Draft the spec",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "user", message.Role)
+
+	toolCall, err := service.AppendToolCall(context.Background(), created.ID, runtimecontract.CreateToolCallRequest{
+		ToolID:  "bridge.check",
+		Status:  "completed",
+		Summary: "Bridge reachable",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "bridge.check", toolCall.ToolID)
+
+	artifact, err := service.AppendArtifact(context.Background(), created.ID, runtimecontract.CreateArtifactRequest{
+		Path: `D:\artifacts\spec.md`,
+		Kind: "markdown",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "markdown", artifact.Kind)
+
+	flag, err := service.SetRuntimeFlag(context.Background(), created.ID, runtimecontract.SetRuntimeFlagRequest{
+		Key:   "preview",
+		Value: "ready",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "ready", flag.Value)
+
 	skills, err := service.Skills(context.Background())
 	require.NoError(t, err)
 	require.Len(t, skills, 2)
@@ -110,6 +139,26 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.Len(t, tasks, 1)
 	require.Equal(t, "running", tasks[0].Status)
 	require.NotEmpty(t, tasks[0].UpdatedAt)
+
+	messages, err := service.Messages(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Equal(t, "Draft the spec", messages[0].Content)
+
+	toolCalls, err := service.ToolCalls(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.Len(t, toolCalls, 1)
+	require.Equal(t, "completed", toolCalls[0].Status)
+
+	artifacts, err := service.Artifacts(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.Len(t, artifacts, 1)
+	require.Equal(t, `D:\artifacts\spec.md`, artifacts[0].Path)
+
+	flags, err := service.RuntimeFlags(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.Len(t, flags, 1)
+	require.Equal(t, "preview", flags[0].Key)
 
 	stream, err := service.StreamEvents(context.Background(), created.ID)
 	require.NoError(t, err)

@@ -42,6 +42,34 @@ func TestStorePersistsSnapshotTables(t *testing.T) {
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
 	}))
+	require.NoError(t, store.SaveMessage(MessageRecord{
+		ID:        "message-1",
+		ThreadID:  "thread-1",
+		Role:      "user",
+		Content:   "Draft spec please",
+		CreatedAt: createdAt,
+	}))
+	require.NoError(t, store.SaveToolCall(ToolCallRecord{
+		ID:        "toolcall-1",
+		ThreadID:  "thread-1",
+		ToolID:    "bridge.check",
+		Status:    "completed",
+		Summary:   "Bridge reachable",
+		CreatedAt: createdAt,
+	}))
+	require.NoError(t, store.SaveArtifact(ArtifactRecord{
+		ID:        "artifact-1",
+		ThreadID:  "thread-1",
+		Path:      `D:\artifacts\spec.md`,
+		Kind:      "markdown",
+		CreatedAt: updatedAt,
+	}))
+	require.NoError(t, store.SaveRuntimeFlag(RuntimeFlagRecord{
+		ThreadID:  "thread-1",
+		Key:       "preview",
+		Value:     "ready",
+		UpdatedAt: updatedAt,
+	}))
 	require.NoError(t, store.SaveEvent(EventRecord{
 		ID:        "event-1",
 		ThreadID:  "thread-1",
@@ -56,9 +84,17 @@ func TestStorePersistsSnapshotTables(t *testing.T) {
 	require.Equal(t, "thread-1", snapshot.Workspace.ActiveThreadID)
 	require.Len(t, snapshot.Threads, 1)
 	require.Len(t, snapshot.Tasks, 1)
+	require.Len(t, snapshot.Messages, 1)
+	require.Len(t, snapshot.ToolCalls, 1)
+	require.Len(t, snapshot.Artifacts, 1)
+	require.Len(t, snapshot.Flags, 1)
 	require.Len(t, snapshot.Events, 1)
 	require.Equal(t, "running", snapshot.Tasks[0].Status)
 	require.Equal(t, updatedAt, snapshot.Tasks[0].UpdatedAt)
+	require.Equal(t, "Draft spec please", snapshot.Messages[0].Content)
+	require.Equal(t, "bridge.check", snapshot.ToolCalls[0].ToolID)
+	require.Equal(t, "markdown", snapshot.Artifacts[0].Kind)
+	require.Equal(t, "ready", snapshot.Flags[0].Value)
 }
 
 func TestMaxSuffix(t *testing.T) {

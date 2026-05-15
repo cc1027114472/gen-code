@@ -462,6 +462,17 @@ button {
   gap: 16px;
 }
 
+.context-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.context-column {
+  display: grid;
+  gap: 10px;
+}
+
 .task-panel {
   display: grid;
   gap: 14px;
@@ -694,6 +705,10 @@ button {
   }
 
   .task-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .context-grid {
     grid-template-columns: 1fr;
   }
 

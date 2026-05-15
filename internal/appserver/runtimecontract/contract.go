@@ -59,6 +59,42 @@ type TaskDescriptor struct {
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
+// MessageDescriptor describes a single thread-local message.
+type MessageDescriptor struct {
+	ID        string `json:"id"`
+	ThreadID  string `json:"threadId"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// ToolCallDescriptor describes a single thread-local tool call summary.
+type ToolCallDescriptor struct {
+	ID        string `json:"id"`
+	ThreadID  string `json:"threadId"`
+	ToolID    string `json:"toolId"`
+	Status    string `json:"status"`
+	Summary   string `json:"summary"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// ArtifactDescriptor describes a single thread-local artifact summary.
+type ArtifactDescriptor struct {
+	ID        string `json:"id"`
+	ThreadID  string `json:"threadId"`
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// RuntimeFlagDescriptor describes a single thread-local runtime flag.
+type RuntimeFlagDescriptor struct {
+	ThreadID  string `json:"threadId"`
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
 // EventDescriptor describes a single thread event for logs/activity views.
 type EventDescriptor struct {
 	ID        string `json:"id"`
@@ -71,6 +107,31 @@ type EventDescriptor struct {
 // CreateTaskRequest defines the minimum request body for creating a thread task.
 type CreateTaskRequest struct {
 	Title string `json:"title"`
+}
+
+// CreateMessageRequest defines the minimum request body for appending a thread message.
+type CreateMessageRequest struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// CreateToolCallRequest defines the minimum request body for appending a thread tool call.
+type CreateToolCallRequest struct {
+	ToolID  string `json:"toolId"`
+	Status  string `json:"status"`
+	Summary string `json:"summary"`
+}
+
+// CreateArtifactRequest defines the minimum request body for appending a thread artifact.
+type CreateArtifactRequest struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
+// SetRuntimeFlagRequest defines the minimum request body for upserting a thread runtime flag.
+type SetRuntimeFlagRequest struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // UpdateTaskStatusRequest defines the minimum request body for updating a task status.
@@ -123,6 +184,14 @@ type Service interface {
 	ActivateThread(ctx context.Context, id string) (ThreadDescriptor, error)
 	Tasks(ctx context.Context, threadID string) ([]TaskDescriptor, error)
 	CreateTask(ctx context.Context, threadID string, request CreateTaskRequest) (TaskDescriptor, error)
+	Messages(ctx context.Context, threadID string) ([]MessageDescriptor, error)
+	AppendMessage(ctx context.Context, threadID string, request CreateMessageRequest) (MessageDescriptor, error)
+	ToolCalls(ctx context.Context, threadID string) ([]ToolCallDescriptor, error)
+	AppendToolCall(ctx context.Context, threadID string, request CreateToolCallRequest) (ToolCallDescriptor, error)
+	Artifacts(ctx context.Context, threadID string) ([]ArtifactDescriptor, error)
+	AppendArtifact(ctx context.Context, threadID string, request CreateArtifactRequest) (ArtifactDescriptor, error)
+	RuntimeFlags(ctx context.Context, threadID string) ([]RuntimeFlagDescriptor, error)
+	SetRuntimeFlag(ctx context.Context, threadID string, request SetRuntimeFlagRequest) (RuntimeFlagDescriptor, error)
 	UpdateTaskStatus(ctx context.Context, threadID string, taskID string, request UpdateTaskStatusRequest) (TaskDescriptor, error)
 	Events(ctx context.Context, threadID string) ([]EventDescriptor, error)
 	StreamEvents(ctx context.Context, threadID string) (<-chan EventDescriptor, error)
@@ -177,6 +246,38 @@ func (noopService) Tasks(context.Context, string) ([]TaskDescriptor, error) {
 
 func (noopService) CreateTask(context.Context, string, CreateTaskRequest) (TaskDescriptor, error) {
 	return TaskDescriptor{}, nil
+}
+
+func (noopService) Messages(context.Context, string) ([]MessageDescriptor, error) {
+	return []MessageDescriptor{}, nil
+}
+
+func (noopService) AppendMessage(context.Context, string, CreateMessageRequest) (MessageDescriptor, error) {
+	return MessageDescriptor{}, nil
+}
+
+func (noopService) ToolCalls(context.Context, string) ([]ToolCallDescriptor, error) {
+	return []ToolCallDescriptor{}, nil
+}
+
+func (noopService) AppendToolCall(context.Context, string, CreateToolCallRequest) (ToolCallDescriptor, error) {
+	return ToolCallDescriptor{}, nil
+}
+
+func (noopService) Artifacts(context.Context, string) ([]ArtifactDescriptor, error) {
+	return []ArtifactDescriptor{}, nil
+}
+
+func (noopService) AppendArtifact(context.Context, string, CreateArtifactRequest) (ArtifactDescriptor, error) {
+	return ArtifactDescriptor{}, nil
+}
+
+func (noopService) RuntimeFlags(context.Context, string) ([]RuntimeFlagDescriptor, error) {
+	return []RuntimeFlagDescriptor{}, nil
+}
+
+func (noopService) SetRuntimeFlag(context.Context, string, SetRuntimeFlagRequest) (RuntimeFlagDescriptor, error) {
+	return RuntimeFlagDescriptor{}, nil
 }
 
 func (noopService) UpdateTaskStatus(context.Context, string, string, UpdateTaskStatusRequest) (TaskDescriptor, error) {
