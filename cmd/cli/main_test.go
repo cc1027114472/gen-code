@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -104,6 +105,16 @@ func TestCreateTaskPrintsPowerShellInputHint(t *testing.T) {
 	require.Contains(t, output, "PowerShell JSON can use --input='{\"path\":\"go.mod\"}'")
 }
 
+func TestNormalizeTaskInputAcceptsLoosePowerShellObject(t *testing.T) {
+	assertJSONEqual(t, `{"path":"go.mod"}`, normalizeTaskInput(`{path:go.mod}`))
+	assertJSONEqual(t, `{"query":"workspace","path":"internal"}`, normalizeTaskInput(`{query:workspace,path:internal}`))
+	assertJSONEqual(t, `{"path":"go.mod","recursive":true}`, normalizeTaskInput(`{path:'go.mod',recursive:true}`))
+}
+
+func TestNormalizeTaskInputLeavesValidJSONUntouched(t *testing.T) {
+	assertJSONEqual(t, `{"path":"go.mod"}`, normalizeTaskInput(`{"path":"go.mod"}`))
+}
+
 func TestFallbackText(t *testing.T) {
 	require.Equal(t, "fallback", fallbackText("", "fallback"))
 	require.Equal(t, "fallback", fallbackText("   ", "fallback"))
@@ -138,4 +149,14 @@ func captureOutput(t *testing.T, fn func()) string {
 	require.NoError(t, reader.Close())
 
 	return buffer.String()
+}
+
+func assertJSONEqual(t *testing.T, expected string, actual string) {
+	t.Helper()
+
+	var expectedValue any
+	var actualValue any
+	require.NoError(t, json.Unmarshal([]byte(expected), &expectedValue))
+	require.NoError(t, json.Unmarshal([]byte(actual), &actualValue))
+	require.Equal(t, expectedValue, actualValue)
 }

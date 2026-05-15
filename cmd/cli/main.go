@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -679,10 +680,11 @@ func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) err
 }
 
 func createTask(ctx context.Context, facade *runtimeFacade, threadID string, title string, kind string, input string) error {
+	normalizedInput := normalizeTaskInput(input)
 	item, err := facade.createTask(ctx, threadID, runtimecontract.CreateTaskRequest{
 		Title: title,
 		Kind:  kind,
-		Input: input,
+		Input: normalizedInput,
 	})
 	if err != nil {
 		return err
@@ -844,6 +846,124 @@ func runtimeSourceDetail(source string) string {
 	default:
 		return "unknown runtime source"
 	}
+}
+
+func normalizeTaskInput(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return raw
+	}
+	if json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+	normalized, ok := normalizeLooseObject(trimmed)
+	if ok {
+		return normalized
+	}
+	return trimmed
+}
+
+func normalizeLooseObject(raw string) (string, bool) {
+	if !strings.HasPrefix(raw, "{") || !strings.HasSuffix(raw, "}") {
+		return "", false
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(raw, "{"), "}"))
+	if body == "" {
+		return "{}", true
+	}
+
+	parts := splitLooseObject(body)
+	if len(parts) == 0 {
+		return "", false
+	}
+
+	values := make(map[string]any, len(parts))
+	for _, part := range parts {
+		key, value, ok := strings.Cut(part, ":")
+		if !ok {
+			return "", false
+		}
+		key = strings.Trim(strings.TrimSpace(key), `"'`)
+		if key == "" {
+			return "", false
+		}
+		parsedValue, ok := parseLooseValue(value)
+		if !ok {
+			return "", false
+		}
+		values[key] = parsedValue
+	}
+
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return "", false
+	}
+	return string(encoded), true
+}
+
+func splitLooseObject(body string) []string {
+	parts := make([]string, 0)
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+
+	for _, r := range body {
+		switch r {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case ',':
+			if !inSingle && !inDouble {
+				part := strings.TrimSpace(current.String())
+				if part != "" {
+					parts = append(parts, part)
+				}
+				current.Reset()
+				continue
+			}
+		}
+		current.WriteRune(r)
+	}
+
+	part := strings.TrimSpace(current.String())
+	if part != "" {
+		parts = append(parts, part)
+	}
+	return parts
+}
+
+func parseLooseValue(raw string) (any, bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", true
+	}
+	if len(value) >= 2 {
+		if (strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`)) || (strings.HasPrefix(value, `'`) && strings.HasSuffix(value, `'`)) {
+			return strings.Trim(value, `"'`), true
+		}
+	}
+
+	switch strings.ToLower(value) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	case "null":
+		return nil, true
+	}
+
+	if i, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return i, true
+	}
+	if f, err := strconv.ParseFloat(value, 64); err == nil {
+		return f, true
+	}
+	return value, true
 }
 
 func (c *remoteRuntimeClient) status() (runtimecontract.Status, error) {
