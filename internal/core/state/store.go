@@ -1,0 +1,346 @@
+package state
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+const (
+	StoreName = "sqlite"
+	dbFile    = "state.db"
+)
+
+// WorkspaceRecord is the persisted workspace row.
+type WorkspaceRecord struct {
+	ID             string
+	ProjectRoot    string
+	SharedDocsRoot string
+	CreatedAt      time.Time
+	ActiveThreadID string
+}
+
+// ThreadRecord is the persisted thread row.
+type ThreadRecord struct {
+	ID             string
+	WorkspaceID    string
+	Name           string
+	Status         string
+	ActiveModel    string
+	PermissionMode string
+	CreatedAt      time.Time
+}
+
+// TaskRecord is the persisted task row.
+type TaskRecord struct {
+	ID        string
+	ThreadID  string
+	Title     string
+	Status    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// EventRecord is the persisted event row.
+type EventRecord struct {
+	ID        string
+	ThreadID  string
+	Type      string
+	Message   string
+	CreatedAt time.Time
+}
+
+// Snapshot is the full persisted runtime state payload.
+type Snapshot struct {
+	Workspace WorkspaceRecord
+	Threads   []ThreadRecord
+	Tasks     []TaskRecord
+	Events    []EventRecord
+}
+
+// Store persists runtime state to SQLite.
+type Store struct {
+	path string
+	db   *sql.DB
+}
+
+// PathForProject returns the fixed state DB path for a project root.
+func PathForProject(projectRoot string) string {
+	return filepath.Join(projectRoot, ".gen-code", dbFile)
+}
+
+// Open creates the SQLite store and runs the minimum schema migration.
+func Open(projectRoot string) (*Store, error) {
+	path := PathForProject(projectRoot)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create state directory: %w", err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+
+	store := &Store{path: path, db: db}
+	if err := store.migrate(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	return store, nil
+}
+
+// Path returns the SQLite file path.
+func (s *Store) Path() string {
+	return s.path
+}
+
+// Close releases the SQLite handle.
+func (s *Store) Close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
+
+// Load returns the full persisted snapshot.
+func (s *Store) Load() (Snapshot, error) {
+	snapshot := Snapshot{}
+
+	row := s.db.QueryRow(`
+		SELECT id, project_root, shared_docs_root, created_at, active_thread_id
+		FROM workspace
+		ORDER BY created_at ASC
+		LIMIT 1
+	`)
+	var createdAt string
+	err := row.Scan(&snapshot.Workspace.ID, &snapshot.Workspace.ProjectRoot, &snapshot.Workspace.SharedDocsRoot, &createdAt, &snapshot.Workspace.ActiveThreadID)
+	switch {
+	case err == sql.ErrNoRows:
+	case err != nil:
+		return Snapshot{}, fmt.Errorf("load workspace: %w", err)
+	default:
+		snapshot.Workspace.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse workspace created_at: %w", err)
+		}
+	}
+
+	threadRows, err := s.db.Query(`
+		SELECT id, workspace_id, name, status, active_model, permission_mode, created_at
+		FROM threads
+		ORDER BY created_at ASC, id ASC
+	`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load threads: %w", err)
+	}
+	defer threadRows.Close()
+
+	for threadRows.Next() {
+		var item ThreadRecord
+		var created string
+		if err := threadRows.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Status, &item.ActiveModel, &item.PermissionMode, &created); err != nil {
+			return Snapshot{}, fmt.Errorf("scan thread: %w", err)
+		}
+		item.CreatedAt, err = time.Parse(time.RFC3339, created)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse thread created_at: %w", err)
+		}
+		snapshot.Threads = append(snapshot.Threads, item)
+	}
+
+	taskRows, err := s.db.Query(`
+		SELECT id, thread_id, title, status, created_at, updated_at
+		FROM tasks
+		ORDER BY created_at ASC, id ASC
+	`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load tasks: %w", err)
+	}
+	defer taskRows.Close()
+
+	for taskRows.Next() {
+		var item TaskRecord
+		var created, updated string
+		if err := taskRows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Status, &created, &updated); err != nil {
+			return Snapshot{}, fmt.Errorf("scan task: %w", err)
+		}
+		item.CreatedAt, err = time.Parse(time.RFC3339, created)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse task created_at: %w", err)
+		}
+		item.UpdatedAt, err = time.Parse(time.RFC3339, updated)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse task updated_at: %w", err)
+		}
+		snapshot.Tasks = append(snapshot.Tasks, item)
+	}
+
+	eventRows, err := s.db.Query(`
+		SELECT id, thread_id, type, message, created_at
+		FROM events
+		ORDER BY created_at ASC, id ASC
+	`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load events: %w", err)
+	}
+	defer eventRows.Close()
+
+	for eventRows.Next() {
+		var item EventRecord
+		var created string
+		if err := eventRows.Scan(&item.ID, &item.ThreadID, &item.Type, &item.Message, &created); err != nil {
+			return Snapshot{}, fmt.Errorf("scan event: %w", err)
+		}
+		item.CreatedAt, err = time.Parse(time.RFC3339, created)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse event created_at: %w", err)
+		}
+		snapshot.Events = append(snapshot.Events, item)
+	}
+
+	return snapshot, nil
+}
+
+// SaveWorkspace upserts the single workspace record.
+func (s *Store) SaveWorkspace(item WorkspaceRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO workspace (id, project_root, shared_docs_root, created_at, active_thread_id)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			project_root=excluded.project_root,
+			shared_docs_root=excluded.shared_docs_root,
+			created_at=excluded.created_at,
+			active_thread_id=excluded.active_thread_id
+	`, item.ID, item.ProjectRoot, item.SharedDocsRoot, item.CreatedAt.Format(time.RFC3339), item.ActiveThreadID)
+	if err != nil {
+		return fmt.Errorf("save workspace: %w", err)
+	}
+	return nil
+}
+
+// SaveThread upserts a thread row.
+func (s *Store) SaveThread(item ThreadRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO threads (id, workspace_id, name, status, active_model, permission_mode, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			workspace_id=excluded.workspace_id,
+			name=excluded.name,
+			status=excluded.status,
+			active_model=excluded.active_model,
+			permission_mode=excluded.permission_mode,
+			created_at=excluded.created_at
+	`, item.ID, item.WorkspaceID, item.Name, item.Status, item.ActiveModel, item.PermissionMode, item.CreatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("save thread: %w", err)
+	}
+	return nil
+}
+
+// SaveTask upserts a task row.
+func (s *Store) SaveTask(item TaskRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO tasks (id, thread_id, title, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			thread_id=excluded.thread_id,
+			title=excluded.title,
+			status=excluded.status,
+			created_at=excluded.created_at,
+			updated_at=excluded.updated_at
+	`, item.ID, item.ThreadID, item.Title, item.Status, item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("save task: %w", err)
+	}
+	return nil
+}
+
+// SaveEvent inserts an event row.
+func (s *Store) SaveEvent(item EventRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO events (id, thread_id, type, message, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, item.ID, item.ThreadID, item.Type, item.Message, item.CreatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("save event: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) migrate() error {
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS schema_version (
+			version INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS workspace (
+			id TEXT PRIMARY KEY,
+			project_root TEXT NOT NULL,
+			shared_docs_root TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			active_thread_id TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS threads (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			status TEXT NOT NULL,
+			active_model TEXT NOT NULL DEFAULT '',
+			permission_mode TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS tasks (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			status TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS events (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			type TEXT NOT NULL,
+			message TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+	}
+
+	for _, query := range queries {
+		if _, err := s.db.Exec(query); err != nil {
+			return fmt.Errorf("migrate sqlite schema: %w", err)
+		}
+	}
+
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_version`).Scan(&count); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if count == 0 {
+		if _, err := s.db.Exec(`INSERT INTO schema_version(version) VALUES (1)`); err != nil {
+			return fmt.Errorf("write schema version: %w", err)
+		}
+	}
+	return nil
+}
+
+// MaxSuffix extracts the largest trailing integer from IDs like thread-12.
+func MaxSuffix(ids []string, prefix string) int {
+	maxValue := 0
+	for _, id := range ids {
+		if !strings.HasPrefix(id, prefix) {
+			continue
+		}
+		value, err := strconv.Atoi(strings.TrimPrefix(id, prefix))
+		if err == nil && value > maxValue {
+			maxValue = value
+		}
+	}
+	return maxValue
+}

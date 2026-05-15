@@ -21,6 +21,8 @@ type Status struct {
 	AppServerStatus        string      `json:"app_server_status"`
 	GoBridgeStatus         string      `json:"go_bridge_status"`
 	RuntimeSource          string      `json:"runtime_source"`
+	StateStore             string      `json:"state_store"`
+	StatePath              string      `json:"state_path"`
 	WorkspaceID            string      `json:"workspace_id"`
 	ProjectRoot            string      `json:"project_root"`
 	ThreadCount            int         `json:"thread_count"`
@@ -92,6 +94,8 @@ func (s *Service) Snapshot() Status {
 		AppServerStatus:        s.appServer,
 		GoBridgeStatus:         s.goBridge,
 		RuntimeSource:          "local",
+		StateStore:             s.session.StateStoreName(),
+		StatePath:              s.session.StatePath(),
 		WorkspaceID:            workspace.ID,
 		ProjectRoot:            workspace.ProjectRoot,
 		ThreadCount:            workspace.ActiveThreadCount,
@@ -112,6 +116,8 @@ func (s *Service) Status(context.Context) (runtimecontract.Status, error) {
 		Ready:          snapshot.AppServerStatus == "running",
 		Message:        snapshot.GoBridgeStatus,
 		RuntimeSource:  snapshot.RuntimeSource,
+		StateStore:     snapshot.StateStore,
+		StatePath:      snapshot.StatePath,
 		WorkspaceID:    snapshot.WorkspaceID,
 		ProjectRoot:    snapshot.ProjectRoot,
 		ThreadCount:    snapshot.ThreadCount,

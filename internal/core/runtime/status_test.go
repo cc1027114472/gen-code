@@ -11,10 +11,16 @@ import (
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/session"
 	"llmtrace/internal/core/skill"
+	"llmtrace/internal/core/state"
 	"llmtrace/internal/core/tool"
 )
 
 func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
+	projectRoot := t.TempDir()
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
 	registry := tool.NewRegistry()
 	registry.Register(tool.Descriptor{
 		ID:                 "bridge.check",
@@ -25,11 +31,14 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 		Source:             "runtime",
 	})
 
+	sessions, err := session.NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+
 	service := NewService(
 		"0.1.0",
 		skill.Codex,
 		policy.DefaultMode(),
-		`D:\GOWorks\gen-code-heji\gen-code`,
+		projectRoot,
 		registry,
 		skill.NewManager([]skill.Descriptor{
 			{ID: "common.browser", Group: skill.Common, Name: "Browser", Description: "Reusable browser skill"},
@@ -43,7 +52,7 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 			ToolCount:     2,
 			ResourceCount: 3,
 		}}),
-		session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`),
+		sessions,
 	)
 
 	created, err := service.CreateThread(context.Background(), runtimecontract.CreateThreadRequest{
@@ -89,10 +98,12 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 
 	status, err := service.Status(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, "gen-code", status.WorkspaceID)
-	require.Equal(t, `D:\GOWorks\gen-code-heji\gen-code`, status.ProjectRoot)
+	require.Equal(t, sessions.Workspace().ID, status.WorkspaceID)
+	require.Equal(t, projectRoot, status.ProjectRoot)
 	require.Equal(t, 1, status.ThreadCount)
 	require.Equal(t, "thread-1", status.ActiveThreadID)
+	require.Equal(t, state.StoreName, status.StateStore)
+	require.Equal(t, state.PathForProject(projectRoot), status.StatePath)
 
 	tasks, err := service.Tasks(context.Background(), created.ID)
 	require.NoError(t, err)

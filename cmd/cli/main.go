@@ -390,6 +390,8 @@ func printRuntimeStatus(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Printf("  runtime message: %s\n", fallbackText(status.Message, "none"))
 	fmt.Printf("  desktop shell status: %s\n", core.DesktopShellStatus)
 	fmt.Printf("  go bridge status: %s\n", core.GoBridgeStatus)
+	fmt.Printf("  state store: %s\n", fallbackText(status.StateStore, "none"))
+	fmt.Printf("  state path: %s\n", fallbackText(status.StatePath, "none"))
 	fmt.Printf("  workspace id: %s\n", fallbackText(status.WorkspaceID, "none"))
 	fmt.Printf("  project root: %s\n", fallbackText(status.ProjectRoot, "none"))
 	fmt.Printf("  thread count: %d\n", status.ThreadCount)

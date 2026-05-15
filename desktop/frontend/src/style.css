@@ -220,6 +220,11 @@ button {
   line-height: 1.8;
 }
 
+.sidebar__note--strong {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -414,6 +419,41 @@ button {
   display: grid;
   gap: 14px;
   padding: 20px 22px;
+}
+
+.store-card {
+  display: grid;
+  gap: 14px;
+  padding: 20px 22px;
+}
+
+.store-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.store-item {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(248, 249, 251, 0.92);
+  border: 1px solid rgba(34, 49, 76, 0.06);
+}
+
+.store-item p {
+  margin: 0 0 6px;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.store-item strong {
+  display: block;
+  color: var(--text-main);
+  line-height: 1.7;
+  word-break: break-word;
+  font-size: 14px;
 }
 
 .task-grid {
@@ -654,6 +694,10 @@ button {
   }
 
   .task-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .store-grid {
     grid-template-columns: 1fr;
   }
 

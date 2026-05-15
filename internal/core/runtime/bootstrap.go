@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"sort"
+
+	"llmtrace/internal/core/state"
 )
 
 const defaultVersion = "0.1.0"
@@ -9,7 +11,13 @@ const defaultVersion = "0.1.0"
 // NewDefaultService creates the minimal phase-one runtime used by server, CLI, and desktop.
 func NewDefaultService() *Service {
 	discovered := discoverSiblingRuntimeContent(workspaceRoot())
-	return newServiceFromDiscovery(discovered)
+	return newServiceFromDiscoveryWithStore(discovered, nil)
+}
+
+// NewDefaultServiceWithStateStore creates the shared runtime with an explicit state store.
+func NewDefaultServiceWithStateStore(store *state.Store) *Service {
+	discovered := discoverSiblingRuntimeContent(workspaceRoot())
+	return newServiceFromDiscoveryWithStore(discovered, store)
 }
 
 // SkillGroups returns the concrete skill names grouped for CLI inspection.

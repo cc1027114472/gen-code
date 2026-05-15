@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"llmtrace/internal/core/policy"
+	"llmtrace/internal/core/state"
 )
 
 func TestNewRegistryCreatesSingleWorkspace(t *testing.T) {
@@ -106,4 +107,44 @@ func TestUpdateTaskStatusRejectsInvalidStatus(t *testing.T) {
 
 	_, err := registry.UpdateTaskStatus(thread.ID, task.ID, UpdateTaskStatusInput{Status: "paused"})
 	require.ErrorIs(t, err, ErrInvalidTaskStatus)
+}
+
+func TestRegistryRestoresAndPersistsViaSQLiteStore(t *testing.T) {
+	projectRoot := t.TempDir()
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+
+	registry, err := NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+	require.Equal(t, state.StoreName, registry.StateStoreName())
+	require.Equal(t, state.PathForProject(projectRoot), registry.StatePath())
+
+	thread := registry.CreateThread(CreateThreadInput{Name: "First"})
+	task, ok := registry.CreateTask(thread.ID, CreateTaskInput{Title: "Draft spec"})
+	require.True(t, ok)
+
+	updated, err := registry.UpdateTaskStatus(thread.ID, task.ID, UpdateTaskStatusInput{Status: "completed"})
+	require.NoError(t, err)
+	require.Equal(t, "completed", updated.Status)
+
+	require.NoError(t, store.Close())
+	store, err = state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+	reloaded, err := NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+
+	threads := reloaded.Threads()
+	require.Len(t, threads, 1)
+	require.Equal(t, "First", threads[0].Name)
+	require.Equal(t, thread.ID, reloaded.ActiveThreadID())
+
+	tasks, ok := reloaded.Tasks(thread.ID)
+	require.True(t, ok)
+	require.Len(t, tasks, 1)
+	require.Equal(t, "completed", tasks[0].Status)
+
+	events, ok := reloaded.Events(thread.ID)
+	require.True(t, ok)
+	require.Len(t, events, 3)
 }

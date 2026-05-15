@@ -48,7 +48,7 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			method:         http.MethodGet,
 			path:           "/api/runtime/status",
 			wantStatusCode: http.StatusOK,
-			wantBody:       []string{`"state":"ready"`, `"ready":true`, `"workspaceId":"gen-code"`, `"threadCount":2`, `"activeThreadId":"thread-1"`},
+			wantBody:       []string{`"state":"ready"`, `"ready":true`, `"workspaceId":"gen-code"`, `"threadCount":2`, `"activeThreadId":"thread-1"`, `"stateStore":"sqlite"`, `"statePath":"D:\\GOWorks\\gen-code-heji\\gen-code\\.gen-code\\state.db"`},
 		},
 		{
 			name:           "workspace",
@@ -286,6 +286,8 @@ func (stubRuntimeService) Status(context.Context) (runtimecontract.Status, error
 	return runtimecontract.Status{
 		State:          "ready",
 		Ready:          true,
+		StateStore:     "sqlite",
+		StatePath:      `D:\GOWorks\gen-code-heji\gen-code\.gen-code\state.db`,
 		WorkspaceID:    "gen-code",
 		ProjectRoot:    `D:\GOWorks\gen-code-heji\gen-code`,
 		ThreadCount:    2,

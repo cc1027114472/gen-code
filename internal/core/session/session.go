@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"llmtrace/internal/core/policy"
+	"llmtrace/internal/core/state"
 )
 
 // Workspace describes the shared runtime container for the currently opened project.
@@ -88,6 +89,7 @@ var (
 // Registry holds the in-memory workspace and thread set for the current runtime process.
 type Registry struct {
 	mu               sync.RWMutex
+	store            *state.Store
 	workspace        Workspace
 	threads          map[string]Thread
 	tasks            map[string][]Task
@@ -101,6 +103,15 @@ type Registry struct {
 
 // NewRegistry creates the default single-workspace registry for the given project root.
 func NewRegistry(projectRoot string) *Registry {
+	registry, err := NewRegistryWithStore(projectRoot, nil)
+	if err != nil {
+		panic(err)
+	}
+	return registry
+}
+
+// NewRegistryWithStore creates a registry and optionally hydrates it from a state store.
+func NewRegistryWithStore(projectRoot string, store *state.Store) (*Registry, error) {
 	workspaceID := filepath.Base(projectRoot)
 	if workspaceID == "" || workspaceID == "." || workspaceID == string(filepath.Separator) {
 		workspaceID = "workspace"
@@ -111,7 +122,8 @@ func NewRegistry(projectRoot string) *Registry {
 		sharedDocsRoot = docsCandidate
 	}
 
-	return &Registry{
+	registry := &Registry{
+		store: store,
 		workspace: Workspace{
 			ID:             workspaceID,
 			ProjectRoot:    projectRoot,
@@ -126,6 +138,17 @@ func NewRegistry(projectRoot string) *Registry {
 		nextTaskNumber:   1,
 		nextEventNumber:  1,
 	}
+
+	if store != nil {
+		if err := registry.restoreFromStore(); err != nil {
+			return nil, err
+		}
+		if err := registry.persistWorkspaceLocked(); err != nil {
+			return nil, err
+		}
+	}
+
+	return registry, nil
 }
 
 // Workspace returns the current workspace descriptor.
@@ -215,6 +238,8 @@ func (r *Registry) CreateThread(input CreateThreadInput) Thread {
 		r.activeThreadID = threadID
 	}
 	r.appendEventLocked(threadID, "thread.created", fmt.Sprintf("%s created", name))
+	_ = r.persistThreadLocked(thread)
+	_ = r.persistWorkspaceLocked()
 
 	return snapshotThread(thread, r.activeThreadID)
 }
@@ -230,6 +255,7 @@ func (r *Registry) ActivateThread(id string) (Thread, bool) {
 	}
 	r.activeThreadID = id
 	r.appendEventLocked(id, "thread.activated", fmt.Sprintf("%s activated", thread.Name))
+	_ = r.persistWorkspaceLocked()
 	return snapshotThread(thread, r.activeThreadID), true
 }
 
@@ -288,6 +314,8 @@ func (r *Registry) CreateTask(threadID string, input CreateTaskInput) (Task, boo
 	thread.TaskState = append(thread.TaskState, task.ID)
 	r.threads[threadID] = thread
 	r.appendEventLocked(threadID, "task.created", fmt.Sprintf("%s queued on %s", title, thread.Name))
+	_ = r.persistTaskLocked(task)
+	_ = r.persistThreadLocked(thread)
 	return task, true
 }
 
@@ -317,6 +345,7 @@ func (r *Registry) UpdateTaskStatus(threadID string, taskID string, input Update
 		r.tasks[threadID] = tasks
 		r.threads[threadID] = thread
 		r.appendEventLocked(threadID, "task.updated", fmt.Sprintf("%s moved to %s on %s", task.Title, task.Status, thread.Name))
+		_ = r.persistTaskLocked(task)
 		return task, nil
 	}
 
@@ -346,6 +375,7 @@ func (r *Registry) appendEventLocked(threadID string, eventType string, message 
 	}
 	r.nextEventNumber++
 	r.events[threadID] = append(r.events[threadID], event)
+	_ = r.persistEventLocked(event)
 }
 
 func isSupportedTaskStatus(status string) bool {
@@ -365,4 +395,163 @@ func (r *Registry) SortedIDs() []string {
 	ids := append([]string(nil), r.order...)
 	sort.Strings(ids)
 	return ids
+}
+
+// StateStoreName returns the backing persistence engine name.
+func (r *Registry) StateStoreName() string {
+	if r.store == nil {
+		return ""
+	}
+	return state.StoreName
+}
+
+// StatePath returns the resolved persistence file path.
+func (r *Registry) StatePath() string {
+	if r.store == nil {
+		return ""
+	}
+	return r.store.Path()
+}
+
+func (r *Registry) restoreFromStore() error {
+	snapshot, err := r.store.Load()
+	if err != nil {
+		return err
+	}
+
+	if snapshot.Workspace.ID != "" {
+		r.workspace.ID = snapshot.Workspace.ID
+		r.workspace.ProjectRoot = snapshot.Workspace.ProjectRoot
+		r.workspace.SharedDocsRoot = snapshot.Workspace.SharedDocsRoot
+		r.workspace.CreatedAt = snapshot.Workspace.CreatedAt
+		r.activeThreadID = snapshot.Workspace.ActiveThreadID
+	}
+
+	for _, item := range snapshot.Threads {
+		thread := Thread{
+			ID:             item.ID,
+			WorkspaceID:    item.WorkspaceID,
+			Name:           item.Name,
+			Status:         item.Status,
+			ActiveModel:    item.ActiveModel,
+			PermissionMode: policy.Mode(item.PermissionMode),
+			MessageHistory: []string{},
+			ToolHistory:    []string{},
+			TaskState:      []string{},
+			ArtifactPaths:  []string{},
+			RuntimeFlags:   []string{},
+			CreatedAt:      item.CreatedAt,
+		}
+		r.threads[item.ID] = thread
+		r.order = append(r.order, item.ID)
+	}
+
+	for _, item := range snapshot.Tasks {
+		task := Task{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Title:     item.Title,
+			Status:    item.Status,
+			CreatedAt: item.CreatedAt,
+			UpdatedAt: item.UpdatedAt,
+		}
+		r.tasks[item.ThreadID] = append(r.tasks[item.ThreadID], task)
+		thread := r.threads[item.ThreadID]
+		thread.TaskState = append(thread.TaskState, item.ID)
+		r.threads[item.ThreadID] = thread
+	}
+
+	for _, item := range snapshot.Events {
+		r.events[item.ThreadID] = append(r.events[item.ThreadID], Event{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Type:      item.Type,
+			Message:   item.Message,
+			CreatedAt: item.CreatedAt,
+		})
+	}
+
+	r.nextThreadNumber = state.MaxSuffix(r.order, "thread-") + 1
+	if r.nextThreadNumber == 1 && len(r.order) == 0 {
+		r.nextThreadNumber = 1
+	}
+
+	taskIDs := make([]string, 0)
+	for _, items := range r.tasks {
+		for _, item := range items {
+			taskIDs = append(taskIDs, item.ID)
+		}
+	}
+	r.nextTaskNumber = state.MaxSuffix(taskIDs, "task-") + 1
+	if r.nextTaskNumber == 1 && len(taskIDs) == 0 {
+		r.nextTaskNumber = 1
+	}
+
+	eventIDs := make([]string, 0)
+	for _, items := range r.events {
+		for _, item := range items {
+			eventIDs = append(eventIDs, item.ID)
+		}
+	}
+	r.nextEventNumber = state.MaxSuffix(eventIDs, "event-") + 1
+	if r.nextEventNumber == 1 && len(eventIDs) == 0 {
+		r.nextEventNumber = 1
+	}
+
+	return nil
+}
+
+func (r *Registry) persistWorkspaceLocked() error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.SaveWorkspace(state.WorkspaceRecord{
+		ID:             r.workspace.ID,
+		ProjectRoot:    r.workspace.ProjectRoot,
+		SharedDocsRoot: r.workspace.SharedDocsRoot,
+		CreatedAt:      r.workspace.CreatedAt,
+		ActiveThreadID: r.activeThreadID,
+	})
+}
+
+func (r *Registry) persistThreadLocked(thread Thread) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.SaveThread(state.ThreadRecord{
+		ID:             thread.ID,
+		WorkspaceID:    thread.WorkspaceID,
+		Name:           thread.Name,
+		Status:         thread.Status,
+		ActiveModel:    thread.ActiveModel,
+		PermissionMode: string(thread.PermissionMode),
+		CreatedAt:      thread.CreatedAt,
+	})
+}
+
+func (r *Registry) persistTaskLocked(task Task) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.SaveTask(state.TaskRecord{
+		ID:        task.ID,
+		ThreadID:  task.ThreadID,
+		Title:     task.Title,
+		Status:    task.Status,
+		CreatedAt: task.CreatedAt,
+		UpdatedAt: task.UpdatedAt,
+	})
+}
+
+func (r *Registry) persistEventLocked(event Event) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.SaveEvent(state.EventRecord{
+		ID:        event.ID,
+		ThreadID:  event.ThreadID,
+		Type:      event.Type,
+		Message:   event.Message,
+		CreatedAt: event.CreatedAt,
+	})
 }

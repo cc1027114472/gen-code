@@ -8,6 +8,8 @@ type Status struct {
 	Ready          bool   `json:"ready"`
 	Message        string `json:"message,omitempty"`
 	RuntimeSource  string `json:"runtimeSource,omitempty"`
+	StateStore     string `json:"stateStore,omitempty"`
+	StatePath      string `json:"statePath,omitempty"`
 	WorkspaceID    string `json:"workspaceId,omitempty"`
 	ProjectRoot    string `json:"projectRoot,omitempty"`
 	ThreadCount    int    `json:"threadCount,omitempty"`
