@@ -15,6 +15,9 @@ type Descriptor struct {
 	InputSchemaSummary string      `json:"input_schema_summary"`
 	PermissionMode     policy.Mode `json:"permission_mode"`
 	Source             string      `json:"source"`
+	Kind               string      `json:"kind"`
+	ReadOnly           bool        `json:"read_only"`
+	Executable         bool        `json:"executable"`
 }
 
 // Registry stores tool descriptors for runtime discovery.

@@ -762,7 +762,15 @@ func printTools(ctx context.Context, facade *runtimeFacade) error {
 		return err
 	}
 	for _, item := range items {
-		fmt.Printf("  - %s (%s, %s)\n", item.ID, fallbackText(item.Source, "runtime"), fallbackText(item.Permission, "unknown"))
+		fmt.Printf(
+			"  - %s (%s, %s, kind=%s, executable=%t, readOnly=%t)\n",
+			item.ID,
+			fallbackText(item.Source, "runtime"),
+			fallbackText(item.Permission, "unknown"),
+			fallbackText(item.Kind, "none"),
+			item.Executable,
+			item.ReadOnly,
+		)
 	}
 	return nil
 }

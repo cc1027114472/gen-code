@@ -107,6 +107,13 @@ type EventDescriptor struct {
 	CreatedAt string `json:"createdAt"`
 }
 
+// StreamEventsRequest defines replay options for the event stream endpoint.
+type StreamEventsRequest struct {
+	Limit     int
+	SinceID   string
+	SinceTime string
+}
+
 // CreateTaskRequest defines the minimum request body for creating a thread task.
 type CreateTaskRequest struct {
 	Title string `json:"title"`
@@ -163,6 +170,9 @@ type Tool struct {
 	Description string `json:"description,omitempty"`
 	Permission  string `json:"permissionMode,omitempty"`
 	Source      string `json:"source,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	ReadOnly    bool   `json:"readOnly"`
+	Executable  bool   `json:"executable"`
 }
 
 // MCPServer describes a configured MCP server.
@@ -203,7 +213,7 @@ type Service interface {
 	SetRuntimeFlag(ctx context.Context, threadID string, request SetRuntimeFlagRequest) (RuntimeFlagDescriptor, error)
 	UpdateTaskStatus(ctx context.Context, threadID string, taskID string, request UpdateTaskStatusRequest) (TaskDescriptor, error)
 	Events(ctx context.Context, threadID string) ([]EventDescriptor, error)
-	StreamEvents(ctx context.Context, threadID string) (<-chan EventDescriptor, error)
+	StreamEvents(ctx context.Context, threadID string, request StreamEventsRequest) (<-chan EventDescriptor, error)
 	Skills(ctx context.Context) ([]Skill, error)
 	Tools(ctx context.Context) ([]Tool, error)
 	MCPServers(ctx context.Context) ([]MCPServer, error)
@@ -301,7 +311,7 @@ func (noopService) Events(context.Context, string) ([]EventDescriptor, error) {
 	return []EventDescriptor{}, nil
 }
 
-func (noopService) StreamEvents(context.Context, string) (<-chan EventDescriptor, error) {
+func (noopService) StreamEvents(context.Context, string, StreamEventsRequest) (<-chan EventDescriptor, error) {
 	ch := make(chan EventDescriptor)
 	close(ch)
 	return ch, nil

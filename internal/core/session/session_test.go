@@ -87,6 +87,26 @@ func TestThreadContextAppendAndRestore(t *testing.T) {
 	require.Equal(t, "preview", flags[0].Key)
 }
 
+func TestRegistryPublishesRuntimeEventsToSubscribers(t *testing.T) {
+	registry := NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+	thread := registry.CreateThread(CreateThreadInput{Name: "Context"})
+
+	stream, cancel, err := registry.SubscribeEvents(thread.ID)
+	require.NoError(t, err)
+	defer cancel()
+
+	err = registry.AppendRuntimeEvent(thread.ID, "task.started", "Task started")
+	require.NoError(t, err)
+
+	select {
+	case event := <-stream:
+		require.Equal(t, "task.started", event.Type)
+		require.Equal(t, "Task started", event.Message)
+	default:
+		t.Fatal("expected runtime event to be published")
+	}
+}
+
 func TestActivateThreadOnlySwitchesPointer(t *testing.T) {
 	registry := NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
 

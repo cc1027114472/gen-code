@@ -190,7 +190,7 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			method:         http.MethodGet,
 			path:           "/api/threads/thread-1/events/stream",
 			wantStatusCode: http.StatusOK,
-			wantBody:       []string{`event: thread.created`, `data: {"id":"event-1","threadId":"thread-1","type":"thread.created","message":"Thread 1 created","createdAt":"2026-05-15T00:00:00Z"}`},
+			wantBody:       []string{`event: thread.created`, `event: task.started`, `"message":"Task says \"hello\"\nwith newline"`},
 		},
 		{
 			name:           "skills",
@@ -204,7 +204,7 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			method:         http.MethodGet,
 			path:           "/api/tools",
 			wantStatusCode: http.StatusOK,
-			wantBody:       []string{`"items":[{"id":"tool-1","name":"Tool One","description":"Tool description","permissionMode":"ask-user","source":"runtime"}`},
+			wantBody:       []string{`"items":[{"id":"tool-1","name":"Tool One","description":"Tool description","permissionMode":"ask-user","source":"runtime","kind":"workspace.read_file","readOnly":true,"executable":true}`},
 		},
 		{
 			name:           "mcp servers",
@@ -346,6 +346,28 @@ func TestNewRejectsInvalidTaskStatusPayload(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), `"code":1001`)
+}
+
+func TestNewAllowsLocalDevCORSPreflight(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	log, err := xlog.New("debug")
+	require.NoError(t, err)
+
+	engine, err := New(log, "gen-code", []string{"127.0.0.1"}, false, Handlers{
+		Runtime: handler.NewRuntimeHandler(stubRuntimeService{}),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/runtime/status", nil)
+	req.Header.Set("Origin", "http://127.0.0.1:5173")
+	rec := httptest.NewRecorder()
+
+	engine.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.Equal(t, "http://127.0.0.1:5173", rec.Header().Get("Access-Control-Allow-Origin"))
+	require.Contains(t, rec.Header().Get("Access-Control-Allow-Methods"), http.MethodGet)
 }
 
 type stubRuntimeService struct{}
@@ -616,18 +638,25 @@ func (stubRuntimeService) Events(context.Context, string) ([]runtimecontract.Eve
 	}}, nil
 }
 
-func (stubRuntimeService) StreamEvents(_ context.Context, threadID string) (<-chan runtimecontract.EventDescriptor, error) {
+func (stubRuntimeService) StreamEvents(_ context.Context, threadID string, _ runtimecontract.StreamEventsRequest) (<-chan runtimecontract.EventDescriptor, error) {
 	if threadID == "missing" {
 		return nil, xerror.NotFound(1004, "thread not found")
 	}
 
-	ch := make(chan runtimecontract.EventDescriptor, 1)
+	ch := make(chan runtimecontract.EventDescriptor, 2)
 	ch <- runtimecontract.EventDescriptor{
 		ID:        "event-1",
 		ThreadID:  "thread-1",
 		Type:      "thread.created",
 		Message:   "Thread 1 created",
 		CreatedAt: "2026-05-15T00:00:00Z",
+	}
+	ch <- runtimecontract.EventDescriptor{
+		ID:        "event-2",
+		ThreadID:  "thread-1",
+		Type:      "task.started",
+		Message:   "Task says \"hello\"\nwith newline",
+		CreatedAt: "2026-05-15T00:01:00Z",
 	}
 	close(ch)
 	return ch, nil
@@ -650,6 +679,9 @@ func (stubRuntimeService) Tools(context.Context) ([]runtimecontract.Tool, error)
 		Description: "Tool description",
 		Permission:  "ask-user",
 		Source:      "runtime",
+		Kind:        "workspace.read_file",
+		ReadOnly:    true,
+		Executable:  true,
 	}}, nil
 }
 
@@ -755,7 +787,7 @@ func (errorRuntimeService) Events(context.Context, string) ([]runtimecontract.Ev
 	return nil, xerror.Internal(2001, "runtime unavailable")
 }
 
-func (errorRuntimeService) StreamEvents(context.Context, string) (<-chan runtimecontract.EventDescriptor, error) {
+func (errorRuntimeService) StreamEvents(context.Context, string, runtimecontract.StreamEventsRequest) (<-chan runtimecontract.EventDescriptor, error) {
 	return nil, xerror.Internal(2001, "runtime unavailable")
 }
 

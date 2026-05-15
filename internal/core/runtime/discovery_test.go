@@ -93,6 +93,9 @@ func TestDiscoverSiblingRuntimeContentUsesExpectedSiblingPaths(t *testing.T) {
 		InputSchemaSummary: "Project-defined tool input",
 		PermissionMode:     policy.AskUser,
 		Source:             "cc",
+		Kind:               "external",
+		ReadOnly:           false,
+		Executable:         false,
 	})
 	require.Contains(t, discovered.mcp, mcp.ServerDescriptor{
 		ID:            "@modelcontextprotocol",

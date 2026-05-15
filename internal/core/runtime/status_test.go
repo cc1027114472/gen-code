@@ -29,6 +29,9 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 		InputSchemaSummary: "No input",
 		PermissionMode:     policy.AskUser,
 		Source:             "runtime",
+		Kind:               "bridge",
+		ReadOnly:           true,
+		Executable:         false,
 	})
 
 	sessions, err := session.NewRegistryWithStore(projectRoot, store)
@@ -57,7 +60,7 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 
 	created, err := service.CreateThread(context.Background(), runtimecontract.CreateThreadRequest{
 		Name:           "Thread 1",
-		PermissionMode: "ask-user",
+		PermissionMode: "workspace-write",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "thread-1", created.ID)
@@ -123,6 +126,9 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.Len(t, tools, 1)
 	require.Equal(t, "ask-user", tools[0].Permission)
 	require.Equal(t, "runtime", tools[0].Source)
+	require.Equal(t, "bridge", tools[0].Kind)
+	require.True(t, tools[0].ReadOnly)
+	require.False(t, tools[0].Executable)
 
 	servers, err := service.MCPServers(context.Background())
 	require.NoError(t, err)
@@ -169,10 +175,11 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.Len(t, flags, 1)
 	require.Equal(t, "preview", flags[0].Key)
 
-	stream, err := service.StreamEvents(context.Background(), created.ID)
+	stream, err := service.StreamEvents(context.Background(), created.ID, runtimecontract.StreamEventsRequest{})
 	require.NoError(t, err)
 	streamed := make([]runtimecontract.EventDescriptor, 0)
-	for item := range stream {
+	for len(streamed) < 1 {
+		item := <-stream
 		streamed = append(streamed, item)
 	}
 	require.NotEmpty(t, streamed)

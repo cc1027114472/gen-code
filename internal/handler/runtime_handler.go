@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -298,7 +300,11 @@ func (h *RuntimeHandler) Events(c *gin.Context) {
 
 // StreamEvents returns a minimal SSE stream for the given thread.
 func (h *RuntimeHandler) StreamEvents(c *gin.Context) {
-	stream, err := h.runtime.StreamEvents(c.Request.Context(), c.Param("id"))
+	stream, err := h.runtime.StreamEvents(c.Request.Context(), c.Param("id"), runtimecontract.StreamEventsRequest{
+		Limit:     parsePositiveInt(c.Query("limit"), 200),
+		SinceID:   c.Query("sinceId"),
+		SinceTime: c.Query("sinceTime"),
+	})
 	if err != nil {
 		writeRuntimeError(c, err)
 		return
@@ -312,11 +318,40 @@ func (h *RuntimeHandler) StreamEvents(c *gin.Context) {
 	c.Status(http.StatusOK)
 	c.Writer.Flush()
 
-	for event := range stream {
-		_, _ = fmt.Fprintf(c.Writer, "event: %s\n", event.Type)
-		_, _ = fmt.Fprintf(c.Writer, "data: {\"id\":\"%s\",\"threadId\":\"%s\",\"type\":\"%s\",\"message\":\"%s\",\"createdAt\":\"%s\"}\n\n", event.ID, event.ThreadID, event.Type, event.Message, event.CreatedAt)
-		c.Writer.Flush()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-ticker.C:
+			_, _ = fmt.Fprint(c.Writer, ": ping\n\n")
+			c.Writer.Flush()
+		case event, ok := <-stream:
+			if !ok {
+				return
+			}
+			payload, marshalErr := json.Marshal(event)
+			if marshalErr != nil {
+				return
+			}
+			_, _ = fmt.Fprintf(c.Writer, "event: %s\n", event.Type)
+			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", payload)
+			c.Writer.Flush()
+		}
 	}
+}
+
+func parsePositiveInt(raw string, fallback int) int {
+	if raw == "" {
+		return fallback
+	}
+	var value int
+	if _, err := fmt.Sscanf(raw, "%d", &value); err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 // Skills returns the available skills exposed by the runtime.

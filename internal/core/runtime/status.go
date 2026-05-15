@@ -314,24 +314,48 @@ func (s *Service) Events(_ context.Context, threadID string) ([]runtimecontract.
 }
 
 // StreamEvents returns a minimal replay stream of known thread events.
-func (s *Service) StreamEvents(_ context.Context, threadID string) (<-chan runtimecontract.EventDescriptor, error) {
+func (s *Service) StreamEvents(ctx context.Context, threadID string, request runtimecontract.StreamEventsRequest) (<-chan runtimecontract.EventDescriptor, error) {
 	items, ok := s.session.Events(threadID)
 	if !ok {
 		return nil, xerror.NotFound(1004, "thread not found")
 	}
-
-	ch := make(chan runtimecontract.EventDescriptor, len(items))
-	for _, item := range items {
-		ch <- runtimecontract.EventDescriptor{
-			ID:        item.ID,
-			ThreadID:  item.ThreadID,
-			Type:      item.Type,
-			Message:   item.Message,
-			CreatedAt: item.CreatedAt.Format(time.RFC3339),
-		}
+	subscribeCh, cancel, err := s.session.SubscribeEvents(threadID)
+	if err != nil {
+		return nil, xerror.NotFound(1004, "thread not found")
 	}
-	close(ch)
-	return ch, nil
+
+	out := make(chan runtimecontract.EventDescriptor, 256)
+	go func() {
+		defer close(out)
+		defer cancel()
+
+		replayItems := filterReplay(items, request)
+		for _, item := range replayItems {
+			select {
+			case <-ctx.Done():
+				return
+			case out <- toEventDescriptor(item):
+			}
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case item, ok := <-subscribeCh:
+				if !ok {
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case out <- toEventDescriptor(item):
+				}
+			}
+		}
+	}()
+
+	return out, nil
 }
 
 // FullStatus returns the richer runtime summary for CLI and desktop use.
@@ -350,6 +374,9 @@ func (s *Service) Tools(context.Context) ([]runtimecontract.Tool, error) {
 			Description: item.Description,
 			Permission:  string(item.PermissionMode),
 			Source:      item.Source,
+			Kind:        item.Kind,
+			ReadOnly:    item.ReadOnly,
+			Executable:  item.Executable,
 		})
 	}
 	return result, nil
@@ -622,4 +649,54 @@ func groupSource(group skill.Group) string {
 	default:
 		return "common"
 	}
+}
+
+func toEventDescriptor(item session.Event) runtimecontract.EventDescriptor {
+	return runtimecontract.EventDescriptor{
+		ID:        item.ID,
+		ThreadID:  item.ThreadID,
+		Type:      item.Type,
+		Message:   item.Message,
+		CreatedAt: item.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+func limitReplay(items []session.Event, limit int) []session.Event {
+	if limit <= 0 || len(items) <= limit {
+		return append([]session.Event(nil), items...)
+	}
+	return append([]session.Event(nil), items[len(items)-limit:]...)
+}
+
+func filterReplay(items []session.Event, request runtimecontract.StreamEventsRequest) []session.Event {
+	filtered := make([]session.Event, 0, len(items))
+	sinceIDFound := request.SinceID == ""
+	var sinceTime time.Time
+	if request.SinceTime != "" {
+		if parsed, err := time.Parse(time.RFC3339, request.SinceTime); err == nil {
+			sinceTime = parsed
+		}
+	}
+
+	for _, item := range items {
+		if !sinceIDFound {
+			if item.ID == request.SinceID {
+				sinceIDFound = true
+			}
+			continue
+		}
+		if !sinceTime.IsZero() && item.CreatedAt.Before(sinceTime) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+
+	limit := request.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	if len(filtered) <= limit {
+		return append([]session.Event(nil), filtered...)
+	}
+	return append([]session.Event(nil), filtered[len(filtered)-limit:]...)
 }

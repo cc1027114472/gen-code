@@ -22,11 +22,15 @@ func New(base logger.Logger, appName string, trustedProxies []string, httpAccess
 	}
 
 	r.Use(middleware.RequestID())
+	r.Use(middleware.LocalDevCORS())
 	r.Use(middleware.ContextLogger(base, appName))
 	if httpAccess {
 		r.Use(middleware.AccessLog(base))
 	}
 	r.Use(middleware.Recovery(base))
+	r.OPTIONS("/*path", func(c *gin.Context) {
+		c.Status(204)
+	})
 
 	if handlers.Health != nil {
 		r.GET("/healthz", handlers.Health.Healthz)

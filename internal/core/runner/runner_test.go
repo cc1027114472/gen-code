@@ -2,16 +2,25 @@ package runner
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/session"
 )
 
 func TestRunnerExecutesThreadLocalMessageTask(t *testing.T) {
 	registry := session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
-	thread := registry.CreateThread(session.CreateThreadInput{Name: "Runner"})
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Runner",
+		PermissionMode: policy.WorkspaceWrite,
+	})
+	stream, cancel, err := registry.SubscribeEvents(thread.ID)
+	require.NoError(t, err)
+	defer cancel()
 	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
 		Title: "Append message",
 		Kind:  KindMessageAppend,
@@ -34,11 +43,29 @@ func TestRunnerExecutesThreadLocalMessageTask(t *testing.T) {
 	require.Len(t, toolCalls, 2)
 	require.Equal(t, "running", toolCalls[0].Status)
 	require.Equal(t, "completed", toolCalls[1].Status)
+
+	eventTypes := []string{}
+collect:
+	for {
+		select {
+		case item := <-stream:
+			eventTypes = append(eventTypes, item.Type)
+		default:
+			break collect
+		}
+	}
+	require.Contains(t, eventTypes, "task.started")
+	require.Contains(t, eventTypes, "toolcall.started")
+	require.Contains(t, eventTypes, "toolcall.completed")
+	require.Contains(t, eventTypes, "task.completed")
 }
 
 func TestRunnerRecoversInterruptedRunningTasks(t *testing.T) {
 	registry := session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
-	thread := registry.CreateThread(session.CreateThreadInput{Name: "Runner"})
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Runner",
+		PermissionMode: policy.WorkspaceWrite,
+	})
 	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
 		Title: "Interrupted task",
 		Kind:  KindRuntimeFlagSet,
@@ -55,4 +82,105 @@ func TestRunnerRecoversInterruptedRunningTasks(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "failed", reloaded.Status)
 	require.Equal(t, restartFailureLabel, reloaded.ResultSummary)
+
+	events, ok := registry.Events(thread.ID)
+	require.True(t, ok)
+	found := false
+	for _, item := range events {
+		if item.Type == "task.recovered_as_failed" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
+}
+
+func TestRunnerExecutesWorkspaceReadOnlyTools(t *testing.T) {
+	projectRoot := t.TempDir()
+	readmePath := filepath.Join(projectRoot, "README.md")
+	require.NoError(t, os.WriteFile(readmePath, []byte("hello workspace"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Reader",
+		PermissionMode: policy.ReadOnly,
+	})
+
+	readTask, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Read file",
+		Kind:  KindWorkspaceRead,
+		Input: `{"path":"README.md"}`,
+	})
+	require.True(t, ok)
+	result, err := New(registry).RunTask(context.Background(), thread.ID, readTask.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "hello workspace")
+
+	listTask, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "List files",
+		Kind:  KindWorkspaceList,
+		Input: `{"path":"."}`,
+	})
+	require.True(t, ok)
+	result, err = New(registry).RunTask(context.Background(), thread.ID, listTask.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "README.md")
+
+	searchTask, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Search text",
+		Kind:  KindWorkspaceSearch,
+		Input: `{"query":"workspace","path":"."}`,
+	})
+	require.True(t, ok)
+	result, err = New(registry).RunTask(context.Background(), thread.ID, searchTask.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "README.md")
+}
+
+func TestRunnerRejectsReadToolForAskUserMode(t *testing.T) {
+	projectRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("hello"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Restricted",
+		PermissionMode: policy.AskUser,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Read file",
+		Kind:  KindWorkspaceRead,
+		Input: `{"path":"README.md"}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", result.Status)
+	require.Contains(t, result.ResultSummary, "approval required")
+}
+
+func TestRunnerRejectsPathOutsideWorkspace(t *testing.T) {
+	projectRoot := t.TempDir()
+	outsideDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("secret"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Reader",
+		PermissionMode: policy.ReadOnly,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Read outside",
+		Kind:  KindWorkspaceRead,
+		Input: `{"path":"` + filepath.ToSlash(filepath.Join(outsideDir, "secret.txt")) + `"}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", result.Status)
+	require.Contains(t, result.ResultSummary, ErrPathOutsideWorkspace.Error())
 }

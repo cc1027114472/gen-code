@@ -159,6 +159,7 @@ var (
 type Registry struct {
 	mu               sync.RWMutex
 	store            *state.Store
+	bus              *EventBus
 	workspace        Workspace
 	threads          map[string]Thread
 	tasks            map[string][]Task
@@ -196,6 +197,7 @@ func NewRegistryWithStore(projectRoot string, store *state.Store) (*Registry, er
 
 	registry := &Registry{
 		store: store,
+		bus:   NewEventBus(64),
 		workspace: Workspace{
 			ID:             workspaceID,
 			ProjectRoot:    projectRoot,
@@ -356,6 +358,30 @@ func (r *Registry) Events(threadID string) ([]Event, bool) {
 	}
 	items := append([]Event(nil), r.events[threadID]...)
 	return items, true
+}
+
+// SubscribeEvents subscribes to real-time events for the given thread.
+func (r *Registry) SubscribeEvents(threadID string) (<-chan Event, func(), error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if _, ok := r.threads[threadID]; !ok {
+		return nil, nil, ErrThreadNotFound
+	}
+	ch, cancel := r.bus.Subscribe(threadID)
+	return ch, cancel, nil
+}
+
+// AppendRuntimeEvent appends a runtime-scoped event and broadcasts it in real time.
+func (r *Registry) AppendRuntimeEvent(threadID string, eventType string, message string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.threads[threadID]; !ok {
+		return ErrThreadNotFound
+	}
+	r.appendEventLocked(threadID, eventType, message)
+	return nil
 }
 
 // Messages returns the recorded thread-local messages.
@@ -628,6 +654,19 @@ func (r *Registry) appendEventLocked(threadID string, eventType string, message 
 	r.nextEventNumber++
 	r.events[threadID] = append(r.events[threadID], event)
 	_ = r.persistEventLocked(event)
+	if dropped := r.bus.Publish(threadID, event); dropped && eventType != "event.dropped" {
+		dropEvent := Event{
+			ID:        fmt.Sprintf("event-%d", r.nextEventNumber),
+			ThreadID:  threadID,
+			Type:      "event.dropped",
+			Message:   "event bus dropped the oldest buffered event",
+			CreatedAt: time.Now().UTC(),
+		}
+		r.nextEventNumber++
+		r.events[threadID] = append(r.events[threadID], dropEvent)
+		_ = r.persistEventLocked(dropEvent)
+		_ = r.bus.Publish(threadID, dropEvent)
+	}
 }
 
 func isSupportedTaskStatus(status string) bool {
