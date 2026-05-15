@@ -39,6 +39,7 @@ func TestRuntimeStatusUsesRemoteSourceWhenServerIsAvailable(t *testing.T) {
 	})
 
 	require.Contains(t, output, "source: remote-app-server")
+	require.Contains(t, output, "source detail: shared runtime from the running app-server")
 	require.Contains(t, output, "active thread task count: 3")
 	require.Contains(t, output, "active thread event count: 5")
 }
@@ -56,6 +57,7 @@ func TestTasksListFallsBackLocallyWhenServerIsUnavailable(t *testing.T) {
 	})
 
 	require.Contains(t, output, "source: local-fallback")
+	require.Contains(t, output, "source detail: project-local SQLite fallback because app-server is unavailable")
 	require.Contains(t, output, "kind=thread.message.append")
 }
 
@@ -80,16 +82,38 @@ func TestToolsListPrintsExecutionMetadata(t *testing.T) {
 	})
 
 	require.Contains(t, output, "source: remote-app-server")
+	require.Contains(t, output, "source detail: shared runtime from the running app-server")
 	require.Contains(t, output, "permission=read-only")
 	require.Contains(t, output, "kind=workspace.read_file")
 	require.Contains(t, output, "executable=true")
 	require.Contains(t, output, "readOnly=true")
 }
 
+func TestCreateTaskPrintsPowerShellInputHint(t *testing.T) {
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"threads", "create", "--name=ReadOnly Thread", "--permission=read-only"})
+		require.NoError(t, err)
+		err = run(context.Background(), []string{"tasks", "create", "--thread=thread-1", "--title=Read go.mod", "--kind=workspace.read_file", "--input={\"path\":\"go.mod\"}"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "source detail: project-local SQLite fallback because app-server is unavailable")
+	require.Contains(t, output, "input: {\"path\":\"go.mod\"}")
+	require.Contains(t, output, "PowerShell JSON can use --input='{\"path\":\"go.mod\"}'")
+}
+
 func TestFallbackText(t *testing.T) {
 	require.Equal(t, "fallback", fallbackText("", "fallback"))
 	require.Equal(t, "fallback", fallbackText("   ", "fallback"))
 	require.Equal(t, "value", fallbackText("value", "fallback"))
+}
+
+func TestRuntimeSourceDetail(t *testing.T) {
+	require.Equal(t, "shared runtime from the running app-server", runtimeSourceDetail("remote-app-server"))
+	require.Equal(t, "project-local SQLite fallback because app-server is unavailable", runtimeSourceDetail("local-fallback"))
+	require.Equal(t, "unknown runtime source", runtimeSourceDetail("mystery"))
 }
 
 func captureOutput(t *testing.T, fn func()) string {

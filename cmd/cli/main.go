@@ -501,6 +501,7 @@ func printRuntimeStatus(ctx context.Context, facade *runtimeFacade) error {
 	core := facade.service.FullStatus()
 	fmt.Println("runtime status")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  app version: %s\n", core.AppVersion)
 	fmt.Printf("  app server status: %s\n", status.State)
 	fmt.Printf("  runtime ready: %t\n", status.Ready)
@@ -532,6 +533,7 @@ func printWorkspace(ctx context.Context, facade *runtimeFacade) error {
 
 	fmt.Println("workspace")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  id: %s\n", item.ID)
 	fmt.Printf("  project root: %s\n", item.ProjectRoot)
 	fmt.Printf("  shared docs root: %s\n", item.SharedDocsRoot)
@@ -548,6 +550,7 @@ func printThreads(ctx context.Context, facade *runtimeFacade) error {
 
 	fmt.Println("threads list")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	for _, item := range items {
 		activeFlag := ""
 		if item.IsActive {
@@ -570,6 +573,7 @@ func createThread(ctx context.Context, facade *runtimeFacade, name, model, permi
 
 	fmt.Println("thread created")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  id: %s\n", item.ID)
 	fmt.Printf("  name: %s\n", item.Name)
 	fmt.Printf("  active model: %s\n", fallbackText(item.ActiveModel, "none"))
@@ -585,6 +589,7 @@ func activateThread(ctx context.Context, facade *runtimeFacade, id string) error
 
 	fmt.Println("thread activated")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  id: %s\n", item.ID)
 	fmt.Printf("  name: %s\n", item.Name)
 	fmt.Printf("  is active: %t\n", item.IsActive)
@@ -599,6 +604,7 @@ func printMessages(ctx context.Context, facade *runtimeFacade, threadID string) 
 
 	fmt.Println("thread messages")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  thread: %s\n", threadID)
 	for _, item := range items {
 		fmt.Printf("  - %s (%s): %s\n", item.ID, item.Role, item.Content)
@@ -617,6 +623,7 @@ func appendMessage(ctx context.Context, facade *runtimeFacade, threadID string, 
 
 	fmt.Println("thread message appended")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  id: %s\n", item.ID)
 	fmt.Printf("  role: %s\n", item.Role)
 	fmt.Printf("  content: %s\n", item.Content)
@@ -631,6 +638,7 @@ func printToolCalls(ctx context.Context, facade *runtimeFacade, threadID string)
 
 	fmt.Println("thread tool calls")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  thread: %s\n", threadID)
 	for _, item := range items {
 		fmt.Printf("  - %s (%s, %s): %s\n", item.ID, item.ToolID, item.Status, item.Summary)
@@ -646,6 +654,7 @@ func printArtifacts(ctx context.Context, facade *runtimeFacade, threadID string)
 
 	fmt.Println("thread artifacts")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  thread: %s\n", threadID)
 	for _, item := range items {
 		fmt.Printf("  - %s (%s): %s\n", item.ID, item.Kind, item.Path)
@@ -661,6 +670,7 @@ func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) err
 
 	fmt.Println("tasks list")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  thread: %s\n", threadID)
 	for _, item := range items {
 		fmt.Printf("  - %s (%s, kind=%s, updated=%s, result=%s)\n", item.ID, item.Status, fallbackText(item.Kind, "none"), fallbackText(item.UpdatedAt, "none"), fallbackText(item.ResultSummary, "none"))
@@ -680,13 +690,14 @@ func createTask(ctx context.Context, facade *runtimeFacade, threadID string, tit
 
 	fmt.Println("task created")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  id: %s\n", item.ID)
 	fmt.Printf("  thread id: %s\n", item.ThreadID)
 	fmt.Printf("  title: %s\n", item.Title)
 	fmt.Printf("  kind: %s\n", item.Kind)
 	fmt.Printf("  status: %s\n", item.Status)
 	fmt.Printf("  input: %s\n", fallbackText(item.InputSummary, "none"))
-	fmt.Println("  input hint: PowerShell JSON can use --input='{\"path\":\"README.md\"}' or --input='{\"query\":\"workspace\",\"path\":\"docs\"}'")
+	fmt.Println("  input hint: PowerShell JSON can use --input='{\"path\":\"go.mod\"}' or --input='{\"query\":\"workspace\",\"path\":\"internal\"}'")
 	return nil
 }
 
@@ -698,6 +709,7 @@ func runTask(ctx context.Context, facade *runtimeFacade, threadID string, taskID
 
 	fmt.Println("task executed")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  id: %s\n", item.ID)
 	fmt.Printf("  thread id: %s\n", item.ThreadID)
 	fmt.Printf("  kind: %s\n", fallbackText(item.Kind, "none"))
@@ -714,6 +726,7 @@ func updateTaskStatus(ctx context.Context, facade *runtimeFacade, threadID strin
 
 	fmt.Println("task updated")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  id: %s\n", item.ID)
 	fmt.Printf("  thread id: %s\n", item.ThreadID)
 	fmt.Printf("  status: %s\n", item.Status)
@@ -762,6 +775,7 @@ func printTools(ctx context.Context, facade *runtimeFacade) error {
 		return err
 	}
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	for _, item := range items {
 		fmt.Printf(
 			"  - %s (%s, permission=%s, kind=%s, executable=%t, readOnly=%t)\n",
@@ -779,6 +793,7 @@ func printTools(ctx context.Context, facade *runtimeFacade) error {
 func printMCP(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Println("mcp list")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	items, err := facade.mcp(ctx)
 	if err != nil {
 		return err
@@ -818,6 +833,17 @@ func fallbackText(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func runtimeSourceDetail(source string) string {
+	switch source {
+	case "remote-app-server":
+		return "shared runtime from the running app-server"
+	case "local-fallback":
+		return "project-local SQLite fallback because app-server is unavailable"
+	default:
+		return "unknown runtime source"
+	}
 }
 
 func (c *remoteRuntimeClient) status() (runtimecontract.Status, error) {
