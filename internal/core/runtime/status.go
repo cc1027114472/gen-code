@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"llmtrace/internal/appserver/runtimecontract"
@@ -15,17 +16,20 @@ import (
 
 // Status represents the aggregate runtime state surfaced to CLI, API, and desktop.
 type Status struct {
-	AppVersion           string      `json:"app_version"`
-	DesktopShellStatus   string      `json:"desktop_shell_status"`
-	AppServerStatus      string      `json:"app_server_status"`
-	GoBridgeStatus       string      `json:"go_bridge_status"`
-	WorkspaceID          string      `json:"workspace_id"`
-	ProjectRoot          string      `json:"project_root"`
-	ThreadCount          int         `json:"thread_count"`
-	ActiveThreadID       string      `json:"active_thread_id"`
-	ActiveSkillGroup     skill.Group `json:"active_skill_group"`
-	ConfiguredMCPServers int         `json:"configured_mcp_server_count"`
-	PermissionMode       policy.Mode `json:"permission_mode"`
+	AppVersion             string      `json:"app_version"`
+	DesktopShellStatus     string      `json:"desktop_shell_status"`
+	AppServerStatus        string      `json:"app_server_status"`
+	GoBridgeStatus         string      `json:"go_bridge_status"`
+	RuntimeSource          string      `json:"runtime_source"`
+	WorkspaceID            string      `json:"workspace_id"`
+	ProjectRoot            string      `json:"project_root"`
+	ThreadCount            int         `json:"thread_count"`
+	ActiveThreadID         string      `json:"active_thread_id"`
+	ActiveThreadTaskCount  int         `json:"active_thread_task_count"`
+	ActiveThreadEventCount int         `json:"active_thread_event_count"`
+	ActiveSkillGroup       skill.Group `json:"active_skill_group"`
+	ConfiguredMCPServers   int         `json:"configured_mcp_server_count"`
+	PermissionMode         policy.Mode `json:"permission_mode"`
 }
 
 // BridgeCheckResult describes the result of a lightweight bridge verification.
@@ -42,7 +46,7 @@ type Service struct {
 	desktopStatus string
 	appServer     string
 	goBridge      string
-	projectRoot    string
+	projectRoot   string
 	tools         *tool.Registry
 	skills        *skill.Manager
 	mcp           *mcp.Manager
@@ -72,18 +76,31 @@ func NewService(version string, group skill.Group, permission policy.Mode, proje
 // Snapshot returns the current runtime summary.
 func (s *Service) Snapshot() Status {
 	workspace := s.session.Workspace()
+	activeTaskCount := 0
+	activeEventCount := 0
+	if activeThreadID := s.session.ActiveThreadID(); activeThreadID != "" {
+		if tasks, ok := s.session.Tasks(activeThreadID); ok {
+			activeTaskCount = len(tasks)
+		}
+		if events, ok := s.session.Events(activeThreadID); ok {
+			activeEventCount = len(events)
+		}
+	}
 	return Status{
-		AppVersion:           s.version,
-		DesktopShellStatus:   s.desktopStatus,
-		AppServerStatus:      s.appServer,
-		GoBridgeStatus:       s.goBridge,
-		WorkspaceID:          workspace.ID,
-		ProjectRoot:          workspace.ProjectRoot,
-		ThreadCount:          workspace.ActiveThreadCount,
-		ActiveThreadID:       s.session.ActiveThreadID(),
-		ActiveSkillGroup:     s.skillGroup,
-		ConfiguredMCPServers: len(s.mcp.List()),
-		PermissionMode:       s.permission,
+		AppVersion:             s.version,
+		DesktopShellStatus:     s.desktopStatus,
+		AppServerStatus:        s.appServer,
+		GoBridgeStatus:         s.goBridge,
+		RuntimeSource:          "local",
+		WorkspaceID:            workspace.ID,
+		ProjectRoot:            workspace.ProjectRoot,
+		ThreadCount:            workspace.ActiveThreadCount,
+		ActiveThreadID:         s.session.ActiveThreadID(),
+		ActiveThreadTaskCount:  activeTaskCount,
+		ActiveThreadEventCount: activeEventCount,
+		ActiveSkillGroup:       s.skillGroup,
+		ConfiguredMCPServers:   len(s.mcp.List()),
+		PermissionMode:         s.permission,
 	}
 }
 
@@ -94,10 +111,13 @@ func (s *Service) Status(context.Context) (runtimecontract.Status, error) {
 		State:          snapshot.AppServerStatus,
 		Ready:          snapshot.AppServerStatus == "running",
 		Message:        snapshot.GoBridgeStatus,
+		RuntimeSource:  snapshot.RuntimeSource,
 		WorkspaceID:    snapshot.WorkspaceID,
 		ProjectRoot:    snapshot.ProjectRoot,
 		ThreadCount:    snapshot.ThreadCount,
 		ActiveThreadID: snapshot.ActiveThreadID,
+		TaskCount:      snapshot.ActiveThreadTaskCount,
+		EventCount:     snapshot.ActiveThreadEventCount,
 	}, nil
 }
 
@@ -171,6 +191,7 @@ func (s *Service) Tasks(_ context.Context, threadID string) ([]runtimecontract.T
 			Title:     item.Title,
 			Status:    item.Status,
 			CreatedAt: item.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: item.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 	return result, nil
@@ -189,6 +210,33 @@ func (s *Service) CreateTask(_ context.Context, threadID string, request runtime
 		Title:     item.Title,
 		Status:    item.Status,
 		CreatedAt: item.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: item.UpdatedAt.Format(time.RFC3339),
+	}, nil
+}
+
+// UpdateTaskStatus updates an existing task status under the given thread.
+func (s *Service) UpdateTaskStatus(_ context.Context, threadID string, taskID string, request runtimecontract.UpdateTaskStatusRequest) (runtimecontract.TaskDescriptor, error) {
+	item, err := s.session.UpdateTaskStatus(threadID, taskID, session.UpdateTaskStatusInput{Status: request.Status})
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrThreadNotFound):
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		case errors.Is(err, session.ErrTaskNotFound):
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1007, "task not found")
+		case errors.Is(err, session.ErrInvalidTaskStatus):
+			return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1001, "invalid task status")
+		default:
+			return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, "failed to update task status")
+		}
+	}
+
+	return runtimecontract.TaskDescriptor{
+		ID:        item.ID,
+		ThreadID:  item.ThreadID,
+		Title:     item.Title,
+		Status:    item.Status,
+		CreatedAt: item.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: item.UpdatedAt.Format(time.RFC3339),
 	}, nil
 }
 
@@ -210,6 +258,27 @@ func (s *Service) Events(_ context.Context, threadID string) ([]runtimecontract.
 		})
 	}
 	return result, nil
+}
+
+// StreamEvents returns a minimal replay stream of known thread events.
+func (s *Service) StreamEvents(_ context.Context, threadID string) (<-chan runtimecontract.EventDescriptor, error) {
+	items, ok := s.session.Events(threadID)
+	if !ok {
+		return nil, xerror.NotFound(1004, "thread not found")
+	}
+
+	ch := make(chan runtimecontract.EventDescriptor, len(items))
+	for _, item := range items {
+		ch <- runtimecontract.EventDescriptor{
+			ID:        item.ID,
+			ThreadID:  item.ThreadID,
+			Type:      item.Type,
+			Message:   item.Message,
+			CreatedAt: item.CreatedAt.Format(time.RFC3339),
+		}
+	}
+	close(ch)
+	return ch, nil
 }
 
 // FullStatus returns the richer runtime summary for CLI and desktop use.

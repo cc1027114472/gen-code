@@ -100,7 +100,15 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			path:           "/api/threads/thread-1/tasks",
 			body:           `{"title":"Draft spec"}`,
 			wantStatusCode: http.StatusOK,
-			wantBody:       []string{`"id":"task-2"`, `"threadId":"thread-1"`, `"title":"Draft spec"`},
+			wantBody:       []string{`"id":"task-2"`, `"threadId":"thread-1"`, `"title":"Draft spec"`, `"updatedAt":"2026-05-15T00:00:00Z"`},
+		},
+		{
+			name:           "update task status",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-1/tasks/task-1/status",
+			body:           `{"status":"running"}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"task-1"`, `"status":"running"`, `"updatedAt":"2026-05-15T00:05:00Z"`},
 		},
 		{
 			name:           "events",
@@ -108,6 +116,13 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			path:           "/api/threads/thread-1/events",
 			wantStatusCode: http.StatusOK,
 			wantBody:       []string{`"items":[{"id":"event-1","threadId":"thread-1","type":"thread.created","message":"Thread 1 created"`},
+		},
+		{
+			name:           "events stream",
+			method:         http.MethodGet,
+			path:           "/api/threads/thread-1/events/stream",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`event: thread.created`, `data: {"id":"event-1","threadId":"thread-1","type":"thread.created","message":"Thread 1 created","createdAt":"2026-05-15T00:00:00Z"}`},
 		},
 		{
 			name:           "skills",
@@ -151,7 +166,9 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			engine.ServeHTTP(rec, req)
 
 			require.Equal(t, tc.wantStatusCode, rec.Code)
-			require.Contains(t, rec.Body.String(), `"code":0`)
+			if tc.name != "events stream" {
+				require.Contains(t, rec.Body.String(), `"code":0`)
+			}
 			for _, item := range tc.wantBody {
 				require.Contains(t, rec.Body.String(), item)
 			}
@@ -240,6 +257,27 @@ func TestNewRejectsInvalidCreateTaskThread(t *testing.T) {
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	require.Contains(t, rec.Body.String(), `"code":1004`)
+}
+
+func TestNewRejectsInvalidTaskStatusPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	log, err := xlog.New("debug")
+	require.NoError(t, err)
+
+	engine, err := New(log, "gen-code", []string{"127.0.0.1"}, false, Handlers{
+		Runtime: handler.NewRuntimeHandler(stubRuntimeService{}),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/threads/thread-1/tasks/task-1/status", bytes.NewBufferString(`{"status":`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	engine.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), `"code":1001`)
 }
 
 type stubRuntimeService struct{}
@@ -350,6 +388,7 @@ func (stubRuntimeService) Tasks(context.Context, string) ([]runtimecontract.Task
 		Title:     "Task 1",
 		Status:    "queued",
 		CreatedAt: "2026-05-15T00:00:00Z",
+		UpdatedAt: "2026-05-15T00:00:00Z",
 	}}, nil
 }
 
@@ -366,6 +405,28 @@ func (stubRuntimeService) CreateTask(_ context.Context, threadID string, request
 		Title:     request.Title,
 		Status:    "queued",
 		CreatedAt: "2026-05-15T00:00:00Z",
+		UpdatedAt: "2026-05-15T00:00:00Z",
+	}, nil
+}
+
+func (stubRuntimeService) UpdateTaskStatus(_ context.Context, threadID string, taskID string, request runtimecontract.UpdateTaskStatusRequest) (runtimecontract.TaskDescriptor, error) {
+	if threadID == "missing" {
+		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+	}
+	if taskID == "missing" {
+		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1007, "task not found")
+	}
+	if request.Status == "" || request.Status == "paused" {
+		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1001, "invalid task status")
+	}
+
+	return runtimecontract.TaskDescriptor{
+		ID:        taskID,
+		ThreadID:  threadID,
+		Title:     "Task 1",
+		Status:    request.Status,
+		CreatedAt: "2026-05-15T00:00:00Z",
+		UpdatedAt: "2026-05-15T00:05:00Z",
 	}, nil
 }
 
@@ -377,6 +438,23 @@ func (stubRuntimeService) Events(context.Context, string) ([]runtimecontract.Eve
 		Message:   "Thread 1 created",
 		CreatedAt: "2026-05-15T00:00:00Z",
 	}}, nil
+}
+
+func (stubRuntimeService) StreamEvents(_ context.Context, threadID string) (<-chan runtimecontract.EventDescriptor, error) {
+	if threadID == "missing" {
+		return nil, xerror.NotFound(1004, "thread not found")
+	}
+
+	ch := make(chan runtimecontract.EventDescriptor, 1)
+	ch <- runtimecontract.EventDescriptor{
+		ID:        "event-1",
+		ThreadID:  "thread-1",
+		Type:      "thread.created",
+		Message:   "Thread 1 created",
+		CreatedAt: "2026-05-15T00:00:00Z",
+	}
+	close(ch)
+	return ch, nil
 }
 
 func (stubRuntimeService) Skills(context.Context) ([]runtimecontract.Skill, error) {
@@ -457,7 +535,15 @@ func (errorRuntimeService) CreateTask(context.Context, string, runtimecontract.C
 	return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, "runtime unavailable")
 }
 
+func (errorRuntimeService) UpdateTaskStatus(context.Context, string, string, runtimecontract.UpdateTaskStatusRequest) (runtimecontract.TaskDescriptor, error) {
+	return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
 func (errorRuntimeService) Events(context.Context, string) ([]runtimecontract.EventDescriptor, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) StreamEvents(context.Context, string) (<-chan runtimecontract.EventDescriptor, error) {
 	return nil, xerror.Internal(2001, "runtime unavailable")
 }
 

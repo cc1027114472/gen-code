@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -46,6 +47,7 @@ type Task struct {
 	Title     string    `json:"title"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Event describes a timestamped thread event for logs and activity panels.
@@ -68,6 +70,20 @@ type CreateThreadInput struct {
 type CreateTaskInput struct {
 	Title string
 }
+
+// UpdateTaskStatusInput collects the minimum fields required to update a task status.
+type UpdateTaskStatusInput struct {
+	Status string
+}
+
+var (
+	// ErrThreadNotFound is returned when a thread lookup fails.
+	ErrThreadNotFound = errors.New("thread not found")
+	// ErrTaskNotFound is returned when a task lookup fails.
+	ErrTaskNotFound = errors.New("task not found")
+	// ErrInvalidTaskStatus is returned when a task status is unsupported.
+	ErrInvalidTaskStatus = errors.New("invalid task status")
+)
 
 // Registry holds the in-memory workspace and thread set for the current runtime process.
 type Registry struct {
@@ -265,6 +281,7 @@ func (r *Registry) CreateTask(threadID string, input CreateTaskInput) (Task, boo
 		Title:     title,
 		Status:    "queued",
 		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
 	}
 
 	r.tasks[threadID] = append(r.tasks[threadID], task)
@@ -272,6 +289,38 @@ func (r *Registry) CreateTask(threadID string, input CreateTaskInput) (Task, boo
 	r.threads[threadID] = thread
 	r.appendEventLocked(threadID, "task.created", fmt.Sprintf("%s queued on %s", title, thread.Name))
 	return task, true
+}
+
+// UpdateTaskStatus updates the lifecycle state for a task under the given thread.
+func (r *Registry) UpdateTaskStatus(threadID string, taskID string, input UpdateTaskStatusInput) (Task, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return Task{}, ErrThreadNotFound
+	}
+
+	if !isSupportedTaskStatus(input.Status) {
+		return Task{}, ErrInvalidTaskStatus
+	}
+
+	tasks := r.tasks[threadID]
+	for index, task := range tasks {
+		if task.ID != taskID {
+			continue
+		}
+
+		task.Status = input.Status
+		task.UpdatedAt = time.Now().UTC()
+		tasks[index] = task
+		r.tasks[threadID] = tasks
+		r.threads[threadID] = thread
+		r.appendEventLocked(threadID, "task.updated", fmt.Sprintf("%s moved to %s on %s", task.Title, task.Status, thread.Name))
+		return task, nil
+	}
+
+	return Task{}, ErrTaskNotFound
 }
 
 func snapshotThread(thread Thread, activeThreadID string) Thread {
@@ -297,6 +346,15 @@ func (r *Registry) appendEventLocked(threadID string, eventType string, message 
 	}
 	r.nextEventNumber++
 	r.events[threadID] = append(r.events[threadID], event)
+}
+
+func isSupportedTaskStatus(status string) bool {
+	switch status {
+	case "queued", "running", "completed", "failed":
+		return true
+	default:
+		return false
+	}
 }
 
 // SortedIDs returns the thread ids in stable creation order.

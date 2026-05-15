@@ -6,6 +6,10 @@ export function ActivateThread(arg1) {
   return window["go"]["main"]["App"]["ActivateThread"](arg1);
 }
 
+export function AdvanceTask(arg1) {
+  return window["go"]["main"]["App"]["AdvanceTask"](arg1);
+}
+
 export function CheckBridge() {
   return window["go"]["main"]["App"]["CheckBridge"]();
 }

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -18,8 +20,43 @@ func TestRunPrintsUsageWithoutArgs(t *testing.T) {
 
 	require.Contains(t, output, "gen-code commands:")
 	require.Contains(t, output, "runtime status")
-	require.Contains(t, output, "workspace show")
-	require.Contains(t, output, "threads list")
+	require.Contains(t, output, "tasks list --thread=<threadId>")
+	require.Contains(t, output, "tasks update-status --thread=<threadId> --task=<taskId> --status=<status>")
+}
+
+func TestRuntimeStatusUsesRemoteSourceWhenServerIsAvailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/runtime/status", r.URL.Path)
+		_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":2,"activeThreadId":"thread-1","taskCount":3,"eventCount":5}}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"runtime", "status"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "source: remote-app-server")
+	require.Contains(t, output, "active thread task count: 3")
+	require.Contains(t, output, "active thread event count: 5")
+}
+
+func TestTasksListFallsBackLocallyWhenServerIsUnavailable(t *testing.T) {
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"threads", "create", "--name=Thread A"})
+		require.NoError(t, err)
+		err = run(context.Background(), []string{"tasks", "create", "--thread=thread-1", "--title=Draft spec"})
+		require.NoError(t, err)
+		err = run(context.Background(), []string{"tasks", "list", "--thread=thread-1"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "source: local-fallback")
+	require.Contains(t, output, "Draft spec")
 }
 
 func TestFallbackText(t *testing.T) {

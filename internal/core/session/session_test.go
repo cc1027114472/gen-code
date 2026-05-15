@@ -72,3 +72,38 @@ func TestActivateThreadOnlySwitchesPointer(t *testing.T) {
 	require.True(t, ok)
 	require.False(t, reloadedFirst.IsActive)
 }
+
+func TestTaskStatusUpdatesRemainThreadScoped(t *testing.T) {
+	registry := NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+
+	first := registry.CreateThread(CreateThreadInput{Name: "First"})
+	second := registry.CreateThread(CreateThreadInput{Name: "Second"})
+
+	firstTask, ok := registry.CreateTask(first.ID, CreateTaskInput{Title: "Draft spec"})
+	require.True(t, ok)
+	_, ok = registry.CreateTask(second.ID, CreateTaskInput{Title: "Review UI"})
+	require.True(t, ok)
+
+	updated, err := registry.UpdateTaskStatus(first.ID, firstTask.ID, UpdateTaskStatusInput{Status: "running"})
+	require.NoError(t, err)
+	require.Equal(t, "running", updated.Status)
+	require.False(t, updated.UpdatedAt.IsZero())
+
+	firstTasks, ok := registry.Tasks(first.ID)
+	require.True(t, ok)
+	require.Equal(t, "running", firstTasks[0].Status)
+
+	secondTasks, ok := registry.Tasks(second.ID)
+	require.True(t, ok)
+	require.Equal(t, "queued", secondTasks[0].Status)
+}
+
+func TestUpdateTaskStatusRejectsInvalidStatus(t *testing.T) {
+	registry := NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+	thread := registry.CreateThread(CreateThreadInput{Name: "First"})
+	task, ok := registry.CreateTask(thread.ID, CreateTaskInput{Title: "Draft spec"})
+	require.True(t, ok)
+
+	_, err := registry.UpdateTaskStatus(thread.ID, task.ID, UpdateTaskStatusInput{Status: "paused"})
+	require.ErrorIs(t, err, ErrInvalidTaskStatus)
+}

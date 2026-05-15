@@ -7,10 +7,13 @@ type Status struct {
 	State          string `json:"state"`
 	Ready          bool   `json:"ready"`
 	Message        string `json:"message,omitempty"`
+	RuntimeSource  string `json:"runtimeSource,omitempty"`
 	WorkspaceID    string `json:"workspaceId,omitempty"`
 	ProjectRoot    string `json:"projectRoot,omitempty"`
 	ThreadCount    int    `json:"threadCount,omitempty"`
 	ActiveThreadID string `json:"activeThreadId,omitempty"`
+	TaskCount      int    `json:"taskCount,omitempty"`
+	EventCount     int    `json:"eventCount,omitempty"`
 }
 
 // WorkspaceDescriptor describes the current workspace container.
@@ -51,6 +54,7 @@ type TaskDescriptor struct {
 	Title     string `json:"title"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
 // EventDescriptor describes a single thread event for logs/activity views.
@@ -65,6 +69,11 @@ type EventDescriptor struct {
 // CreateTaskRequest defines the minimum request body for creating a thread task.
 type CreateTaskRequest struct {
 	Title string `json:"title"`
+}
+
+// UpdateTaskStatusRequest defines the minimum request body for updating a task status.
+type UpdateTaskStatusRequest struct {
+	Status string `json:"status"`
 }
 
 // Skill describes an available runtime skill.
@@ -112,7 +121,9 @@ type Service interface {
 	ActivateThread(ctx context.Context, id string) (ThreadDescriptor, error)
 	Tasks(ctx context.Context, threadID string) ([]TaskDescriptor, error)
 	CreateTask(ctx context.Context, threadID string, request CreateTaskRequest) (TaskDescriptor, error)
+	UpdateTaskStatus(ctx context.Context, threadID string, taskID string, request UpdateTaskStatusRequest) (TaskDescriptor, error)
 	Events(ctx context.Context, threadID string) ([]EventDescriptor, error)
+	StreamEvents(ctx context.Context, threadID string) (<-chan EventDescriptor, error)
 	Skills(ctx context.Context) ([]Skill, error)
 	Tools(ctx context.Context) ([]Tool, error)
 	MCPServers(ctx context.Context) ([]MCPServer, error)
@@ -166,8 +177,18 @@ func (noopService) CreateTask(context.Context, string, CreateTaskRequest) (TaskD
 	return TaskDescriptor{}, nil
 }
 
+func (noopService) UpdateTaskStatus(context.Context, string, string, UpdateTaskStatusRequest) (TaskDescriptor, error) {
+	return TaskDescriptor{}, nil
+}
+
 func (noopService) Events(context.Context, string) ([]EventDescriptor, error) {
 	return []EventDescriptor{}, nil
+}
+
+func (noopService) StreamEvents(context.Context, string) (<-chan EventDescriptor, error) {
+	ch := make(chan EventDescriptor)
+	close(ch)
+	return ch, nil
 }
 
 func (noopService) Tools(context.Context) ([]Tool, error) {

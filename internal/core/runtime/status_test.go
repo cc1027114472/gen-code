@@ -53,6 +53,19 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "thread-1", created.ID)
 
+	task, err := service.CreateTask(context.Background(), created.ID, runtimecontract.CreateTaskRequest{
+		Title: "Draft spec",
+	})
+	require.NoError(t, err)
+	require.Equal(t, task.CreatedAt, task.UpdatedAt)
+
+	updatedTask, err := service.UpdateTaskStatus(context.Background(), created.ID, task.ID, runtimecontract.UpdateTaskStatusRequest{
+		Status: "running",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "running", updatedTask.Status)
+	require.NotEmpty(t, updatedTask.UpdatedAt)
+
 	skills, err := service.Skills(context.Background())
 	require.NoError(t, err)
 	require.Len(t, skills, 2)
@@ -80,4 +93,19 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.Equal(t, `D:\GOWorks\gen-code-heji\gen-code`, status.ProjectRoot)
 	require.Equal(t, 1, status.ThreadCount)
 	require.Equal(t, "thread-1", status.ActiveThreadID)
+
+	tasks, err := service.Tasks(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Equal(t, "running", tasks[0].Status)
+	require.NotEmpty(t, tasks[0].UpdatedAt)
+
+	stream, err := service.StreamEvents(context.Background(), created.ID)
+	require.NoError(t, err)
+	streamed := make([]runtimecontract.EventDescriptor, 0)
+	for item := range stream {
+		streamed = append(streamed, item)
+	}
+	require.NotEmpty(t, streamed)
+	require.Equal(t, created.ID, streamed[0].ThreadID)
 }

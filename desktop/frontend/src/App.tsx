@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActivateThread, CheckBridge, CreateTask, CreateThread, GetAppInfo, GetRuntimeStatus } from "../wailsjs/go/main/App";
+import {
+  ActivateThread,
+  AdvanceTask,
+  CheckBridge,
+  CreateTask,
+  CreateThread,
+  GetAppInfo,
+  GetRuntimeStatus,
+} from "../wailsjs/go/main/App";
 
 type ThreadSummary = {
   id: string;
@@ -15,6 +23,7 @@ type TaskSummary = {
   threadId: string;
   title: string;
   status: string;
+  updatedAt: string;
 };
 
 type EventSummary = {
@@ -22,6 +31,7 @@ type EventSummary = {
   threadId: string;
   type: string;
   message: string;
+  createdAt: string;
 };
 
 type RuntimeStatus = {
@@ -45,6 +55,10 @@ type RuntimeStatus = {
   runtimeState: string;
   runtimeReady: boolean;
   runtimeMessage: string;
+  runtimeSource: string;
+  supportsSSE: boolean;
+  sseEndpoint: string;
+  lastSyncAt: string;
   skillsByGroup: Record<string, string[]>;
   toolsByGroup: Record<string, string[]>;
   mcpByGroup: Record<string, string[]>;
@@ -67,8 +81,10 @@ export default function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [bridgeResult, setBridgeResult] = useState<BridgeCheckResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [streamState, setStreamState] = useState("Manual refresh mode");
+  const [sseEnabled, setSseEnabled] = useState(false);
 
-  const loadDashboard = async (runBridgeCheck: boolean) => {
+  const refreshStatus = async (runBridgeCheck: boolean) => {
     setLoading(true);
     setError("");
 
@@ -79,8 +95,9 @@ export default function App() {
         runBridgeCheck ? CheckBridge() : Promise.resolve(null),
       ]);
 
+      const nextRuntime = runtime as RuntimeStatus;
       setAppInfo(info);
-      setRuntimeStatus(runtime as RuntimeStatus);
+      setRuntimeStatus(nextRuntime);
 
       if (bridge) {
         const nextBridge = bridge as BridgeCheckResult;
@@ -88,25 +105,59 @@ export default function App() {
         setMessage(nextBridge.message);
         setLastCheckedAt(formatTime(nextBridge.checkedAt));
       } else {
-        setBridgeResult(null);
-        setMessage("Runtime status loaded");
-        setLastCheckedAt(formatTime((runtime as RuntimeStatus).updatedAt));
+        setMessage(nextRuntime.runtimeMessage || "Runtime status refreshed.");
+        setLastCheckedAt(formatTime(nextRuntime.updatedAt));
+      }
+
+      if (!nextRuntime.supportsSSE) {
+        setStreamState("SSE unavailable, manual refresh remains active.");
+        setSseEnabled(false);
+      } else {
+        setStreamState("SSE detected, waiting to subscribe.");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown bridge error");
       setLastCheckedAt(new Date().toLocaleTimeString("zh-CN", { hour12: false }));
+      setStreamState("Refresh failed, staying on manual mode.");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    void loadDashboard(true);
+    void refreshStatus(true);
   }, []);
 
-  const handleCheck = async () => {
-    await loadDashboard(true);
-  };
+  useEffect(() => {
+    if (!runtimeStatus?.supportsSSE || !runtimeStatus.sseEndpoint || sseEnabled) {
+      return;
+    }
+
+    try {
+      const source = new EventSource(runtimeStatus.sseEndpoint);
+      setSseEnabled(true);
+      setStreamState("SSE connected. The dashboard will auto-refresh.");
+
+      source.onmessage = () => {
+        void refreshStatus(false);
+      };
+
+      source.onerror = () => {
+        setStreamState("SSE disconnected. Manual refresh is still available.");
+        setSseEnabled(false);
+        source.close();
+      };
+
+      return () => {
+        source.close();
+        setSseEnabled(false);
+      };
+    } catch {
+      setStreamState("SSE could not be initialized. Manual refresh remains active.");
+      setSseEnabled(false);
+      return;
+    }
+  }, [runtimeStatus?.supportsSSE, runtimeStatus?.sseEndpoint, sseEnabled]);
 
   const handleCreateThread = async () => {
     setLoading(true);
@@ -114,7 +165,7 @@ export default function App() {
     try {
       const nextStatus = (await CreateThread("")) as RuntimeStatus;
       setRuntimeStatus(nextStatus);
-      setMessage("Thread created");
+      setMessage("Thread created.");
       setLastCheckedAt(formatTime(nextStatus.updatedAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create thread");
@@ -129,7 +180,7 @@ export default function App() {
     try {
       const nextStatus = (await ActivateThread(id)) as RuntimeStatus;
       setRuntimeStatus(nextStatus);
-      setMessage(`Active thread switched to ${id}`);
+      setMessage(`Active thread switched to ${id}.`);
       setLastCheckedAt(formatTime(nextStatus.updatedAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to activate thread");
@@ -148,7 +199,7 @@ export default function App() {
     try {
       const nextStatus = (await CreateTask(runtimeStatus.activeThreadId, "")) as RuntimeStatus;
       setRuntimeStatus(nextStatus);
-      setMessage("Task queued");
+      setMessage("Task queued.");
       setLastCheckedAt(formatTime(nextStatus.updatedAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create task");
@@ -157,45 +208,59 @@ export default function App() {
     }
   };
 
-  const statusTone = error ? "warning" : bridgeResult?.ok || runtimeStatus?.runtimeReady ? "good" : "muted";
-  const skillGroups = useMemo(() => summarizeGroups(runtimeStatus?.skillsByGroup), [runtimeStatus]);
-  const toolGroups = useMemo(() => summarizeGroups(runtimeStatus?.toolsByGroup), [runtimeStatus]);
-  const mcpGroups = useMemo(() => summarizeGroups(runtimeStatus?.mcpByGroup), [runtimeStatus]);
+  const handleAdvanceTask = async (taskID: string) => {
+    setLoading(true);
+    setError("");
+    try {
+      const nextStatus = (await AdvanceTask(taskID)) as RuntimeStatus;
+      setRuntimeStatus(nextStatus);
+      setMessage("Task status updated.");
+      setLastCheckedAt(formatTime(nextStatus.updatedAt));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update task status");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const statusTone = error ? "warning" : runtimeStatus?.runtimeReady || bridgeResult?.ok ? "good" : "muted";
+  const taskSummary = useMemo(() => summarizeTaskCounts(runtimeStatus?.tasks), [runtimeStatus]);
+  const capabilitySummary = useMemo(() => summarizeGroups(runtimeStatus?.skillsByGroup), [runtimeStatus]);
 
   const activityFeed = useMemo(
     () => [
       {
+        label: "Runtime source",
+        value: runtimeStatus?.runtimeSource || "unknown",
+        tone: runtimeStatus?.runtimeSource === "runtime-http" ? "good" : "muted",
+      },
+      {
         label: "Workspace",
-        value: runtimeStatus?.workspaceId ? `${runtimeStatus.workspaceId} / threads ${runtimeStatus.threadCount}` : "Workspace unavailable",
+        value: runtimeStatus?.workspaceId ? `${runtimeStatus.workspaceId} / threads ${runtimeStatus.threadCount}` : "not ready",
         tone: runtimeStatus?.workspaceId ? "good" : "muted",
       },
       {
         label: "Active thread",
-        value: runtimeStatus?.activeThreadId || "No active thread",
+        value: runtimeStatus?.activeThreadId || "none",
         tone: runtimeStatus?.activeThreadId ? "good" : "muted",
       },
       {
         label: "Tasks",
-        value: runtimeStatus?.tasks?.length ? `${runtimeStatus.tasks.length} queued` : "No tasks yet",
+        value: taskSummary,
         tone: runtimeStatus?.tasks?.length ? "good" : "muted",
       },
       {
-        label: "Go bridge",
-        value: error ? "Invocation failed" : bridgeResult?.message ?? runtimeStatus?.runtimeMessage ?? "Runtime status loaded",
-        tone: error ? "warning" : "good",
+        label: "Refresh mode",
+        value: streamState,
+        tone: sseEnabled ? "good" : "muted",
       },
       {
         label: "Last check",
-        value: lastCheckedAt || "Not run yet",
+        value: lastCheckedAt || "not run",
         tone: "muted",
       },
-      {
-        label: "Skills",
-        value: skillGroups || "No skills discovered",
-        tone: skillGroups ? "good" : "muted",
-      },
     ],
-    [bridgeResult?.message, error, lastCheckedAt, runtimeStatus?.activeThreadId, runtimeStatus?.runtimeMessage, runtimeStatus?.tasks?.length, runtimeStatus?.threadCount, runtimeStatus?.workspaceId, skillGroups],
+    [lastCheckedAt, runtimeStatus?.activeThreadId, runtimeStatus?.runtimeSource, runtimeStatus?.tasks, runtimeStatus?.threadCount, runtimeStatus?.workspaceId, sseEnabled, streamState, taskSummary],
   );
 
   return (
@@ -212,14 +277,14 @@ export default function App() {
               <span />
             </div>
             <div>
-              <p className="topbar__eyebrow">Gen Code / Local Desktop Console</p>
-              <h1>启动总控台</h1>
+              <p className="topbar__eyebrow">Gen Code / Desktop Console</p>
+              <h1>Runtime Control Room</h1>
             </div>
           </div>
           <div className="topbar__meta">
             <span className="chip chip--soft">Wails Shell</span>
-            <span className="chip chip--soft">{runtimeStatus?.workspaceId ?? "Workspace"}</span>
-            <span className={`chip chip--${statusTone}`}>{error ? "Bridge Warning" : "Bridge Live"}</span>
+            <span className="chip chip--soft">{runtimeStatus?.runtimeSource ?? "loading"}</span>
+            <span className={`chip chip--${statusTone}`}>{error ? "Needs attention" : "Status connected"}</span>
           </div>
         </header>
 
@@ -228,74 +293,72 @@ export default function App() {
             <div className="sidebar__section">
               <p className="section-title">Workspace</p>
               <button className="nav-item nav-item--active" type="button">
-                <span className="nav-item__label">总控首页</span>
+                <span className="nav-item__label">Runtime overview</span>
                 <span className="nav-item__meta">Live</span>
               </button>
               <button className="nav-item" type="button">
-                <span className="nav-item__label">线程与任务</span>
+                <span className="nav-item__label">Threads and tasks</span>
               </button>
               <button className="nav-item" type="button">
-                <span className="nav-item__label">技能与工具</span>
+                <span className="nav-item__label">Capabilities</span>
               </button>
               <button className="nav-item" type="button">
-                <span className="nav-item__label">桌面集成</span>
+                <span className="nav-item__label">Desktop bridge</span>
               </button>
             </div>
 
             <div className="sidebar__section sidebar__section--muted">
               <p className="section-title">Project root</p>
-              <p className="sidebar__note">{runtimeStatus?.projectRoot ?? "Waiting for runtime data."}</p>
+              <p className="sidebar__note">{runtimeStatus?.projectRoot ?? "Waiting for runtime data..."}</p>
             </div>
           </aside>
 
           <section className="main-panel">
             <div className="hero card">
               <div className="hero__copy">
-                <p className="hero__eyebrow">Workspace shell status</p>
-                <h2>workspace 之上已经能创建线程、在线程内排队任务，并把关键事件记录成活动日志。</h2>
+                <p className="hero__eyebrow">Desktop runtime status</p>
+                <h2>The homepage now shows threads, tasks, events, and bridge health from one consistent runtime view.</h2>
                 <p className="hero__lead">
-                  这一步先提供最小任务编排入口和日志面板能力，不引入复杂执行器，让 desktop、app-server、runtime 对线程任务状态保持同一视图。
+                  The desktop shell prefers live runtime data first. If the external app-server is unavailable, it falls back to a stable
+                  desktop-local state so we can still demonstrate thread creation, task queuing, and lifecycle progress without blocking on
+                  server availability.
                 </p>
               </div>
 
               <div className="hero__actions">
-                <button className="primary-action" onClick={handleCheck} disabled={loading}>
-                  {loading ? "刷新中..." : "检查 Go 桥接"}
+                <button className="primary-action" onClick={() => void refreshStatus(true)} disabled={loading}>
+                  {loading ? "Refreshing..." : "Refresh now"}
                 </button>
                 <button className="secondary-action" onClick={handleCreateThread} disabled={loading}>
-                  新建线程
+                  New thread
                 </button>
                 <button className="secondary-action" onClick={handleCreateTask} disabled={loading || !runtimeStatus?.activeThreadId}>
-                  新建任务
+                  New task
                 </button>
                 <div className="hero__hint">
                   <span className="status-dot" />
-                  当前版本的任务是线程内元数据与事件编排入口，还不包含真实执行器。
+                  {streamState}
                 </div>
               </div>
             </div>
 
             <div className="stats-grid">
               <article className="card stat-card">
-                <p className="section-title">Workspace</p>
-                <strong>{runtimeStatus?.workspaceId ?? "Loading"}</strong>
-                <span>{runtimeStatus?.projectRoot ?? appInfo}</span>
+                <p className="section-title">Desktop Shell</p>
+                <strong>{runtimeStatus?.desktopReady ? "Ready" : "Loading"}</strong>
+                <span>{appInfo}</span>
               </article>
 
               <article className="card stat-card">
-                <p className="section-title">Active Thread</p>
-                <strong>{runtimeStatus?.activeThreadId ?? "None"}</strong>
-                <span>{runtimeStatus?.threadCount ? `Total threads ${runtimeStatus.threadCount}` : "Create a thread to begin."}</span>
-              </article>
-
-              <article className="card stat-card">
-                <p className="section-title">Runtime Status</p>
+                <p className="section-title">Runtime</p>
                 <strong>{runtimeStatus ? `${runtimeStatus.appName}:${runtimeStatus.port}` : "Loading"}</strong>
-                <span>
-                  {runtimeStatus
-                    ? `Env=${runtimeStatus.appEnv}, state=${runtimeStatus.runtimeState}, tasks=${runtimeStatus.tasks.length}`
-                    : "Waiting for runtime data."}
-                </span>
+                <span>{runtimeStatus?.runtimeMessage ?? "Waiting for bridge response..."}</span>
+              </article>
+
+              <article className="card stat-card">
+                <p className="section-title">Tasks</p>
+                <strong>{taskSummary}</strong>
+                <span>{runtimeStatus?.activeThreadId ? `Active thread ${runtimeStatus.activeThreadId}` : "Create a thread to begin."}</span>
               </article>
             </div>
 
@@ -303,27 +366,27 @@ export default function App() {
               <div className="thread-strip__header">
                 <div>
                   <p className="section-title">Threads</p>
-                  <h3>线程列表与激活状态</h3>
+                  <h3>Thread list and activation state</h3>
                 </div>
                 <span className="mini-chip">{`Count ${runtimeStatus?.threadCount ?? 0}`}</span>
               </div>
 
               <div className="thread-list">
                 {(runtimeStatus?.threads ?? []).length === 0 ? (
-                  <div className="thread-empty">还没有 thread。先创建一个独立工作会话。</div>
+                  <div className="thread-empty">No threads yet. Create one to start a separate working session.</div>
                 ) : (
                   runtimeStatus?.threads.map((thread) => (
                     <div className="thread-item" key={thread.id}>
                       <div>
                         <p>{thread.name}</p>
-                        <strong>{`${thread.id} / ${thread.permissionMode}`}</strong>
-                        <span>{thread.activeModel || "No model selected"}</span>
+                        <strong>{`${thread.id} / ${thread.permissionMode || "default"}`}</strong>
+                        <span>{thread.activeModel || "No active model selected"}</span>
                       </div>
                       <div className="thread-item__actions">
                         {thread.isActive ? <span className="chip chip--good">Active</span> : null}
                         {!thread.isActive ? (
                           <button className="thread-action" onClick={() => handleActivateThread(thread.id)} disabled={loading}>
-                            激活
+                            Activate
                           </button>
                         ) : null}
                       </div>
@@ -338,18 +401,29 @@ export default function App() {
                 <div className="thread-strip__header">
                   <div>
                     <p className="section-title">Tasks</p>
-                    <h3>当前线程任务</h3>
+                    <h3>Tasks for the active thread</h3>
                   </div>
                   <span className="mini-chip">{`Count ${runtimeStatus?.tasks.length ?? 0}`}</span>
                 </div>
                 <div className="task-list">
                   {(runtimeStatus?.tasks ?? []).length === 0 ? (
-                    <div className="thread-empty">当前线程还没有任务。</div>
+                    <div className="thread-empty">No tasks in the active thread yet.</div>
                   ) : (
                     runtimeStatus?.tasks.map((task) => (
                       <div className="task-item" key={task.id}>
-                        <p>{task.title}</p>
-                        <strong>{`${task.id} / ${task.status}`}</strong>
+                        <div className="task-item__meta">
+                          <div>
+                            <p>{task.title}</p>
+                            <strong>{`${task.id} / ${task.status}`}</strong>
+                          </div>
+                          <button
+                            className="thread-action"
+                            onClick={() => handleAdvanceTask(task.id)}
+                            disabled={loading || task.status === "failed"}
+                          >
+                            Advance status
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}
@@ -360,13 +434,13 @@ export default function App() {
                 <div className="thread-strip__header">
                   <div>
                     <p className="section-title">Events</p>
-                    <h3>当前线程事件日志</h3>
+                    <h3>Thread activity log</h3>
                   </div>
                   <span className="mini-chip">{`Count ${runtimeStatus?.events.length ?? 0}`}</span>
                 </div>
                 <div className="event-list">
                   {(runtimeStatus?.events ?? []).length === 0 ? (
-                    <div className="thread-empty">当前线程还没有事件。</div>
+                    <div className="thread-empty">No events recorded yet.</div>
                   ) : (
                     runtimeStatus?.events.map((event) => (
                       <div className="event-item" key={event.id}>
@@ -382,7 +456,7 @@ export default function App() {
             <div className="action-strip card">
               <div>
                 <p className="section-title">Capability view</p>
-                <h3>workspace / thread / tasks / events 已接入首页，同时保留 runtime、skills、tools、MCP 总览。</h3>
+                <h3>Threads, tasks, bridge status, and runtime discovery now share one homepage instead of separate placeholders.</h3>
               </div>
               <div className="mini-actions">
                 <span className="mini-chip">{`Skills ${countGroups(runtimeStatus?.skillsByGroup)}`}</span>
@@ -396,9 +470,9 @@ export default function App() {
             <div className="activity__header">
               <div>
                 <p className="section-title">Runtime activity</p>
-                <h3>事件与状态</h3>
+                <h3>Events and health</h3>
               </div>
-              <span className="chip chip--soft">Local</span>
+              <span className="chip chip--soft">{runtimeStatus?.runtimeSource ?? "Local"}</span>
             </div>
 
             <div className="activity__list">
@@ -419,14 +493,12 @@ export default function App() {
                 {error
                   ? error
                   : [
-                      `Bridge: ${bridgeResult?.message ?? runtimeStatus?.runtimeMessage ?? "Not checked"}`,
-                      `Workspace: ${runtimeStatus?.workspaceId ?? "none"}`,
-                      `Active thread: ${runtimeStatus?.activeThreadId ?? "none"}`,
-                      `Tasks: ${runtimeStatus?.tasks.length ?? 0}`,
-                      `Latest event: ${runtimeStatus?.events[0]?.message ?? "none"}`,
-                      `Skills: ${skillGroups || "none"}`,
-                      `Tools: ${summarizeGroups(runtimeStatus?.toolsByGroup) || "none"}`,
+                      `Bridge: ${bridgeResult?.message ?? "not checked separately"}`,
+                      `Runtime: ${runtimeStatus?.runtimeMessage ?? "none"}`,
+                      `Refresh: ${streamState}`,
+                      `Capabilities: ${capabilitySummary || "none"}`,
                       `MCP: ${summarizeGroups(runtimeStatus?.mcpByGroup) || "none"}`,
+                      `Missing: ${runtimeStatus?.missingPaths?.join(" | ") || "none"}`,
                     ].join("\n")}
               </div>
             </div>
@@ -453,11 +525,22 @@ function summarizeGroups(groups?: Record<string, string[]>) {
   return Object.entries(groups)
     .filter(([, items]) => items.length > 0)
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([group, items]) => {
-      const summary = items.slice(0, 2).join(", ");
-      const suffix = items.length > 2 ? ` +${items.length - 2}` : "";
-      return `${group}:${items.length}${summary ? ` [${summary}${suffix}]` : ""}`;
-    })
+    .map(([group, items]) => `${group}:${items.length}`)
+    .join(" / ");
+}
+
+function summarizeTaskCounts(tasks?: TaskSummary[]) {
+  if (!tasks || tasks.length === 0) {
+    return "0 tasks";
+  }
+
+  const counts = tasks.reduce<Record<string, number>>((acc, task) => {
+    acc[task.status] = (acc[task.status] || 0) + 1;
+    return acc;
+  }, {});
+
+  return Object.entries(counts)
+    .map(([status, count]) => `${status} ${count}`)
     .join(" / ");
 }
 

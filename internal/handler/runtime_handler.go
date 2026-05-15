@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +15,7 @@ const (
 	errCodeInvalidBridgeCheckPayload = 1001
 	errCodeInvalidCreateThreadBody   = 1002
 	errCodeInvalidCreateTaskBody     = 1005
+	errCodeInvalidTaskStatusBody     = 1001
 )
 
 // RuntimeHandler exposes codex-style runtime discovery and bridge endpoints.
@@ -132,6 +134,23 @@ func (h *RuntimeHandler) CreateTask(c *gin.Context) {
 	xresp.OK(c, data)
 }
 
+// UpdateTaskStatus updates the status for a thread-local task.
+func (h *RuntimeHandler) UpdateTaskStatus(c *gin.Context) {
+	var payload runtimecontract.UpdateTaskStatusRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		xresp.BadRequest(c, errCodeInvalidTaskStatusBody, "invalid task status payload")
+		return
+	}
+
+	data, err := h.runtime.UpdateTaskStatus(c.Request.Context(), c.Param("id"), c.Param("taskId"), payload)
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
 // Events returns the events under the given thread.
 func (h *RuntimeHandler) Events(c *gin.Context) {
 	data, err := h.runtime.Events(c.Request.Context(), c.Param("id"))
@@ -141,6 +160,29 @@ func (h *RuntimeHandler) Events(c *gin.Context) {
 	}
 
 	xresp.OK(c, gin.H{"items": data})
+}
+
+// StreamEvents returns a minimal SSE stream for the given thread.
+func (h *RuntimeHandler) StreamEvents(c *gin.Context) {
+	stream, err := h.runtime.StreamEvents(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	c.Status(http.StatusOK)
+	c.Writer.Flush()
+
+	for event := range stream {
+		_, _ = fmt.Fprintf(c.Writer, "event: %s\n", event.Type)
+		_, _ = fmt.Fprintf(c.Writer, "data: {\"id\":\"%s\",\"threadId\":\"%s\",\"type\":\"%s\",\"message\":\"%s\",\"createdAt\":\"%s\"}\n\n", event.ID, event.ThreadID, event.Type, event.Message, event.CreatedAt)
+		c.Writer.Flush()
+	}
 }
 
 // Skills returns the available skills exposed by the runtime.

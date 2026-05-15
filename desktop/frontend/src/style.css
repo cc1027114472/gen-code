@@ -458,6 +458,13 @@ button {
   line-height: 1.7;
 }
 
+.task-item__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
 .thread-strip__header {
   display: flex;
   align-items: flex-start;
@@ -648,6 +655,11 @@ button {
 
   .task-grid {
     grid-template-columns: 1fr;
+  }
+
+  .task-item__meta {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .mini-actions,
