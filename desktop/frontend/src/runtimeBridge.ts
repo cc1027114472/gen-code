@@ -103,6 +103,8 @@ type SkillDescriptor = {
 
 type ToolDescriptor = {
   id: string;
+  name?: string;
+  description?: string;
   kind?: string;
   readOnly?: boolean;
   executable?: boolean;
@@ -251,7 +253,18 @@ function groupTools(items: ToolDescriptor[]) {
   return items.reduce<Record<string, string[]>>((acc, item) => {
     const group = item.source || "runtime";
     acc[group] = acc[group] || [];
-    acc[group].push(item.id);
+    const parts: string[] = [];
+    if (item.kind) {
+      parts.push(item.kind);
+    }
+    if (item.permissionMode) {
+      parts.push(item.permissionMode);
+    }
+    parts.push(item.executable ? "executable" : "descriptor");
+    if (item.readOnly) {
+      parts.push("read-only");
+    }
+    acc[group].push(parts.length > 0 ? `${item.id} (${parts.join(", ")})` : item.id);
     acc[group].sort();
     return acc;
   }, {});

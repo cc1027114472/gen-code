@@ -211,9 +211,14 @@ type apiSkill struct {
 }
 
 type apiTool struct {
-	ID         string `json:"id"`
-	Permission string `json:"permissionMode"`
-	Source     string `json:"source"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Permission  string `json:"permissionMode"`
+	Source      string `json:"source"`
+	Kind        string `json:"kind"`
+	ReadOnly    bool   `json:"readOnly"`
+	Executable  bool   `json:"executable"`
 }
 
 type apiMCPServer struct {
@@ -864,13 +869,41 @@ func groupTools(items []apiTool) map[string][]string {
 	groups := map[string][]string{}
 	for _, item := range items {
 		group := fallbackText(strings.TrimSpace(item.Source), "runtime")
-		label := item.ID
-		if permission := strings.TrimSpace(item.Permission); permission != "" {
-			label = fmt.Sprintf("%s (%s)", item.ID, permission)
-		}
+		label := formatToolLabel(item.ID, item.Kind, item.Permission, item.Executable, item.ReadOnly)
 		groups[group] = append(groups[group], label)
 	}
 	return normalizeGroups(groups)
+}
+
+func formatToolLabel(id string, kind string, permission string, executable bool, readOnly bool) string {
+	parts := make([]string, 0, 4)
+	if trimmedKind := strings.TrimSpace(kind); trimmedKind != "" {
+		parts = append(parts, trimmedKind)
+	}
+	if trimmedPermission := strings.TrimSpace(permission); trimmedPermission != "" {
+		parts = append(parts, trimmedPermission)
+	}
+	if executable {
+		parts = append(parts, "executable")
+	} else {
+		parts = append(parts, "descriptor")
+	}
+	if readOnly {
+		parts = append(parts, "read-only")
+	}
+	if len(parts) == 0 {
+		return id
+	}
+	return fmt.Sprintf("%s (%s)", id, strings.Join(parts, ", "))
+}
+
+func localToolCatalog() []apiTool {
+	return []apiTool{
+		{ID: "workspace.read_file", Name: "Read File", Description: "Read a file from workspace", Permission: "read-only", Source: "runtime", Kind: "workspace.read_file", ReadOnly: true, Executable: true},
+		{ID: "workspace.list_files", Name: "List Files", Description: "List files from workspace", Permission: "read-only", Source: "runtime", Kind: "workspace.list_files", ReadOnly: true, Executable: true},
+		{ID: "workspace.search_text", Name: "Search Text", Description: "Search text in workspace", Permission: "read-only", Source: "runtime", Kind: "workspace.search_text", ReadOnly: true, Executable: true},
+		{ID: "thread.message.append", Name: "Append Message", Description: "Append a thread-local message", Permission: "workspace-write", Source: "runtime", Kind: "thread.message.append", ReadOnly: false, Executable: true},
+	}
 }
 
 func groupMCPServers(items []apiMCPServer) map[string][]string {
@@ -1419,6 +1452,7 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	status.ToolCalls = toToolCallSummaries(toolCalls)
 	status.Artifacts = toArtifactSummaries(artifacts)
 	status.Events = toEventSummaries(events)
+	status.ToolsByGroup = groupTools(localToolCatalog())
 	status.RuntimeState = "fallback"
 	status.RuntimeReady = true
 	status.RuntimeMessage = "Using project-local SQLite runtime fallback because no external runtime is connected."

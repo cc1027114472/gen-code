@@ -59,6 +59,33 @@ func TestTasksListFallsBackLocallyWhenServerIsUnavailable(t *testing.T) {
 	require.Contains(t, output, "kind=thread.message.append")
 }
 
+func TestToolsListPrintsExecutionMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tools":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"workspace.read_file","name":"Read File","description":"Read a file from workspace","permissionMode":"read-only","source":"runtime","kind":"workspace.read_file","readOnly":true,"executable":true}]}}`))
+		case "/api/runtime/status":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":0,"eventCount":0}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"tools", "list"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "source: remote-app-server")
+	require.Contains(t, output, "permission=read-only")
+	require.Contains(t, output, "kind=workspace.read_file")
+	require.Contains(t, output, "executable=true")
+	require.Contains(t, output, "readOnly=true")
+}
+
 func TestFallbackText(t *testing.T) {
 	require.Equal(t, "fallback", fallbackText("", "fallback"))
 	require.Equal(t, "fallback", fallbackText("   ", "fallback"))

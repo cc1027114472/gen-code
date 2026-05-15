@@ -89,6 +89,11 @@ func TestDesktopFallbackThreadTaskFlow(t *testing.T) {
 	if !strings.Contains(afterAdvance.RecoverySummary, "Recovered") {
 		t.Fatalf("expected recovery summary, got %q", afterAdvance.RecoverySummary)
 	}
+	if tools, ok := afterAdvance.ToolsByGroup["runtime"]; !ok || len(tools) == 0 {
+		t.Fatal("expected runtime tools summary in fallback status")
+	} else if !strings.Contains(strings.Join(tools, " "), "read-only") {
+		t.Fatalf("expected fallback tool labels to include read-only metadata, got %v", tools)
+	}
 }
 
 func TestDesktopFallbackPersistsAcrossAppRestart(t *testing.T) {

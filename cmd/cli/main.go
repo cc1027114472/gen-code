@@ -686,6 +686,7 @@ func createTask(ctx context.Context, facade *runtimeFacade, threadID string, tit
 	fmt.Printf("  kind: %s\n", item.Kind)
 	fmt.Printf("  status: %s\n", item.Status)
 	fmt.Printf("  input: %s\n", fallbackText(item.InputSummary, "none"))
+	fmt.Println("  input hint: PowerShell JSON can use --input='{\"path\":\"README.md\"}' or --input='{\"query\":\"workspace\",\"path\":\"docs\"}'")
 	return nil
 }
 
@@ -756,14 +757,14 @@ func printSkills(runtimeService *runtime.Service, requestedGroup string) error {
 
 func printTools(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Println("tools list")
-	fmt.Printf("  source: %s\n", facade.runtimeSource())
 	items, err := facade.tools(ctx)
 	if err != nil {
 		return err
 	}
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
 	for _, item := range items {
 		fmt.Printf(
-			"  - %s (%s, %s, kind=%s, executable=%t, readOnly=%t)\n",
+			"  - %s (%s, permission=%s, kind=%s, executable=%t, readOnly=%t)\n",
 			item.ID,
 			fallbackText(item.Source, "runtime"),
 			fallbackText(item.Permission, "unknown"),
