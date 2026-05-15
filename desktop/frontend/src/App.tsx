@@ -124,7 +124,15 @@ export default function App() {
   const events = runtimeStatus?.events ?? [];
 
   const latestTask = useMemo(() => newestBy(tasks, (item) => item.updatedAt || item.createdAt), [tasks]);
-  const latestToolCall = useMemo(() => newestBy(toolCalls, (item) => item.createdAt), [toolCalls]);
+  const latestToolCall = useMemo(
+    () =>
+      newestBy(toolCalls, (item) => item.createdAt, (left, right) => {
+        const leftWeight = toolCallStatusWeight(left.status);
+        const rightWeight = toolCallStatusWeight(right.status);
+        return rightWeight - leftWeight;
+      }),
+    [toolCalls],
+  );
   const latestMessage = useMemo(() => newestBy(messages, (item) => item.createdAt), [messages]);
   const latestArtifact = useMemo(() => newestBy(artifacts, (item) => item.createdAt), [artifacts]);
   const latestEvent = useMemo(() => newestBy(events, (item) => item.createdAt), [events]);
@@ -513,12 +521,36 @@ export default function App() {
   );
 }
 
-function newestBy<T>(items: T[], getTime: (item: T) => string) {
+function newestBy<T>(items: T[], getTime: (item: T) => string, tieBreaker?: (left: T, right: T) => number) {
   if (items.length === 0) {
     return null;
   }
 
-  return [...items].sort((left, right) => toTimestamp(getTime(right)) - toTimestamp(getTime(left)))[0] ?? null;
+  return (
+    [...items].sort((left, right) => {
+      const delta = toTimestamp(getTime(right)) - toTimestamp(getTime(left));
+      if (delta !== 0) {
+        return delta;
+      }
+      if (tieBreaker) {
+        return tieBreaker(left, right);
+      }
+      return 0;
+    })[0] ?? null
+  );
+}
+
+function toolCallStatusWeight(status: string) {
+  switch (status) {
+    case "completed":
+      return 3;
+    case "failed":
+      return 2;
+    case "running":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 function ResultCard({ label, title, body }: { label: string; title: string; body: string }) {
