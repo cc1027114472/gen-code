@@ -7,10 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"llmtrace/internal/appserver"
 	"llmtrace/internal/config"
-	"llmtrace/internal/handler"
 	"llmtrace/internal/platform/xlog"
-	"llmtrace/internal/router"
 )
 
 // Run assembles the application and starts the HTTP server.
@@ -31,8 +30,11 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
-	healthHandler := handler.NewHealthHandler()
-	engine, err := router.New(log, cfg.App.Name, cfg.App.TrustedProxies, cfg.Log.HTTPAccess, healthHandler)
+	engine, err := appserver.NewEngine(log, appserver.HTTPConfig{
+		AppName:        cfg.App.Name,
+		TrustedProxies: cfg.App.TrustedProxies,
+		HTTPAccess:     cfg.Log.HTTPAccess,
+	}, appserver.NewRuntimeService())
 	if err != nil {
 		return err
 	}

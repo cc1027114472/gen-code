@@ -1,0 +1,474 @@
+package router
+
+import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+
+	"llmtrace/internal/appserver/runtimecontract"
+	"llmtrace/internal/handler"
+	"llmtrace/internal/platform/xerror"
+	"llmtrace/internal/platform/xlog"
+)
+
+func TestNewRegistersCodexStyleRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	log, err := xlog.New("debug")
+	require.NoError(t, err)
+
+	engine, err := New(log, "gen-code", []string{"127.0.0.1"}, false, Handlers{
+		Health:  handler.NewHealthHandler(),
+		Runtime: handler.NewRuntimeHandler(stubRuntimeService{}),
+	})
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name           string
+		method         string
+		path           string
+		body           string
+		wantStatusCode int
+		wantBody       []string
+	}{
+		{
+			name:           "healthz",
+			method:         http.MethodGet,
+			path:           "/healthz",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"status":"ok"`},
+		},
+		{
+			name:           "runtime status",
+			method:         http.MethodGet,
+			path:           "/api/runtime/status",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"state":"ready"`, `"ready":true`, `"workspaceId":"gen-code"`, `"threadCount":2`, `"activeThreadId":"thread-1"`},
+		},
+		{
+			name:           "workspace",
+			method:         http.MethodGet,
+			path:           "/api/workspace",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"gen-code"`, `"projectRoot":"D:\\GOWorks\\gen-code-heji\\gen-code"`},
+		},
+		{
+			name:           "threads",
+			method:         http.MethodGet,
+			path:           "/api/threads",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"thread-1","workspaceId":"gen-code","name":"Thread 1"`},
+		},
+		{
+			name:           "create thread",
+			method:         http.MethodPost,
+			path:           "/api/threads",
+			body:           `{"name":"Design Thread","activeModel":"gpt-5","permissionMode":"workspace-write"}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"thread-3"`, `"name":"Design Thread"`, `"permissionMode":"workspace-write"`},
+		},
+		{
+			name:           "thread by id",
+			method:         http.MethodGet,
+			path:           "/api/threads/thread-1",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"thread-1"`, `"isActive":true`},
+		},
+		{
+			name:           "activate thread",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-2/activate",
+			body:           `{}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"thread-2"`, `"isActive":true`},
+		},
+		{
+			name:           "tasks",
+			method:         http.MethodGet,
+			path:           "/api/threads/thread-1/tasks",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"task-1","threadId":"thread-1","title":"Task 1","status":"queued"`},
+		},
+		{
+			name:           "create task",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-1/tasks",
+			body:           `{"title":"Draft spec"}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"task-2"`, `"threadId":"thread-1"`, `"title":"Draft spec"`},
+		},
+		{
+			name:           "events",
+			method:         http.MethodGet,
+			path:           "/api/threads/thread-1/events",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"event-1","threadId":"thread-1","type":"thread.created","message":"Thread 1 created"`},
+		},
+		{
+			name:           "skills",
+			method:         http.MethodGet,
+			path:           "/api/skills",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"skill-1","group":"codex","name":"Skill One","description":"Skill description","source":"codex"}`},
+		},
+		{
+			name:           "tools",
+			method:         http.MethodGet,
+			path:           "/api/tools",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"tool-1","name":"Tool One","description":"Tool description","permissionMode":"ask-user","source":"runtime"}`},
+		},
+		{
+			name:           "mcp servers",
+			method:         http.MethodGet,
+			path:           "/api/mcp/servers",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"server-1","source":"node_modules","enabled":true,"toolCount":2,"resourceCount":1,"status":"enabled"}`},
+		},
+		{
+			name:           "bridge check",
+			method:         http.MethodPost,
+			path:           "/api/bridge/check",
+			body:           `{"bridge":"stdio","target":"server-1"}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"ok":true`, `"echo":{"bridge":"stdio","target":"server-1"}`},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(tc.body))
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+
+			rec := httptest.NewRecorder()
+			engine.ServeHTTP(rec, req)
+
+			require.Equal(t, tc.wantStatusCode, rec.Code)
+			require.Contains(t, rec.Body.String(), `"code":0`)
+			for _, item := range tc.wantBody {
+				require.Contains(t, rec.Body.String(), item)
+			}
+		})
+	}
+}
+
+func TestNewReturnsRouteErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	log, err := xlog.New("debug")
+	require.NoError(t, err)
+
+	engine, err := New(log, "gen-code", []string{"127.0.0.1"}, false, Handlers{
+		Runtime: handler.NewRuntimeHandler(errorRuntimeService{}),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/status", nil)
+	rec := httptest.NewRecorder()
+
+	engine.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Contains(t, rec.Body.String(), `"code":2001`)
+}
+
+func TestNewRejectsInvalidBridgePayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	log, err := xlog.New("debug")
+	require.NoError(t, err)
+
+	engine, err := New(log, "gen-code", []string{"127.0.0.1"}, false, Handlers{
+		Runtime: handler.NewRuntimeHandler(stubRuntimeService{}),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/bridge/check", bytes.NewBufferString(`oops`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	engine.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), `"code":1001`)
+}
+
+func TestNewRejectsInvalidCreateThreadPermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	log, err := xlog.New("debug")
+	require.NoError(t, err)
+
+	engine, err := New(log, "gen-code", []string{"127.0.0.1"}, false, Handlers{
+		Runtime: handler.NewRuntimeHandler(stubRuntimeService{}),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/threads", bytes.NewBufferString(`{"permissionMode":"invalid-mode"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	engine.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), `"code":1003`)
+}
+
+func TestNewRejectsInvalidCreateTaskThread(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	log, err := xlog.New("debug")
+	require.NoError(t, err)
+
+	engine, err := New(log, "gen-code", []string{"127.0.0.1"}, false, Handlers{
+		Runtime: handler.NewRuntimeHandler(stubRuntimeService{}),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/threads/missing/tasks", bytes.NewBufferString(`{"title":"Draft spec"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	engine.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), `"code":1004`)
+}
+
+type stubRuntimeService struct{}
+
+func (stubRuntimeService) Status(context.Context) (runtimecontract.Status, error) {
+	return runtimecontract.Status{
+		State:          "ready",
+		Ready:          true,
+		WorkspaceID:    "gen-code",
+		ProjectRoot:    `D:\GOWorks\gen-code-heji\gen-code`,
+		ThreadCount:    2,
+		ActiveThreadID: "thread-1",
+	}, nil
+}
+
+func (stubRuntimeService) Workspace(context.Context) (runtimecontract.WorkspaceDescriptor, error) {
+	return runtimecontract.WorkspaceDescriptor{
+		ID:                "gen-code",
+		ProjectRoot:       `D:\GOWorks\gen-code-heji\gen-code`,
+		SharedDocsRoot:    `D:\GOWorks\gen-code-heji\gen-code\docs`,
+		CreatedAt:         "2026-05-15T00:00:00Z",
+		ActiveThreadCount: 2,
+	}, nil
+}
+
+func (stubRuntimeService) Threads(context.Context) ([]runtimecontract.ThreadDescriptor, error) {
+	return []runtimecontract.ThreadDescriptor{
+		{
+			ID:                  "thread-1",
+			WorkspaceID:         "gen-code",
+			Name:                "Thread 1",
+			Status:              "idle",
+			PermissionMode:      "ask-user",
+			MessageHistoryCount: 0,
+			ToolCallCount:       0,
+			ArtifactCount:       0,
+			CreatedAt:           "2026-05-15T00:00:00Z",
+			IsActive:            true,
+		},
+		{
+			ID:                  "thread-2",
+			WorkspaceID:         "gen-code",
+			Name:                "Thread 2",
+			Status:              "idle",
+			PermissionMode:      "ask-user",
+			MessageHistoryCount: 0,
+			ToolCallCount:       0,
+			ArtifactCount:       0,
+			CreatedAt:           "2026-05-15T00:00:00Z",
+			IsActive:            false,
+		},
+	}, nil
+}
+
+func (stubRuntimeService) CreateThread(_ context.Context, request runtimecontract.CreateThreadRequest) (runtimecontract.ThreadDescriptor, error) {
+	if request.PermissionMode == "invalid-mode" {
+		return runtimecontract.ThreadDescriptor{}, xerror.BadRequest(1003, `invalid permission mode "invalid-mode"`)
+	}
+	return runtimecontract.ThreadDescriptor{
+		ID:                  "thread-3",
+		WorkspaceID:         "gen-code",
+		Name:                request.Name,
+		Status:              "idle",
+		ActiveModel:         request.ActiveModel,
+		PermissionMode:      request.PermissionMode,
+		MessageHistoryCount: 0,
+		ToolCallCount:       0,
+		ArtifactCount:       0,
+		CreatedAt:           "2026-05-15T00:00:00Z",
+		IsActive:            false,
+	}, nil
+}
+
+func (stubRuntimeService) Thread(_ context.Context, id string) (runtimecontract.ThreadDescriptor, error) {
+	return runtimecontract.ThreadDescriptor{
+		ID:                  id,
+		WorkspaceID:         "gen-code",
+		Name:                "Thread 1",
+		Status:              "idle",
+		PermissionMode:      "ask-user",
+		MessageHistoryCount: 0,
+		ToolCallCount:       0,
+		ArtifactCount:       0,
+		CreatedAt:           "2026-05-15T00:00:00Z",
+		IsActive:            id == "thread-1",
+	}, nil
+}
+
+func (stubRuntimeService) ActivateThread(_ context.Context, id string) (runtimecontract.ThreadDescriptor, error) {
+	return runtimecontract.ThreadDescriptor{
+		ID:                  id,
+		WorkspaceID:         "gen-code",
+		Name:                "Thread 2",
+		Status:              "idle",
+		PermissionMode:      "ask-user",
+		MessageHistoryCount: 0,
+		ToolCallCount:       0,
+		ArtifactCount:       0,
+		CreatedAt:           "2026-05-15T00:00:00Z",
+		IsActive:            true,
+	}, nil
+}
+
+func (stubRuntimeService) Tasks(context.Context, string) ([]runtimecontract.TaskDescriptor, error) {
+	return []runtimecontract.TaskDescriptor{{
+		ID:        "task-1",
+		ThreadID:  "thread-1",
+		Title:     "Task 1",
+		Status:    "queued",
+		CreatedAt: "2026-05-15T00:00:00Z",
+	}}, nil
+}
+
+func (stubRuntimeService) CreateTask(_ context.Context, threadID string, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	if threadID == "missing" {
+		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+	}
+	if request.Title == "" {
+		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, "invalid create task payload")
+	}
+	return runtimecontract.TaskDescriptor{
+		ID:        "task-2",
+		ThreadID:  threadID,
+		Title:     request.Title,
+		Status:    "queued",
+		CreatedAt: "2026-05-15T00:00:00Z",
+	}, nil
+}
+
+func (stubRuntimeService) Events(context.Context, string) ([]runtimecontract.EventDescriptor, error) {
+	return []runtimecontract.EventDescriptor{{
+		ID:        "event-1",
+		ThreadID:  "thread-1",
+		Type:      "thread.created",
+		Message:   "Thread 1 created",
+		CreatedAt: "2026-05-15T00:00:00Z",
+	}}, nil
+}
+
+func (stubRuntimeService) Skills(context.Context) ([]runtimecontract.Skill, error) {
+	return []runtimecontract.Skill{{
+		ID:          "skill-1",
+		Group:       "codex",
+		Name:        "Skill One",
+		Description: "Skill description",
+		Source:      "codex",
+	}}, nil
+}
+
+func (stubRuntimeService) Tools(context.Context) ([]runtimecontract.Tool, error) {
+	return []runtimecontract.Tool{{
+		ID:          "tool-1",
+		Name:        "Tool One",
+		Description: "Tool description",
+		Permission:  "ask-user",
+		Source:      "runtime",
+	}}, nil
+}
+
+func (stubRuntimeService) MCPServers(context.Context) ([]runtimecontract.MCPServer, error) {
+	return []runtimecontract.MCPServer{{
+		ID:            "server-1",
+		Source:        "node_modules",
+		Enabled:       true,
+		ToolCount:     2,
+		ResourceCount: 1,
+		Status:        "enabled",
+	}}, nil
+}
+
+func (stubRuntimeService) CheckBridge(_ context.Context, request map[string]any) (runtimecontract.BridgeCheckResult, error) {
+	return runtimecontract.BridgeCheckResult{
+		OK: true,
+		Details: map[string]any{
+			"echo": request,
+		},
+	}, nil
+}
+
+type errorRuntimeService struct{}
+
+func (errorRuntimeService) Status(context.Context) (runtimecontract.Status, error) {
+	return runtimecontract.Status{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Skills(context.Context) ([]runtimecontract.Skill, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Workspace(context.Context) (runtimecontract.WorkspaceDescriptor, error) {
+	return runtimecontract.WorkspaceDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Threads(context.Context) ([]runtimecontract.ThreadDescriptor, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) CreateThread(context.Context, runtimecontract.CreateThreadRequest) (runtimecontract.ThreadDescriptor, error) {
+	return runtimecontract.ThreadDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Thread(context.Context, string) (runtimecontract.ThreadDescriptor, error) {
+	return runtimecontract.ThreadDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) ActivateThread(context.Context, string) (runtimecontract.ThreadDescriptor, error) {
+	return runtimecontract.ThreadDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Tasks(context.Context, string) ([]runtimecontract.TaskDescriptor, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) CreateTask(context.Context, string, runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Events(context.Context, string) ([]runtimecontract.EventDescriptor, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Tools(context.Context) ([]runtimecontract.Tool, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) MCPServers(context.Context) ([]runtimecontract.MCPServer, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) CheckBridge(context.Context, map[string]any) (runtimecontract.BridgeCheckResult, error) {
+	return runtimecontract.BridgeCheckResult{}, xerror.Internal(2001, "runtime unavailable")
+}
