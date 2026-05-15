@@ -35,12 +35,15 @@ func TestStorePersistsSnapshotTables(t *testing.T) {
 		CreatedAt:      createdAt,
 	}))
 	require.NoError(t, store.SaveTask(TaskRecord{
-		ID:        "task-1",
-		ThreadID:  "thread-1",
-		Title:     "Draft spec",
-		Status:    "running",
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
+		ID:            "task-1",
+		ThreadID:      "thread-1",
+		Title:         "Draft spec",
+		Status:        "running",
+		Kind:          "thread.message.append",
+		Input:         `{"role":"user","content":"Draft spec please"}`,
+		ResultSummary: "message appended",
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
 	}))
 	require.NoError(t, store.SaveMessage(MessageRecord{
 		ID:        "message-1",
@@ -90,6 +93,8 @@ func TestStorePersistsSnapshotTables(t *testing.T) {
 	require.Len(t, snapshot.Flags, 1)
 	require.Len(t, snapshot.Events, 1)
 	require.Equal(t, "running", snapshot.Tasks[0].Status)
+	require.Equal(t, "thread.message.append", snapshot.Tasks[0].Kind)
+	require.Equal(t, "message appended", snapshot.Tasks[0].ResultSummary)
 	require.Equal(t, updatedAt, snapshot.Tasks[0].UpdatedAt)
 	require.Equal(t, "Draft spec please", snapshot.Messages[0].Content)
 	require.Equal(t, "bridge.check", snapshot.ToolCalls[0].ToolID)

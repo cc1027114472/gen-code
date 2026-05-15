@@ -39,12 +39,15 @@ type ThreadRecord struct {
 
 // TaskRecord is the persisted task row.
 type TaskRecord struct {
-	ID        string
-	ThreadID  string
-	Title     string
-	Status    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID            string
+	ThreadID      string
+	Title         string
+	Status        string
+	Kind          string
+	Input         string
+	ResultSummary string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // MessageRecord is the persisted thread message row.
@@ -196,7 +199,7 @@ func (s *Store) Load() (Snapshot, error) {
 	}
 
 	taskRows, err := s.db.Query(`
-		SELECT id, thread_id, title, status, created_at, updated_at
+		SELECT id, thread_id, title, status, kind, input, result_summary, created_at, updated_at
 		FROM tasks
 		ORDER BY created_at ASC, id ASC
 	`)
@@ -208,7 +211,7 @@ func (s *Store) Load() (Snapshot, error) {
 	for taskRows.Next() {
 		var item TaskRecord
 		var created, updated string
-		if err := taskRows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Status, &created, &updated); err != nil {
+		if err := taskRows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Status, &item.Kind, &item.Input, &item.ResultSummary, &created, &updated); err != nil {
 			return Snapshot{}, fmt.Errorf("scan task: %w", err)
 		}
 		item.CreatedAt, err = time.Parse(time.RFC3339, created)
@@ -379,15 +382,18 @@ func (s *Store) SaveThread(item ThreadRecord) error {
 // SaveTask upserts a task row.
 func (s *Store) SaveTask(item TaskRecord) error {
 	_, err := s.db.Exec(`
-		INSERT INTO tasks (id, thread_id, title, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO tasks (id, thread_id, title, status, kind, input, result_summary, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			thread_id=excluded.thread_id,
 			title=excluded.title,
 			status=excluded.status,
+			kind=excluded.kind,
+			input=excluded.input,
+			result_summary=excluded.result_summary,
 			created_at=excluded.created_at,
 			updated_at=excluded.updated_at
-	`, item.ID, item.ThreadID, item.Title, item.Status, item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339))
+	`, item.ID, item.ThreadID, item.Title, item.Status, item.Kind, item.Input, item.ResultSummary, item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("save task: %w", err)
 	}
@@ -411,6 +417,12 @@ func (s *Store) SaveToolCall(item ToolCallRecord) error {
 	_, err := s.db.Exec(`
 		INSERT INTO thread_tool_calls (id, thread_id, tool_id, status, summary, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			thread_id=excluded.thread_id,
+			tool_id=excluded.tool_id,
+			status=excluded.status,
+			summary=excluded.summary,
+			created_at=excluded.created_at
 	`, item.ID, item.ThreadID, item.ToolID, item.Status, item.Summary, item.CreatedAt.Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("save tool call: %w", err)
@@ -483,6 +495,9 @@ func (s *Store) migrate() error {
 			thread_id TEXT NOT NULL,
 			title TEXT NOT NULL,
 			status TEXT NOT NULL,
+			kind TEXT NOT NULL DEFAULT '',
+			input TEXT NOT NULL DEFAULT '',
+			result_summary TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
@@ -538,6 +553,15 @@ func (s *Store) migrate() error {
 		if _, err := s.db.Exec(`INSERT INTO schema_version(version) VALUES (1)`); err != nil {
 			return fmt.Errorf("write schema version: %w", err)
 		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add tasks.kind column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN input TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add tasks.input column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN result_summary TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add tasks.result_summary column: %w", err)
 	}
 	return nil
 }

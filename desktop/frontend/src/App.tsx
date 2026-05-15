@@ -22,7 +22,11 @@ type TaskSummary = {
   id: string;
   threadId: string;
   title: string;
+  kind: string;
+  input: string;
   status: string;
+  resultSummary: string;
+  createdAt: string;
   updatedAt: string;
 };
 
@@ -105,8 +109,20 @@ type BridgeCheckResult = {
   runtimeHint: string;
 };
 
+type TaskCreateDraft = {
+  title: string;
+  kind: string;
+  input: string;
+};
+
+const defaultDraft: TaskCreateDraft = {
+  title: "",
+  kind: "prompt",
+  input: "",
+};
+
 export default function App() {
-  const [message, setMessage] = useState("等待 Go bridge 响应...");
+  const [message, setMessage] = useState("等待桌面 Runtime 状态...");
   const [error, setError] = useState("");
   const [lastCheckedAt, setLastCheckedAt] = useState("");
   const [appInfo, setAppInfo] = useState("正在加载桌面壳...");
@@ -115,6 +131,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [streamState, setStreamState] = useState("手动刷新模式");
   const [sseEnabled, setSseEnabled] = useState(false);
+  const [draft, setDraft] = useState<TaskCreateDraft>(defaultDraft);
 
   const refreshStatus = async (runBridgeCheck: boolean) => {
     setLoading(true);
@@ -142,15 +159,15 @@ export default function App() {
       }
 
       if (!nextRuntime.supportsSSE || !nextRuntime.sseEndpoint) {
-        setStreamState("未接入 SSE，保留手动刷新回退。");
+        setStreamState("当前未接入 SSE，使用手动刷新。");
         setSseEnabled(false);
       } else {
-        setStreamState("检测到 SSE，准备订阅任务更新。");
+        setStreamState("已检测到 SSE，事件和执行状态会自动刷新。");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "未知 bridge 错误");
+      setError(err instanceof Error ? err.message : "桥接请求失败");
       setLastCheckedAt(new Date().toLocaleTimeString("zh-CN", { hour12: false }));
-      setStreamState("刷新失败，已退回手动刷新。");
+      setStreamState("刷新失败，请稍后重试。");
     } finally {
       setLoading(false);
     }
@@ -168,14 +185,14 @@ export default function App() {
     try {
       const source = new EventSource(runtimeStatus.sseEndpoint);
       setSseEnabled(true);
-      setStreamState("SSE 已连接，首页会自动刷新 task 状态。");
+      setStreamState("SSE 已连接，首页正在实时刷新。");
 
       source.onmessage = () => {
         void refreshStatus(false);
       };
 
       source.onerror = () => {
-        setStreamState("SSE 已断开，仍可手动刷新。");
+        setStreamState("SSE 已断开，可继续手动刷新。");
         setSseEnabled(false);
         source.close();
       };
@@ -197,7 +214,7 @@ export default function App() {
     try {
       const nextStatus = (await CreateThread("")) as RuntimeStatus;
       setRuntimeStatus(nextStatus);
-      setMessage("已创建 thread。");
+      setMessage("已创建新 thread。");
       setLastCheckedAt(formatTime(nextStatus.updatedAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "创建 thread 失败");
@@ -229,27 +246,29 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
-      const nextStatus = (await CreateTask(runtimeStatus.activeThreadId, "")) as RuntimeStatus;
+      const payload = JSON.stringify(draft);
+      const nextStatus = (await CreateTask(runtimeStatus.activeThreadId, payload)) as RuntimeStatus;
       setRuntimeStatus(nextStatus);
-      setMessage("已创建 task。");
+      setMessage("已创建任务，等待执行。");
       setLastCheckedAt(formatTime(nextStatus.updatedAt));
+      setDraft((current) => ({ ...current, title: "", input: "" }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "创建 task 失败");
+      setError(err instanceof Error ? err.message : "创建任务失败");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAdvanceTask = async (taskID: string) => {
+  const handleRunTask = async (taskID: string) => {
     setLoading(true);
     setError("");
     try {
       const nextStatus = (await AdvanceTask(taskID)) as RuntimeStatus;
       setRuntimeStatus(nextStatus);
-      setMessage("task 状态已推进。");
+      setMessage("任务已执行。");
       setLastCheckedAt(formatTime(nextStatus.updatedAt));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "更新 task 状态失败");
+      setError(err instanceof Error ? err.message : "运行任务失败");
     } finally {
       setLoading(false);
     }
@@ -269,30 +288,35 @@ export default function App() {
       return "loading";
     }
     if (runtimeStatus.runtimeSource === "runtime-http") {
-      return "app-server API";
+      return "远端 API";
     }
     if (runtimeStatus.stateStore === "sqlite") {
-      return "desktop SQLite fallback";
+      return "共享 SQLite fallback";
     }
     return runtimeStatus.runtimeSource;
   }, [runtimeStatus]);
 
+  const activeThread = useMemo(
+    () => runtimeStatus?.threads.find((thread) => thread.id === runtimeStatus.activeThreadId) ?? null,
+    [runtimeStatus],
+  );
+  const latestTask = useMemo(() => runtimeStatus?.tasks?.[0] ?? null, [runtimeStatus]);
+  const latestToolCall = useMemo(() => runtimeStatus?.toolCalls?.[0] ?? null, [runtimeStatus]);
+  const latestEvent = useMemo(() => runtimeStatus?.events?.[0] ?? null, [runtimeStatus]);
+
   const activityFeed = useMemo(
     () => [
       {
-        label: "运行源",
+        label: "运行来源",
         value: runtimeSourceLabel,
         tone: runtimeStatus?.runtimeSource === "runtime-http" ? "good" : "muted",
       },
       {
         label: "状态存储",
-        value: runtimeStatus?.stateStore ? `${runtimeStatus.stateStore} / ${runtimeStatus.usesProjectLocalStore ? "project-local" : "shared"}` : "unknown",
+        value: runtimeStatus?.stateStore
+          ? `${runtimeStatus.stateStore} / ${runtimeStatus.usesProjectLocalStore ? "project-local" : "shared"}`
+          : "unknown",
         tone: runtimeStatus?.stateStore ? "good" : "muted",
-      },
-      {
-        label: "状态文件",
-        value: runtimeStatus?.statePath || "未提供",
-        tone: runtimeStatus?.statePath ? "good" : "muted",
       },
       {
         label: "当前 thread",
@@ -305,9 +329,12 @@ export default function App() {
         tone: runtimeStatus?.tasks?.length ? "good" : "muted",
       },
       {
-        label: "线程上下文",
+        label: "上下文恢复",
         value: threadContextSummary,
-        tone: runtimeStatus && (runtimeStatus.messages.length + runtimeStatus.toolCalls.length + runtimeStatus.artifacts.length) > 0 ? "good" : "muted",
+        tone:
+          runtimeStatus && runtimeStatus.messages.length + runtimeStatus.toolCalls.length + runtimeStatus.artifacts.length > 0
+            ? "good"
+            : "muted",
       },
       {
         label: "刷新模式",
@@ -315,7 +342,7 @@ export default function App() {
         tone: sseEnabled ? "good" : "muted",
       },
       {
-        label: "上次检查",
+        label: "最近检查",
         value: lastCheckedAt || "尚未执行",
         tone: "muted",
       },
@@ -353,7 +380,7 @@ export default function App() {
             <div className="sidebar__section">
               <p className="section-title">导航</p>
               <button className="nav-item nav-item--active" type="button">
-                <span className="nav-item__label">运行态总览</span>
+                <span className="nav-item__label">运行总览</span>
                 <span className="nav-item__meta">Live</span>
               </button>
               <button className="nav-item" type="button">
@@ -368,10 +395,12 @@ export default function App() {
             </div>
 
             <div className="sidebar__section sidebar__section--muted">
-              <p className="section-title">项目状态源</p>
+              <p className="section-title">状态源</p>
               <p className="sidebar__note">{runtimeStatus?.statePath ?? "等待状态数据..."}</p>
               <p className="sidebar__note sidebar__note--strong">
-                {runtimeStatus?.usesProjectLocalStore ? "当前展示的是 project-local state store，可用于重启恢复。" : "当前未标记 project-local store。"}
+                {runtimeStatus?.usesProjectLocalStore
+                  ? "远端不可用时继续共享同一 SQLite 状态。"
+                  : "当前状态源不是 project-local SQLite。"}
               </p>
             </div>
           </aside>
@@ -380,10 +409,10 @@ export default function App() {
             <div className="hero card">
               <div className="hero__copy">
                 <p className="hero__eyebrow">Desktop runtime status</p>
-                <h2>首页直接消费真实运行态、bridge 检查和可恢复的本地状态源。</h2>
+                <h2>首页直接消费真实 create task 与 run task 语义，并持续显示 active thread 的执行动态。</h2>
                 <p className="hero__lead">
-                  桌面端仍然优先走 app-server API。外部服务不可用时，会切到项目内 SQLite 状态源，继续展示 thread、task、event 和恢复摘要，
-                  这样重启之后也能看见上一次的工作链路，而不是退回纯内存占位。
+                  桌面端优先连接远端 API；当远端暂时不可用时，会继续回落到共享 SQLite 状态，并保留 task、message、tool
+                  call、event 的执行轨迹，方便重启后继续追踪上下文。
                 </p>
               </div>
 
@@ -393,9 +422,6 @@ export default function App() {
                 </button>
                 <button className="secondary-action" onClick={handleCreateThread} disabled={loading}>
                   新建 thread
-                </button>
-                <button className="secondary-action" onClick={handleCreateTask} disabled={loading || !runtimeStatus?.activeThreadId}>
-                  新建 task
                 </button>
                 <div className="hero__hint">
                   <span className="status-dot" />
@@ -424,26 +450,93 @@ export default function App() {
               </article>
             </div>
 
-            <div className="store-card card">
-              <div className="thread-strip__header">
-                <div>
-                  <p className="section-title">状态存储</p>
-                  <h3>stateStore / statePath / project-local state store</h3>
+            <div className="task-grid">
+              <div className="task-panel card">
+                <div className="thread-strip__header">
+                  <div>
+                    <p className="section-title">Create Task</p>
+                    <h3>真实任务创建</h3>
+                  </div>
+                  <span className="mini-chip">{runtimeStatus?.activeThreadId ? "active thread ready" : "no active thread"}</span>
                 </div>
-                <span className="mini-chip">{runtimeStatus?.stateStore || "unknown"}</span>
+
+                <div className="context-grid">
+                  <div className="context-column">
+                    <label className="section-title" htmlFor="task-title">
+                      标题
+                    </label>
+                    <input
+                      id="task-title"
+                      value={draft.title}
+                      onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+                      placeholder="例如：整理桌面线程状态"
+                    />
+                  </div>
+                  <div className="context-column">
+                    <label className="section-title" htmlFor="task-kind">
+                      kind
+                    </label>
+                    <select
+                      id="task-kind"
+                      value={draft.kind}
+                      onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value }))}
+                    >
+                      <option value="prompt">prompt</option>
+                      <option value="spec">spec</option>
+                      <option value="review">review</option>
+                      <option value="analysis">analysis</option>
+                    </select>
+                  </div>
+                </div>
+
+                <label className="section-title" htmlFor="task-input">
+                  input
+                </label>
+                <textarea
+                  id="task-input"
+                  value={draft.input}
+                  onChange={(event) => setDraft((current) => ({ ...current, input: event.target.value }))}
+                  placeholder="输入要交给 runtime 的真实任务内容"
+                  rows={5}
+                />
+
+                <button className="primary-action" onClick={handleCreateTask} disabled={loading || !runtimeStatus?.activeThreadId}>
+                  创建 task
+                </button>
               </div>
-              <div className="store-grid">
-                <div className="store-item">
-                  <p>stateStore</p>
-                  <strong>{runtimeStatus?.stateStore || "unknown"}</strong>
+
+              <div className="task-panel card">
+                <div className="thread-strip__header">
+                  <div>
+                    <p className="section-title">Active Thread</p>
+                    <h3>执行状态摘要</h3>
+                  </div>
+                  <span className="mini-chip">{activeThread?.status || "none"}</span>
                 </div>
-                <div className="store-item">
-                  <p>statePath</p>
-                  <strong>{runtimeStatus?.statePath || "未提供"}</strong>
-                </div>
-                <div className="store-item">
-                  <p>project-local</p>
-                  <strong>{runtimeStatus?.usesProjectLocalStore ? "yes" : "no"}</strong>
+
+                <div className="event-list">
+                  <div className="event-item">
+                    <p>thread</p>
+                    <strong>{activeThread ? `${activeThread.name} / ${activeThread.id}` : "当前没有 active thread"}</strong>
+                  </div>
+                  <div className="event-item">
+                    <p>latest task</p>
+                    <strong>{latestTask ? `${latestTask.title} / ${latestTask.status}` : "暂无任务"}</strong>
+                  </div>
+                  <div className="event-item">
+                    <p>latest result</p>
+                    <strong>{latestTask?.resultSummary || latestTask?.input || "暂无结果摘要"}</strong>
+                  </div>
+                  <div className="event-item">
+                    <p>latest tool call</p>
+                    <strong>
+                      {latestToolCall ? `${latestToolCall.toolId} / ${latestToolCall.status} / ${latestToolCall.summary}` : "暂无 tool call"}
+                    </strong>
+                  </div>
+                  <div className="event-item">
+                    <p>latest event</p>
+                    <strong>{latestEvent ? `${latestEvent.type} / ${latestEvent.message}` : "暂无 event"}</strong>
+                  </div>
                 </div>
               </div>
             </div>
@@ -459,7 +552,7 @@ export default function App() {
 
               <div className="thread-list">
                 {(runtimeStatus?.threads ?? []).length === 0 ? (
-                  <div className="thread-empty">当前还没有 thread，可以先创建一个来演示恢复链路。</div>
+                  <div className="thread-empty">当前还没有 thread，可以先创建一个开始联调。</div>
                 ) : (
                   runtimeStatus?.threads.map((thread) => (
                     <div className="thread-item" key={thread.id}>
@@ -487,7 +580,7 @@ export default function App() {
                 <div className="thread-strip__header">
                   <div>
                     <p className="section-title">Tasks</p>
-                    <h3>当前 thread 的任务状态</h3>
+                    <h3>当前 thread 的任务列表</h3>
                   </div>
                   <span className="mini-chip">{`Count ${runtimeStatus?.tasks.length ?? 0}`}</span>
                 </div>
@@ -500,14 +593,11 @@ export default function App() {
                         <div className="task-item__meta">
                           <div>
                             <p>{task.title}</p>
-                            <strong>{`${task.id} / ${task.status}`}</strong>
+                            <strong>{`${task.kind || "prompt"} / ${task.status}`}</strong>
+                            <span>{task.resultSummary || task.input || "暂无结果摘要"}</span>
                           </div>
-                          <button
-                            className="thread-action"
-                            onClick={() => handleAdvanceTask(task.id)}
-                            disabled={loading || task.status === "failed"}
-                          >
-                            推进状态
+                          <button className="thread-action" onClick={() => handleRunTask(task.id)} disabled={loading}>
+                            Run Task
                           </button>
                         </div>
                       </div>
@@ -520,7 +610,7 @@ export default function App() {
                 <div className="thread-strip__header">
                   <div>
                     <p className="section-title">Thread Context</p>
-                    <h3>私有上下文恢复概览</h3>
+                    <h3>上下文恢复视图</h3>
                   </div>
                   <span className="mini-chip">{threadContextSummary}</span>
                 </div>
@@ -572,7 +662,7 @@ export default function App() {
               <div className="thread-strip__header">
                 <div>
                   <p className="section-title">Events</p>
-                  <h3>恢复后的活动时间线</h3>
+                  <h3>实时活动面板</h3>
                 </div>
                 <span className="mini-chip">{`Count ${runtimeStatus?.events.length ?? 0}`}</span>
               </div>
@@ -582,7 +672,7 @@ export default function App() {
                 ) : (
                   runtimeStatus?.events.map((event) => (
                     <div className="event-item" key={event.id}>
-                      <p>{event.type}</p>
+                      <p>{`${event.type} / ${formatTime(event.createdAt)}`}</p>
                       <strong>{event.message}</strong>
                     </div>
                   ))
@@ -593,7 +683,7 @@ export default function App() {
             <div className="action-strip card">
               <div>
                 <p className="section-title">能力视图</p>
-                <h3>bridge 状态、能力清单和恢复链路现在都汇总在一个首页里。</h3>
+                <h3>Bridge 状态、能力清单和恢复链路统一聚合在首页。</h3>
               </div>
               <div className="mini-actions">
                 <span className="mini-chip">{`Skills ${countGroups(runtimeStatus?.skillsByGroup)}`}</span>
@@ -607,7 +697,7 @@ export default function App() {
             <div className="activity__header">
               <div>
                 <p className="section-title">Runtime activity</p>
-                <h3>Bridge 与恢复观察</h3>
+                <h3>Bridge 与执行观察</h3>
               </div>
               <span className="chip chip--soft">{runtimeSourceLabel}</span>
             </div>
@@ -633,6 +723,8 @@ export default function App() {
                       `Bridge: ${bridgeResult?.message ?? "未单独检查"}`,
                       `Runtime: ${runtimeStatus?.runtimeMessage ?? "none"}`,
                       `Recovery: ${runtimeStatus?.recoverySummary ?? "none"}`,
+                      `Task: ${latestTask ? `${latestTask.title} / ${latestTask.status} / ${latestTask.resultSummary || latestTask.input}` : "none"}`,
+                      `Tool Call: ${latestToolCall ? `${latestToolCall.toolId} / ${latestToolCall.status} / ${latestToolCall.summary}` : "none"}`,
                       `Refresh: ${streamState}`,
                       `Capabilities: ${capabilitySummary || "none"}`,
                       `MCP: ${summarizeGroups(runtimeStatus?.mcpByGroup) || "none"}`,

@@ -43,12 +43,15 @@ type Thread struct {
 
 // Task describes a minimal task tracked under a thread.
 type Task struct {
-	ID        string    `json:"id"`
-	ThreadID  string    `json:"thread_id"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	ThreadID      string    `json:"thread_id"`
+	Title         string    `json:"title"`
+	Status        string    `json:"status"`
+	Kind          string    `json:"kind"`
+	Input         string    `json:"input"`
+	ResultSummary string    `json:"result_summary"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // MessageRecord describes a persisted thread-local message.
@@ -106,6 +109,8 @@ type CreateThreadInput struct {
 // CreateTaskInput collects the minimum task fields for a thread-local task.
 type CreateTaskInput struct {
 	Title string
+	Kind  string
+	Input string
 }
 
 // AppendMessageInput collects the minimum message fields for a thread-local message.
@@ -135,7 +140,8 @@ type SetRuntimeFlagInput struct {
 
 // UpdateTaskStatusInput collects the minimum fields required to update a task status.
 type UpdateTaskStatusInput struct {
-	Status string
+	Status        string
+	ResultSummary string
 }
 
 var (
@@ -145,6 +151,8 @@ var (
 	ErrTaskNotFound = errors.New("task not found")
 	// ErrInvalidTaskStatus is returned when a task status is unsupported.
 	ErrInvalidTaskStatus = errors.New("invalid task status")
+	// ErrTaskAlreadyRunning is returned when a thread already has a running task.
+	ErrTaskAlreadyRunning = errors.New("thread already has a running task")
 )
 
 // Registry holds the in-memory workspace and thread set for the current runtime process.
@@ -421,12 +429,15 @@ func (r *Registry) CreateTask(threadID string, input CreateTaskInput) (Task, boo
 	}
 
 	task := Task{
-		ID:        fmt.Sprintf("task-%d", taskNumber),
-		ThreadID:  threadID,
-		Title:     title,
-		Status:    "queued",
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+		ID:            fmt.Sprintf("task-%d", taskNumber),
+		ThreadID:      threadID,
+		Title:         title,
+		Status:        "queued",
+		Kind:          input.Kind,
+		Input:         input.Input,
+		ResultSummary: "",
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
 
 	r.tasks[threadID] = append(r.tasks[threadID], task)
@@ -567,12 +578,20 @@ func (r *Registry) UpdateTaskStatus(threadID string, taskID string, input Update
 	}
 
 	tasks := r.tasks[threadID]
+	if input.Status == "running" {
+		for _, item := range tasks {
+			if item.ID != taskID && item.Status == "running" {
+				return Task{}, ErrTaskAlreadyRunning
+			}
+		}
+	}
 	for index, task := range tasks {
 		if task.ID != taskID {
 			continue
 		}
 
 		task.Status = input.Status
+		task.ResultSummary = input.ResultSummary
 		task.UpdatedAt = time.Now().UTC()
 		tasks[index] = task
 		r.tasks[threadID] = tasks
@@ -618,6 +637,22 @@ func isSupportedTaskStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// Task returns the task with the given id under the given thread.
+func (r *Registry) Task(threadID string, taskID string) (Task, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if _, ok := r.threads[threadID]; !ok {
+		return Task{}, ErrThreadNotFound
+	}
+	for _, item := range r.tasks[threadID] {
+		if item.ID == taskID {
+			return item, nil
+		}
+	}
+	return Task{}, ErrTaskNotFound
 }
 
 // SortedIDs returns the thread ids in stable creation order.
@@ -681,12 +716,15 @@ func (r *Registry) restoreFromStore() error {
 
 	for _, item := range snapshot.Tasks {
 		task := Task{
-			ID:        item.ID,
-			ThreadID:  item.ThreadID,
-			Title:     item.Title,
-			Status:    item.Status,
-			CreatedAt: item.CreatedAt,
-			UpdatedAt: item.UpdatedAt,
+			ID:            item.ID,
+			ThreadID:      item.ThreadID,
+			Title:         item.Title,
+			Status:        item.Status,
+			Kind:          item.Kind,
+			Input:         item.Input,
+			ResultSummary: item.ResultSummary,
+			CreatedAt:     item.CreatedAt,
+			UpdatedAt:     item.UpdatedAt,
 		}
 		r.tasks[item.ThreadID] = append(r.tasks[item.ThreadID], task)
 		thread := r.threads[item.ThreadID]
@@ -842,12 +880,15 @@ func (r *Registry) persistTaskLocked(task Task) error {
 		return nil
 	}
 	return r.store.SaveTask(state.TaskRecord{
-		ID:        task.ID,
-		ThreadID:  task.ThreadID,
-		Title:     task.Title,
-		Status:    task.Status,
-		CreatedAt: task.CreatedAt,
-		UpdatedAt: task.UpdatedAt,
+		ID:            task.ID,
+		ThreadID:      task.ThreadID,
+		Title:         task.Title,
+		Status:        task.Status,
+		Kind:          task.Kind,
+		Input:         task.Input,
+		ResultSummary: task.ResultSummary,
+		CreatedAt:     task.CreatedAt,
+		UpdatedAt:     task.UpdatedAt,
 	})
 }
 

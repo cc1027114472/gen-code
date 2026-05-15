@@ -16,6 +16,7 @@ const (
 	errCodeInvalidCreateThreadBody   = 1002
 	errCodeInvalidCreateTaskBody     = 1005
 	errCodeInvalidTaskStatusBody     = 1001
+	errCodeInvalidRunTaskBody        = 1011
 	errCodeInvalidMessageBody        = 1006
 	errCodeInvalidToolCallBody       = 1008
 	errCodeInvalidArtifactBody       = 1009
@@ -130,6 +131,23 @@ func (h *RuntimeHandler) CreateTask(c *gin.Context) {
 	}
 
 	data, err := h.runtime.CreateTask(c.Request.Context(), c.Param("id"), payload)
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
+// RunTask executes an existing thread-local task.
+func (h *RuntimeHandler) RunTask(c *gin.Context) {
+	var payload runtimecontract.RunTaskRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		xresp.BadRequest(c, errCodeInvalidRunTaskBody, "invalid run task payload")
+		return
+	}
+
+	data, err := h.runtime.RunTask(c.Request.Context(), c.Param("id"), c.Param("taskId"), payload)
 	if err != nil {
 		writeRuntimeError(c, err)
 		return

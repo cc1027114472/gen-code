@@ -64,9 +64,12 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 
 	task, err := service.CreateTask(context.Background(), created.ID, runtimecontract.CreateTaskRequest{
 		Title: "Draft spec",
+		Kind:  "thread.message.append",
+		Input: `{"role":"user","content":"Draft the spec"}`,
 	})
 	require.NoError(t, err)
 	require.Equal(t, task.CreatedAt, task.UpdatedAt)
+	require.Equal(t, "thread.message.append", task.Kind)
 
 	updatedTask, err := service.UpdateTaskStatus(context.Background(), created.ID, task.ID, runtimecontract.UpdateTaskStatusRequest{
 		Status: "running",
@@ -74,6 +77,11 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "running", updatedTask.Status)
 	require.NotEmpty(t, updatedTask.UpdatedAt)
+
+	executedTask, err := service.RunTask(context.Background(), created.ID, task.ID, runtimecontract.RunTaskRequest{})
+	require.NoError(t, err)
+	require.Equal(t, "completed", executedTask.Status)
+	require.NotEmpty(t, executedTask.ResultSummary)
 
 	message, err := service.AppendMessage(context.Background(), created.ID, runtimecontract.CreateMessageRequest{
 		Role:    "user",
@@ -137,18 +145,19 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	tasks, err := service.Tasks(context.Background(), created.ID)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
-	require.Equal(t, "running", tasks[0].Status)
+	require.Equal(t, "completed", tasks[0].Status)
+	require.Equal(t, "thread.message.append", tasks[0].Kind)
 	require.NotEmpty(t, tasks[0].UpdatedAt)
 
 	messages, err := service.Messages(context.Background(), created.ID)
 	require.NoError(t, err)
-	require.Len(t, messages, 1)
+	require.Len(t, messages, 2)
 	require.Equal(t, "Draft the spec", messages[0].Content)
 
 	toolCalls, err := service.ToolCalls(context.Background(), created.ID)
 	require.NoError(t, err)
-	require.Len(t, toolCalls, 1)
-	require.Equal(t, "completed", toolCalls[0].Status)
+	require.Len(t, toolCalls, 3)
+	require.ElementsMatch(t, []string{"completed", "running", "completed"}, []string{toolCalls[0].Status, toolCalls[1].Status, toolCalls[2].Status})
 
 	artifacts, err := service.Artifacts(context.Background(), created.ID)
 	require.NoError(t, err)

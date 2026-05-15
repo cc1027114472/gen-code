@@ -152,7 +152,7 @@ func run(ctx context.Context, args []string) error {
 		}
 	case "tasks":
 		if len(args) < 2 {
-			return errors.New("usage: gen-code tasks <list|create|update-status>")
+			return errors.New("usage: gen-code tasks <list|create|run|update-status>")
 		}
 		switch args[1] {
 		case "list":
@@ -167,19 +167,37 @@ func run(ctx context.Context, args []string) error {
 			}
 			return printTasks(ctx, runtimeFacade, threadID)
 		case "create":
-			var threadID, title string
+			var threadID, title, kind, input string
 			for _, arg := range args[2:] {
 				switch {
 				case strings.HasPrefix(arg, "--thread="):
 					threadID = strings.TrimSpace(strings.TrimPrefix(arg, "--thread="))
 				case strings.HasPrefix(arg, "--title="):
 					title = strings.TrimSpace(strings.TrimPrefix(arg, "--title="))
+				case strings.HasPrefix(arg, "--kind="):
+					kind = strings.TrimSpace(strings.TrimPrefix(arg, "--kind="))
+				case strings.HasPrefix(arg, "--input="):
+					input = strings.TrimSpace(strings.TrimPrefix(arg, "--input="))
 				}
 			}
-			if threadID == "" {
-				return errors.New("usage: gen-code tasks create --thread=<threadId> [--title=...]")
+			if threadID == "" || kind == "" {
+				return errors.New("usage: gen-code tasks create --thread=<threadId> --kind=<kind> [--title=...] [--input=...]")
 			}
-			return createTask(ctx, runtimeFacade, threadID, title)
+			return createTask(ctx, runtimeFacade, threadID, title, kind, input)
+		case "run":
+			var threadID, taskID string
+			for _, arg := range args[2:] {
+				switch {
+				case strings.HasPrefix(arg, "--thread="):
+					threadID = strings.TrimSpace(strings.TrimPrefix(arg, "--thread="))
+				case strings.HasPrefix(arg, "--task="):
+					taskID = strings.TrimSpace(strings.TrimPrefix(arg, "--task="))
+				}
+			}
+			if threadID == "" || taskID == "" {
+				return errors.New("usage: gen-code tasks run --thread=<threadId> --task=<taskId>")
+			}
+			return runTask(ctx, runtimeFacade, threadID, taskID)
 		case "update-status":
 			var threadID, taskID, status string
 			for _, arg := range args[2:] {
@@ -197,7 +215,7 @@ func run(ctx context.Context, args []string) error {
 			}
 			return updateTaskStatus(ctx, runtimeFacade, threadID, taskID, status)
 		default:
-			return errors.New("usage: gen-code tasks <list|create|update-status>")
+			return errors.New("usage: gen-code tasks <list|create|run|update-status>")
 		}
 	case "skills":
 		if len(args) < 2 || args[1] != "list" {
@@ -239,7 +257,8 @@ func printUsage() {
 	fmt.Println("  threads tool-calls --id=<threadId>")
 	fmt.Println("  threads artifacts --id=<threadId>")
 	fmt.Println("  tasks list --thread=<threadId>")
-	fmt.Println("  tasks create --thread=<threadId> [--title=...]")
+	fmt.Println("  tasks create --thread=<threadId> --kind=<kind> [--title=...] [--input=...]")
+	fmt.Println("  tasks run --thread=<threadId> --task=<taskId>")
 	fmt.Println("  tasks update-status --thread=<threadId> --task=<taskId> --status=<status>")
 	fmt.Println("  skills list [--group=<group>]")
 	fmt.Println("  tools list")
@@ -328,6 +347,15 @@ func (f *runtimeFacade) createTask(ctx context.Context, threadID string, request
 	}
 	f.source = "local-fallback"
 	return f.service.CreateTask(ctx, threadID, request)
+}
+
+func (f *runtimeFacade) runTask(ctx context.Context, threadID string, taskID string, request runtimecontract.RunTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	if item, err := f.client.runTask(threadID, taskID, request); err == nil {
+		f.source = "remote-app-server"
+		return item, nil
+	}
+	f.source = "local-fallback"
+	return f.service.RunTask(ctx, threadID, taskID, request)
 }
 
 func (f *runtimeFacade) updateTaskStatus(ctx context.Context, threadID string, taskID string, request runtimecontract.UpdateTaskStatusRequest) (runtimecontract.TaskDescriptor, error) {
@@ -635,13 +663,17 @@ func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) err
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
 	fmt.Printf("  thread: %s\n", threadID)
 	for _, item := range items {
-		fmt.Printf("  - %s (%s, updated=%s)\n", item.ID, item.Status, fallbackText(item.UpdatedAt, "none"))
+		fmt.Printf("  - %s (%s, kind=%s, updated=%s, result=%s)\n", item.ID, item.Status, fallbackText(item.Kind, "none"), fallbackText(item.UpdatedAt, "none"), fallbackText(item.ResultSummary, "none"))
 	}
 	return nil
 }
 
-func createTask(ctx context.Context, facade *runtimeFacade, threadID string, title string) error {
-	item, err := facade.createTask(ctx, threadID, runtimecontract.CreateTaskRequest{Title: title})
+func createTask(ctx context.Context, facade *runtimeFacade, threadID string, title string, kind string, input string) error {
+	item, err := facade.createTask(ctx, threadID, runtimecontract.CreateTaskRequest{
+		Title: title,
+		Kind:  kind,
+		Input: input,
+	})
 	if err != nil {
 		return err
 	}
@@ -651,7 +683,25 @@ func createTask(ctx context.Context, facade *runtimeFacade, threadID string, tit
 	fmt.Printf("  id: %s\n", item.ID)
 	fmt.Printf("  thread id: %s\n", item.ThreadID)
 	fmt.Printf("  title: %s\n", item.Title)
+	fmt.Printf("  kind: %s\n", item.Kind)
 	fmt.Printf("  status: %s\n", item.Status)
+	fmt.Printf("  input: %s\n", fallbackText(item.InputSummary, "none"))
+	return nil
+}
+
+func runTask(ctx context.Context, facade *runtimeFacade, threadID string, taskID string) error {
+	item, err := facade.runTask(ctx, threadID, taskID, runtimecontract.RunTaskRequest{})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("task executed")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  id: %s\n", item.ID)
+	fmt.Printf("  thread id: %s\n", item.ThreadID)
+	fmt.Printf("  kind: %s\n", fallbackText(item.Kind, "none"))
+	fmt.Printf("  status: %s\n", item.Status)
+	fmt.Printf("  result: %s\n", fallbackText(item.ResultSummary, "none"))
 	return nil
 }
 
@@ -834,6 +884,12 @@ func (c *remoteRuntimeClient) artifacts(threadID string) ([]runtimecontract.Arti
 func (c *remoteRuntimeClient) createTask(threadID string, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
 	var item runtimecontract.TaskDescriptor
 	err := c.postEnvelope("/api/threads/"+url.PathEscape(threadID)+"/tasks", request, &item)
+	return item, err
+}
+
+func (c *remoteRuntimeClient) runTask(threadID string, taskID string, request runtimecontract.RunTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	var item runtimecontract.TaskDescriptor
+	err := c.postEnvelope("/api/threads/"+url.PathEscape(threadID)+"/tasks/"+url.PathEscape(taskID)+"/run", request, &item)
 	return item, err
 }
 

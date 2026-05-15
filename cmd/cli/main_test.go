@@ -49,14 +49,14 @@ func TestTasksListFallsBackLocallyWhenServerIsUnavailable(t *testing.T) {
 	output := captureOutput(t, func() {
 		err := run(context.Background(), []string{"threads", "create", "--name=Thread A"})
 		require.NoError(t, err)
-		err = run(context.Background(), []string{"tasks", "create", "--thread=thread-1", "--title=Draft spec"})
+		err = run(context.Background(), []string{"tasks", "create", "--thread=thread-1", "--title=Draft spec", "--kind=thread.message.append", "--input={\"role\":\"user\",\"content\":\"Draft spec\"}"})
 		require.NoError(t, err)
 		err = run(context.Background(), []string{"tasks", "list", "--thread=thread-1"})
 		require.NoError(t, err)
 	})
 
 	require.Contains(t, output, "source: local-fallback")
-	require.Contains(t, output, "Draft spec")
+	require.Contains(t, output, "kind=thread.message.append")
 }
 
 func TestFallbackText(t *testing.T) {

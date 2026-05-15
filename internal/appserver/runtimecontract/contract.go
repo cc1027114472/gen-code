@@ -51,12 +51,15 @@ type CreateThreadRequest struct {
 
 // TaskDescriptor describes a single thread-local task.
 type TaskDescriptor struct {
-	ID        string `json:"id"`
-	ThreadID  string `json:"threadId"`
-	Title     string `json:"title"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt,omitempty"`
+	ID            string `json:"id"`
+	ThreadID      string `json:"threadId"`
+	Title         string `json:"title"`
+	Status        string `json:"status"`
+	Kind          string `json:"kind,omitempty"`
+	InputSummary  string `json:"inputSummary,omitempty"`
+	ResultSummary string `json:"resultSummary,omitempty"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt,omitempty"`
 }
 
 // MessageDescriptor describes a single thread-local message.
@@ -107,7 +110,12 @@ type EventDescriptor struct {
 // CreateTaskRequest defines the minimum request body for creating a thread task.
 type CreateTaskRequest struct {
 	Title string `json:"title"`
+	Kind  string `json:"kind"`
+	Input string `json:"input"`
 }
+
+// RunTaskRequest defines the minimum request body for running a task.
+type RunTaskRequest struct{}
 
 // CreateMessageRequest defines the minimum request body for appending a thread message.
 type CreateMessageRequest struct {
@@ -184,6 +192,7 @@ type Service interface {
 	ActivateThread(ctx context.Context, id string) (ThreadDescriptor, error)
 	Tasks(ctx context.Context, threadID string) ([]TaskDescriptor, error)
 	CreateTask(ctx context.Context, threadID string, request CreateTaskRequest) (TaskDescriptor, error)
+	RunTask(ctx context.Context, threadID string, taskID string, request RunTaskRequest) (TaskDescriptor, error)
 	Messages(ctx context.Context, threadID string) ([]MessageDescriptor, error)
 	AppendMessage(ctx context.Context, threadID string, request CreateMessageRequest) (MessageDescriptor, error)
 	ToolCalls(ctx context.Context, threadID string) ([]ToolCallDescriptor, error)
@@ -245,6 +254,10 @@ func (noopService) Tasks(context.Context, string) ([]TaskDescriptor, error) {
 }
 
 func (noopService) CreateTask(context.Context, string, CreateTaskRequest) (TaskDescriptor, error) {
+	return TaskDescriptor{}, nil
+}
+
+func (noopService) RunTask(context.Context, string, string, RunTaskRequest) (TaskDescriptor, error) {
 	return TaskDescriptor{}, nil
 }
 

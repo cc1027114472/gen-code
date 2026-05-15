@@ -92,7 +92,7 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			method:         http.MethodGet,
 			path:           "/api/threads/thread-1/tasks",
 			wantStatusCode: http.StatusOK,
-			wantBody:       []string{`"items":[{"id":"task-1","threadId":"thread-1","title":"Task 1","status":"queued"`},
+			wantBody:       []string{`"items":[{"id":"task-1","threadId":"thread-1","title":"Task 1","status":"queued","kind":"thread.message.append"`},
 		},
 		{
 			name:           "messages",
@@ -158,9 +158,17 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			name:           "create task",
 			method:         http.MethodPost,
 			path:           "/api/threads/thread-1/tasks",
-			body:           `{"title":"Draft spec"}`,
+			body:           `{"title":"Draft spec","kind":"thread.message.append","input":"{\"role\":\"user\",\"content\":\"Draft spec\"}"}`,
 			wantStatusCode: http.StatusOK,
-			wantBody:       []string{`"id":"task-2"`, `"threadId":"thread-1"`, `"title":"Draft spec"`, `"updatedAt":"2026-05-15T00:00:00Z"`},
+			wantBody:       []string{`"id":"task-2"`, `"threadId":"thread-1"`, `"title":"Draft spec"`, `"kind":"thread.message.append"`, `"updatedAt":"2026-05-15T00:00:00Z"`},
+		},
+		{
+			name:           "run task",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-1/tasks/task-1/run",
+			body:           `{}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"task-1"`, `"status":"completed"`, `"resultSummary":"message appended"`},
 		},
 		{
 			name:           "update task status",
@@ -445,12 +453,15 @@ func (stubRuntimeService) ActivateThread(_ context.Context, id string) (runtimec
 
 func (stubRuntimeService) Tasks(context.Context, string) ([]runtimecontract.TaskDescriptor, error) {
 	return []runtimecontract.TaskDescriptor{{
-		ID:        "task-1",
-		ThreadID:  "thread-1",
-		Title:     "Task 1",
-		Status:    "queued",
-		CreatedAt: "2026-05-15T00:00:00Z",
-		UpdatedAt: "2026-05-15T00:00:00Z",
+		ID:            "task-1",
+		ThreadID:      "thread-1",
+		Title:         "Task 1",
+		Status:        "queued",
+		Kind:          "thread.message.append",
+		InputSummary:  `{"role":"user","content":"Draft spec"}`,
+		ResultSummary: "",
+		CreatedAt:     "2026-05-15T00:00:00Z",
+		UpdatedAt:     "2026-05-15T00:00:00Z",
 	}}, nil
 }
 
@@ -538,16 +549,39 @@ func (stubRuntimeService) CreateTask(_ context.Context, threadID string, request
 	if threadID == "missing" {
 		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
 	}
-	if request.Title == "" {
+	if request.Title == "" || request.Kind == "" {
 		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, "invalid create task payload")
 	}
 	return runtimecontract.TaskDescriptor{
-		ID:        "task-2",
-		ThreadID:  threadID,
-		Title:     request.Title,
-		Status:    "queued",
-		CreatedAt: "2026-05-15T00:00:00Z",
-		UpdatedAt: "2026-05-15T00:00:00Z",
+		ID:            "task-2",
+		ThreadID:      threadID,
+		Title:         request.Title,
+		Status:        "queued",
+		Kind:          request.Kind,
+		InputSummary:  request.Input,
+		ResultSummary: "",
+		CreatedAt:     "2026-05-15T00:00:00Z",
+		UpdatedAt:     "2026-05-15T00:00:00Z",
+	}, nil
+}
+
+func (stubRuntimeService) RunTask(_ context.Context, threadID string, taskID string, _ runtimecontract.RunTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	if threadID == "missing" {
+		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+	}
+	if taskID == "missing" {
+		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1007, "task not found")
+	}
+	return runtimecontract.TaskDescriptor{
+		ID:            taskID,
+		ThreadID:      threadID,
+		Title:         "Task 1",
+		Status:        "completed",
+		Kind:          "thread.message.append",
+		InputSummary:  `{"role":"user","content":"Draft spec"}`,
+		ResultSummary: "message appended",
+		CreatedAt:     "2026-05-15T00:00:00Z",
+		UpdatedAt:     "2026-05-15T00:05:00Z",
 	}, nil
 }
 
@@ -674,6 +708,10 @@ func (errorRuntimeService) Tasks(context.Context, string) ([]runtimecontract.Tas
 }
 
 func (errorRuntimeService) CreateTask(context.Context, string, runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) RunTask(context.Context, string, string, runtimecontract.RunTaskRequest) (runtimecontract.TaskDescriptor, error) {
 	return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, "runtime unavailable")
 }
 

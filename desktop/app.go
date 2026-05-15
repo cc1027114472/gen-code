@@ -85,11 +85,15 @@ type ThreadSummary struct {
 }
 
 type TaskSummary struct {
-	ID        string `json:"id"`
-	ThreadID  string `json:"threadId"`
-	Title     string `json:"title"`
-	Status    string `json:"status"`
-	UpdatedAt string `json:"updatedAt"`
+	ID            string `json:"id"`
+	ThreadID      string `json:"threadId"`
+	Title         string `json:"title"`
+	Kind          string `json:"kind"`
+	Input         string `json:"input"`
+	Status        string `json:"status"`
+	ResultSummary string `json:"resultSummary"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt"`
 }
 
 type MessageSummary struct {
@@ -157,11 +161,15 @@ type apiThread struct {
 }
 
 type apiTask struct {
-	ID        string `json:"id"`
-	ThreadID  string `json:"threadId"`
-	Title     string `json:"title"`
-	Status    string `json:"status"`
-	UpdatedAt string `json:"updatedAt"`
+	ID            string `json:"id"`
+	ThreadID      string `json:"threadId"`
+	Title         string `json:"title"`
+	Kind          string `json:"kind"`
+	Input         string `json:"input"`
+	Status        string `json:"status"`
+	ResultSummary string `json:"resultSummary"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt"`
 }
 
 type apiMessage struct {
@@ -241,11 +249,21 @@ type persistedThread struct {
 }
 
 type persistedTask struct {
-	ID        string
-	ThreadID  string
-	Title     string
-	Status    string
-	UpdatedAt string
+	ID            string
+	ThreadID      string
+	Title         string
+	Kind          string
+	Input         string
+	Status        string
+	ResultSummary string
+	CreatedAt     string
+	UpdatedAt     string
+}
+
+type TaskCreateInput struct {
+	Title string `json:"title"`
+	Kind  string `json:"kind"`
+	Input string `json:"input"`
 }
 
 type persistedMessage struct {
@@ -359,18 +377,20 @@ func (a *App) ActivateThread(id string) RuntimeStatus {
 	return a.store.ActivateThread(id)
 }
 
-func (a *App) CreateTask(threadID string, title string) RuntimeStatus {
-	if status, err := createTask(newRuntimeClient(), threadID, title); err == nil {
+func (a *App) CreateTask(threadID string, payload string) RuntimeStatus {
+	input := parseTaskCreateInput(payload)
+	if status, err := createTask(newRuntimeClient(), threadID, input); err == nil {
 		return status
 	}
-	return a.store.CreateTask(threadID, title)
+	return a.store.CreateTask(threadID, input)
 }
 
 func (a *App) AdvanceTask(taskID string) RuntimeStatus {
-	if status, err := advanceTask(newRuntimeClient(), a.GetRuntimeStatus().ActiveThreadID, taskID, a.GetRuntimeStatus().Tasks); err == nil {
+	current := a.GetRuntimeStatus()
+	if status, err := runTask(newRuntimeClient(), current.ActiveThreadID, taskID, current.Tasks); err == nil {
 		return status
 	}
-	return a.store.AdvanceTask(taskID)
+	return a.store.RunTask(taskID)
 }
 
 func (a *App) collectRuntimeStatus() (RuntimeStatus, error) {
@@ -590,38 +610,51 @@ func activateThread(client runtimeClient, id string) (RuntimeStatus, error) {
 	return NewApp().GetRuntimeStatus(), nil
 }
 
-func createTask(client runtimeClient, threadID string, title string) (RuntimeStatus, error) {
+func createTask(client runtimeClient, threadID string, input TaskCreateInput) (RuntimeStatus, error) {
 	trimmedThreadID := strings.TrimSpace(threadID)
 	if trimmedThreadID == "" {
 		return RuntimeStatus{}, fmt.Errorf("thread id is required")
 	}
-	taskTitle := fallbackText(strings.TrimSpace(title), defaultTaskTitle)
+	normalized := normalizeTaskCreateInput(input)
 	var created map[string]any
-	if err := client.postEnvelope("/api/threads/"+url.PathEscape(trimmedThreadID)+"/tasks", map[string]string{"title": taskTitle}, &created); err != nil {
-		return RuntimeStatus{}, err
+	requestBody := map[string]string{
+		"title": normalized.Title,
+		"kind":  normalized.Kind,
+		"input": normalized.Input,
+	}
+	if err := client.postEnvelope("/api/threads/"+url.PathEscape(trimmedThreadID)+"/tasks", requestBody, &created); err != nil {
+		legacyBody := map[string]string{"title": normalized.Title}
+		if legacyErr := client.postEnvelope("/api/threads/"+url.PathEscape(trimmedThreadID)+"/tasks", legacyBody, &created); legacyErr != nil {
+			return RuntimeStatus{}, err
+		}
 	}
 	return NewApp().GetRuntimeStatus(), nil
 }
 
-func advanceTask(client runtimeClient, threadID string, taskID string, tasks []TaskSummary) (RuntimeStatus, error) {
+func runTask(client runtimeClient, threadID string, taskID string, tasks []TaskSummary) (RuntimeStatus, error) {
 	trimmedThreadID := strings.TrimSpace(threadID)
 	trimmedTaskID := strings.TrimSpace(taskID)
 	if trimmedThreadID == "" || trimmedTaskID == "" {
 		return RuntimeStatus{}, fmt.Errorf("thread id and task id are required")
 	}
 
-	nextStatus := "running"
+	var updated map[string]any
+	runBody := map[string]any{
+		"status": "running",
+	}
 	for _, task := range tasks {
 		if task.ID != trimmedTaskID {
 			continue
 		}
-		nextStatus = nextTaskStatus(task.Status)
+		runBody["kind"] = task.Kind
+		runBody["input"] = task.Input
+		runBody["title"] = task.Title
 		break
 	}
-
-	var updated map[string]any
-	if err := client.postEnvelope("/api/threads/"+url.PathEscape(trimmedThreadID)+"/tasks/"+url.PathEscape(trimmedTaskID)+"/status", map[string]string{"status": nextStatus}, &updated); err != nil {
-		return RuntimeStatus{}, err
+	if err := client.postEnvelope("/api/threads/"+url.PathEscape(trimmedThreadID)+"/tasks/"+url.PathEscape(trimmedTaskID)+"/run", runBody, &updated); err != nil {
+		if legacyErr := client.postEnvelope("/api/threads/"+url.PathEscape(trimmedThreadID)+"/tasks/"+url.PathEscape(trimmedTaskID)+"/status", map[string]string{"status": "running"}, &updated); legacyErr != nil {
+			return RuntimeStatus{}, err
+		}
 	}
 	return NewApp().GetRuntimeStatus(), nil
 }
@@ -886,11 +919,15 @@ func mapTasks(items []apiTask) []TaskSummary {
 	result := make([]TaskSummary, 0, len(items))
 	for _, item := range items {
 		result = append(result, TaskSummary{
-			ID:        item.ID,
-			ThreadID:  item.ThreadID,
-			Title:     item.Title,
-			Status:    item.Status,
-			UpdatedAt: item.UpdatedAt,
+			ID:            item.ID,
+			ThreadID:      item.ThreadID,
+			Title:         item.Title,
+			Kind:          item.Kind,
+			Input:         item.Input,
+			Status:        item.Status,
+			ResultSummary: item.ResultSummary,
+			CreatedAt:     item.CreatedAt,
+			UpdatedAt:     item.UpdatedAt,
 		})
 	}
 	return result
@@ -1077,7 +1114,7 @@ func (s *localRuntimeStore) ActivateThread(id string) RuntimeStatus {
 	return status
 }
 
-func (s *localRuntimeStore) CreateTask(threadID string, title string) RuntimeStatus {
+func (s *localRuntimeStore) CreateTask(threadID string, input TaskCreateInput) RuntimeStatus {
 	base, err := buildBaseStatusFromStore()
 	if err != nil {
 		return runtimeErrorStatus(err)
@@ -1103,7 +1140,7 @@ func (s *localRuntimeStore) CreateTask(threadID string, title string) RuntimeSta
 		return status
 	}
 
-	taskTitle := fallbackText(strings.TrimSpace(title), defaultTaskTitle)
+	normalized := normalizeTaskCreateInput(input)
 	now := time.Now().Format(time.RFC3339)
 	taskID := fmt.Sprintf("local-task-%d", time.Now().UnixNano())
 
@@ -1114,15 +1151,21 @@ func (s *localRuntimeStore) CreateTask(threadID string, title string) RuntimeSta
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(`
-		INSERT INTO tasks(id, thread_id, title, status, updated_at, created_at)
-		VALUES(?, ?, ?, ?, ?, ?)
-	`, taskID, trimmedThreadID, taskTitle, "queued", now, now); err != nil {
+		INSERT INTO tasks(id, thread_id, title, kind, input, status, result_summary, updated_at, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, taskID, trimmedThreadID, normalized.Title, normalized.Kind, normalized.Input, "queued", "", now, now); err != nil {
+		return runtimeErrorStatus(err)
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO thread_messages(id, thread_id, role, content, created_at)
+		VALUES(?, ?, ?, ?, ?)
+	`, fmt.Sprintf("local-message-%d", time.Now().UnixNano()), trimmedThreadID, "user", normalized.Input, now); err != nil {
 		return runtimeErrorStatus(err)
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO events(id, thread_id, type, message, created_at)
 		VALUES(?, ?, ?, ?, ?)
-	`, fmt.Sprintf("local-event-%d", time.Now().UnixNano()), trimmedThreadID, "task.created", fmt.Sprintf("Queued task %s", taskTitle), now); err != nil {
+	`, fmt.Sprintf("local-event-%d", time.Now().UnixNano()), trimmedThreadID, "task.created", fmt.Sprintf("Created task %s (%s)", normalized.Title, normalized.Kind), now); err != nil {
 		return runtimeErrorStatus(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -1136,7 +1179,7 @@ func (s *localRuntimeStore) CreateTask(threadID string, title string) RuntimeSta
 	return status
 }
 
-func (s *localRuntimeStore) AdvanceTask(taskID string) RuntimeStatus {
+func (s *localRuntimeStore) RunTask(taskID string) RuntimeStatus {
 	base, err := buildBaseStatusFromStore()
 	if err != nil {
 		return runtimeErrorStatus(err)
@@ -1158,11 +1201,13 @@ func (s *localRuntimeStore) AdvanceTask(taskID string) RuntimeStatus {
 		return status
 	}
 
-	row := s.db.QueryRow(`SELECT thread_id, title, status FROM tasks WHERE id = ?`, trimmedTaskID)
+	row := s.db.QueryRow(`SELECT thread_id, title, kind, input, status FROM tasks WHERE id = ?`, trimmedTaskID)
 	var threadID string
 	var title string
+	var kind string
+	var input string
 	var currentStatus string
-	if err := row.Scan(&threadID, &title, &currentStatus); err != nil {
+	if err := row.Scan(&threadID, &title, &kind, &input, &currentStatus); err != nil {
 		status, snapshotErr := s.snapshotLocked(*base)
 		if snapshotErr != nil {
 			return runtimeErrorStatus(snapshotErr)
@@ -1170,7 +1215,6 @@ func (s *localRuntimeStore) AdvanceTask(taskID string) RuntimeStatus {
 		return status
 	}
 
-	nextStatus := nextTaskStatus(currentStatus)
 	now := time.Now().Format(time.RFC3339)
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -1178,13 +1222,26 @@ func (s *localRuntimeStore) AdvanceTask(taskID string) RuntimeStatus {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`, nextStatus, now, trimmedTaskID); err != nil {
+	resultSummary := buildTaskResultSummary(kind, input, currentStatus)
+	if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "completed", resultSummary, now, trimmedTaskID); err != nil {
+		return runtimeErrorStatus(err)
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO thread_tool_calls(id, thread_id, tool_id, status, summary, created_at)
+		VALUES(?, ?, ?, ?, ?, ?)
+	`, fmt.Sprintf("local-tool-call-%d", time.Now().UnixNano()), threadID, "task.run", "completed", resultSummary, now); err != nil {
+		return runtimeErrorStatus(err)
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO thread_messages(id, thread_id, role, content, created_at)
+		VALUES(?, ?, ?, ?, ?)
+	`, fmt.Sprintf("local-message-%d", time.Now().UnixNano()), threadID, "assistant", resultSummary, now); err != nil {
 		return runtimeErrorStatus(err)
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO events(id, thread_id, type, message, created_at)
 		VALUES(?, ?, ?, ?, ?)
-	`, fmt.Sprintf("local-event-%d", time.Now().UnixNano()), threadID, "task.updated", fmt.Sprintf("Task %s moved to %s", title, nextStatus), now); err != nil {
+	`, fmt.Sprintf("local-event-%d", time.Now().UnixNano()), threadID, "task.run.completed", fmt.Sprintf("Ran task %s and completed it", title), now); err != nil {
 		return runtimeErrorStatus(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -1237,7 +1294,10 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 			id TEXT PRIMARY KEY,
 			thread_id TEXT NOT NULL,
 			title TEXT NOT NULL,
+			kind TEXT NOT NULL DEFAULT 'prompt',
+			input TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL,
+			result_summary TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
@@ -1281,6 +1341,17 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 
 	for _, statement := range schema {
 		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			return err
+		}
+	}
+	migrations := []string{
+		`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'prompt'`,
+		`ALTER TABLE tasks ADD COLUMN input TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE tasks ADD COLUMN result_summary TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, statement := range migrations {
+		if _, err := db.Exec(statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			db.Close()
 			return err
 		}
@@ -1433,7 +1504,7 @@ func (s *localRuntimeStore) saveWorkspace(tx *sql.Tx, workspaceRoot string, acti
 
 func (s *localRuntimeStore) readTasks(threadID string) ([]persistedTask, error) {
 	query := `
-		SELECT id, thread_id, title, status, updated_at
+		SELECT id, thread_id, title, kind, input, status, result_summary, created_at, updated_at
 		FROM tasks
 	`
 	args := []any{}
@@ -1452,7 +1523,7 @@ func (s *localRuntimeStore) readTasks(threadID string) ([]persistedTask, error) 
 	result := []persistedTask{}
 	for rows.Next() {
 		var item persistedTask
-		if err := rows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Status, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Kind, &item.Input, &item.Status, &item.ResultSummary, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, item)
@@ -1595,11 +1666,15 @@ func toTaskSummaries(items []persistedTask) []TaskSummary {
 	result := make([]TaskSummary, 0, len(items))
 	for _, item := range items {
 		result = append(result, TaskSummary{
-			ID:        item.ID,
-			ThreadID:  item.ThreadID,
-			Title:     item.Title,
-			Status:    item.Status,
-			UpdatedAt: item.UpdatedAt,
+			ID:            item.ID,
+			ThreadID:      item.ThreadID,
+			Title:         item.Title,
+			Kind:          item.Kind,
+			Input:         item.Input,
+			Status:        item.Status,
+			ResultSummary: item.ResultSummary,
+			CreatedAt:     item.CreatedAt,
+			UpdatedAt:     item.UpdatedAt,
 		})
 	}
 	return result
@@ -1670,6 +1745,66 @@ func buildBaseStatusFromStore() (*RuntimeStatus, error) {
 	return buildBaseStatus(workspaceRoot)
 }
 
+func parseTaskCreateInput(payload string) TaskCreateInput {
+	trimmed := strings.TrimSpace(payload)
+	if trimmed == "" {
+		return normalizeTaskCreateInput(TaskCreateInput{})
+	}
+
+	var parsed TaskCreateInput
+	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
+		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+			return normalizeTaskCreateInput(parsed)
+		}
+	}
+
+	return normalizeTaskCreateInput(TaskCreateInput{
+		Title: trimmed,
+		Input: trimmed,
+	})
+}
+
+func normalizeTaskCreateInput(input TaskCreateInput) TaskCreateInput {
+	kind := fallbackText(strings.TrimSpace(input.Kind), "prompt")
+	taskInput := strings.TrimSpace(input.Input)
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		title = defaultTaskTitle
+		if taskInput != "" {
+			title = compactText(taskInput, 48)
+		}
+	}
+	return TaskCreateInput{
+		Title: title,
+		Kind:  kind,
+		Input: taskInput,
+	}
+}
+
+func buildTaskResultSummary(kind string, input string, previousStatus string) string {
+	kindLabel := fallbackText(strings.TrimSpace(kind), "prompt")
+	inputLabel := compactText(input, 96)
+	if inputLabel == "" {
+		inputLabel = "no input"
+	}
+	if previousStatus == "completed" {
+		return fmt.Sprintf("Task rerun completed for %s with %s.", kindLabel, inputLabel)
+	}
+	return fmt.Sprintf("Task completed for %s with %s.", kindLabel, inputLabel)
+}
+
+func compactText(value string, max int) string {
+	normalized := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if normalized == "" || max <= 0 {
+		return normalized
+	}
+	runes := []rune(normalized)
+	if len(runes) <= max {
+		return normalized
+	}
+	return string(runes[:max]) + "..."
+}
+
 func defaultStateStorePath(workspaceRoot string) string {
 	if override := strings.TrimSpace(os.Getenv("GENCODE_DESKTOP_STATE_PATH")); override != "" {
 		return override
@@ -1693,21 +1828,6 @@ func runtimeErrorStatus(err error) RuntimeStatus {
 		MCPByGroup:     map[string][]string{},
 		MissingPaths:   []string{},
 		UpdatedAt:      time.Now().Format(time.RFC3339),
-	}
-}
-
-func nextTaskStatus(current string) string {
-	switch current {
-	case "queued":
-		return "running"
-	case "running":
-		return "completed"
-	case "completed":
-		return "failed"
-	case "failed":
-		return "failed"
-	default:
-		return "queued"
 	}
 }
 

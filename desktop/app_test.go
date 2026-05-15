@@ -47,29 +47,41 @@ func TestDesktopFallbackThreadTaskFlow(t *testing.T) {
 		t.Fatal("expected active thread id after creating thread")
 	}
 
-	afterCreateTask := app.CreateTask(afterCreateThread.ActiveThreadID, "Organize runtime panel")
+	afterCreateTask := app.CreateTask(afterCreateThread.ActiveThreadID, `{"title":"Organize runtime panel","kind":"prompt","input":"Show active thread runtime state"}`)
 	if len(afterCreateTask.Tasks) != 1 {
 		t.Fatalf("expected 1 task, got %d", len(afterCreateTask.Tasks))
 	}
 	if afterCreateTask.Tasks[0].Status != "queued" {
 		t.Fatalf("expected queued task, got %q", afterCreateTask.Tasks[0].Status)
 	}
+	if afterCreateTask.Tasks[0].Kind != "prompt" {
+		t.Fatalf("expected prompt kind, got %q", afterCreateTask.Tasks[0].Kind)
+	}
+	if afterCreateTask.Tasks[0].Input != "Show active thread runtime state" {
+		t.Fatalf("expected input to persist, got %q", afterCreateTask.Tasks[0].Input)
+	}
 
 	afterAdvance := app.AdvanceTask(afterCreateTask.Tasks[0].ID)
 	if len(afterAdvance.Tasks) != 1 {
 		t.Fatalf("expected 1 task after advance, got %d", len(afterAdvance.Tasks))
 	}
-	if afterAdvance.Tasks[0].Status != "running" {
-		t.Fatalf("expected running task, got %q", afterAdvance.Tasks[0].Status)
+	if afterAdvance.Tasks[0].Status != "completed" {
+		t.Fatalf("expected completed task, got %q", afterAdvance.Tasks[0].Status)
 	}
-	if len(afterAdvance.Messages) != 0 {
-		t.Fatalf("expected no messages in pure task fallback flow, got %d", len(afterAdvance.Messages))
+	if !strings.Contains(afterAdvance.Tasks[0].ResultSummary, "Task completed") {
+		t.Fatalf("expected result summary after run, got %q", afterAdvance.Tasks[0].ResultSummary)
 	}
-	if len(afterAdvance.ToolCalls) != 0 {
-		t.Fatalf("expected no tool calls in pure task fallback flow, got %d", len(afterAdvance.ToolCalls))
+	if len(afterAdvance.Messages) < 2 {
+		t.Fatalf("expected fallback messages after create/run, got %d", len(afterAdvance.Messages))
+	}
+	if len(afterAdvance.ToolCalls) == 0 {
+		t.Fatalf("expected fallback tool call after run, got %d", len(afterAdvance.ToolCalls))
+	}
+	if afterAdvance.ToolCalls[0].ToolID != "task.run" {
+		t.Fatalf("expected latest tool call task.run, got %q", afterAdvance.ToolCalls[0].ToolID)
 	}
 	if len(afterAdvance.Artifacts) != 0 {
-		t.Fatalf("expected no artifacts in pure task fallback flow, got %d", len(afterAdvance.Artifacts))
+		t.Fatalf("expected no artifacts in fallback flow, got %d", len(afterAdvance.Artifacts))
 	}
 	if len(afterAdvance.Events) == 0 {
 		t.Fatal("expected events after task transition")
@@ -90,7 +102,7 @@ func TestDesktopFallbackPersistsAcrossAppRestart(t *testing.T) {
 	if created.ActiveThreadID == "" {
 		t.Fatal("expected active thread after first create")
 	}
-	created = first.CreateTask(created.ActiveThreadID, "Resume after restart")
+	created = first.CreateTask(created.ActiveThreadID, `{"title":"Resume after restart","kind":"spec","input":"Restore task metadata after desktop relaunch"}`)
 	if len(created.Tasks) != 1 {
 		t.Fatalf("expected 1 task before restart, got %d", len(created.Tasks))
 	}
@@ -115,6 +127,12 @@ func TestDesktopFallbackPersistsAcrossAppRestart(t *testing.T) {
 	}
 	if reloaded.Tasks[0].Title != "Resume after restart" {
 		t.Fatalf("expected restored task title, got %q", reloaded.Tasks[0].Title)
+	}
+	if reloaded.Tasks[0].Kind != "spec" {
+		t.Fatalf("expected restored task kind, got %q", reloaded.Tasks[0].Kind)
+	}
+	if reloaded.Tasks[0].Input != "Restore task metadata after desktop relaunch" {
+		t.Fatalf("expected restored task input, got %q", reloaded.Tasks[0].Input)
 	}
 	if !strings.Contains(reloaded.RecoverySummary, "Recovered 1 thread") {
 		t.Fatalf("expected restart recovery summary, got %q", reloaded.RecoverySummary)

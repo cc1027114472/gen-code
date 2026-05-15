@@ -8,6 +8,7 @@ import (
 	"llmtrace/internal/appserver/runtimecontract"
 	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
+	"llmtrace/internal/core/runner"
 	"llmtrace/internal/core/session"
 	"llmtrace/internal/core/skill"
 	"llmtrace/internal/core/tool"
@@ -53,6 +54,7 @@ type Service struct {
 	skills        *skill.Manager
 	mcp           *mcp.Manager
 	session       *session.Registry
+	runner        *runner.Runner
 }
 
 // NewService constructs a Service with static runtime metadata.
@@ -60,6 +62,8 @@ func NewService(version string, group skill.Group, permission policy.Mode, proje
 	if sessions == nil {
 		sessions = session.NewRegistry(projectRoot)
 	}
+	taskRunner := runner.New(sessions)
+	_ = taskRunner.RecoverInterruptedTasks()
 	return &Service{
 		version:       version,
 		skillGroup:    group,
@@ -72,6 +76,7 @@ func NewService(version string, group skill.Group, permission policy.Mode, proje
 		skills:        skills,
 		mcp:           mcpManager,
 		session:       sessions,
+		runner:        taskRunner,
 	}
 }
 
@@ -192,12 +197,15 @@ func (s *Service) Tasks(_ context.Context, threadID string) ([]runtimecontract.T
 	result := make([]runtimecontract.TaskDescriptor, 0, len(items))
 	for _, item := range items {
 		result = append(result, runtimecontract.TaskDescriptor{
-			ID:        item.ID,
-			ThreadID:  item.ThreadID,
-			Title:     item.Title,
-			Status:    item.Status,
-			CreatedAt: item.CreatedAt.Format(time.RFC3339),
-			UpdatedAt: item.UpdatedAt.Format(time.RFC3339),
+			ID:            item.ID,
+			ThreadID:      item.ThreadID,
+			Title:         item.Title,
+			Status:        item.Status,
+			Kind:          item.Kind,
+			InputSummary:  item.Input,
+			ResultSummary: item.ResultSummary,
+			CreatedAt:     item.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 	return result, nil
@@ -205,18 +213,54 @@ func (s *Service) Tasks(_ context.Context, threadID string) ([]runtimecontract.T
 
 // CreateTask registers a task under the given thread.
 func (s *Service) CreateTask(_ context.Context, threadID string, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
-	item, ok := s.session.CreateTask(threadID, session.CreateTaskInput{Title: request.Title})
+	item, ok := s.session.CreateTask(threadID, session.CreateTaskInput{
+		Title: request.Title,
+		Kind:  request.Kind,
+		Input: request.Input,
+	})
 	if !ok {
 		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
 	}
 
 	return runtimecontract.TaskDescriptor{
-		ID:        item.ID,
-		ThreadID:  item.ThreadID,
-		Title:     item.Title,
-		Status:    item.Status,
-		CreatedAt: item.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: item.UpdatedAt.Format(time.RFC3339),
+		ID:            item.ID,
+		ThreadID:      item.ThreadID,
+		Title:         item.Title,
+		Status:        item.Status,
+		Kind:          item.Kind,
+		InputSummary:  item.Input,
+		ResultSummary: item.ResultSummary,
+		CreatedAt:     item.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
+	}, nil
+}
+
+// RunTask executes a queued task under the given thread.
+func (s *Service) RunTask(ctx context.Context, threadID string, taskID string, _ runtimecontract.RunTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	item, err := s.runner.RunTask(ctx, threadID, taskID)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrThreadNotFound):
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		case errors.Is(err, session.ErrTaskNotFound):
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1007, "task not found")
+		case errors.Is(err, session.ErrTaskAlreadyRunning):
+			return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1011, "thread already has a running task")
+		default:
+			return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1012, err.Error())
+		}
+	}
+
+	return runtimecontract.TaskDescriptor{
+		ID:            item.ID,
+		ThreadID:      item.ThreadID,
+		Title:         item.Title,
+		Status:        item.Status,
+		Kind:          item.Kind,
+		InputSummary:  item.Input,
+		ResultSummary: item.ResultSummary,
+		CreatedAt:     item.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
 	}, nil
 }
 
@@ -237,12 +281,15 @@ func (s *Service) UpdateTaskStatus(_ context.Context, threadID string, taskID st
 	}
 
 	return runtimecontract.TaskDescriptor{
-		ID:        item.ID,
-		ThreadID:  item.ThreadID,
-		Title:     item.Title,
-		Status:    item.Status,
-		CreatedAt: item.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: item.UpdatedAt.Format(time.RFC3339),
+		ID:            item.ID,
+		ThreadID:      item.ThreadID,
+		Title:         item.Title,
+		Status:        item.Status,
+		Kind:          item.Kind,
+		InputSummary:  item.Input,
+		ResultSummary: item.ResultSummary,
+		CreatedAt:     item.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
 	}, nil
 }
 

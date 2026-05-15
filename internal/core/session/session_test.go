@@ -131,6 +131,27 @@ func TestTaskStatusUpdatesRemainThreadScoped(t *testing.T) {
 	require.Equal(t, "queued", secondTasks[0].Status)
 }
 
+func TestCreateTaskPersistsKindInputAndResult(t *testing.T) {
+	registry := NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+	thread := registry.CreateThread(CreateThreadInput{Name: "Runner"})
+
+	task, ok := registry.CreateTask(thread.ID, CreateTaskInput{
+		Title: "Append message",
+		Kind:  "thread.message.append",
+		Input: `{"role":"user","content":"hello"}`,
+	})
+	require.True(t, ok)
+	require.Equal(t, "thread.message.append", task.Kind)
+	require.Equal(t, `{"role":"user","content":"hello"}`, task.Input)
+
+	updated, err := registry.UpdateTaskStatus(thread.ID, task.ID, UpdateTaskStatusInput{
+		Status:        "completed",
+		ResultSummary: "message appended",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "message appended", updated.ResultSummary)
+}
+
 func TestUpdateTaskStatusRejectsInvalidStatus(t *testing.T) {
 	registry := NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
 	thread := registry.CreateThread(CreateThreadInput{Name: "First"})
