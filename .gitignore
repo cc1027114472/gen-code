@@ -1,6 +1,9 @@
 .env
 .idea/
 .superpowers/
+.gen-code/
+server-run*.log
 desktop/build/
 desktop/frontend/dist/
 desktop/frontend/node_modules/
+desktop/frontend/vite*.log
