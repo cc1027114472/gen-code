@@ -218,6 +218,39 @@ func run(ctx context.Context, args []string) error {
 		default:
 			return errors.New("usage: gen-code tasks <list|create|run|update-status>")
 		}
+	case "model":
+		if len(args) < 2 || args[1] != "run" {
+			return errors.New("usage: gen-code model run --thread=<threadId> --input=... [--provider=...] [--model=...] [--max-output-tokens=...] [--title=...]")
+		}
+		var threadID, input, providerKind, modelName, title string
+		var maxOutputTokens int
+		for _, arg := range args[2:] {
+			switch {
+			case strings.HasPrefix(arg, "--thread="):
+				threadID = strings.TrimSpace(strings.TrimPrefix(arg, "--thread="))
+			case strings.HasPrefix(arg, "--input="):
+				input = strings.TrimSpace(strings.TrimPrefix(arg, "--input="))
+			case strings.HasPrefix(arg, "--provider="):
+				providerKind = strings.TrimSpace(strings.TrimPrefix(arg, "--provider="))
+			case strings.HasPrefix(arg, "--model="):
+				modelName = strings.TrimSpace(strings.TrimPrefix(arg, "--model="))
+			case strings.HasPrefix(arg, "--title="):
+				title = strings.TrimSpace(strings.TrimPrefix(arg, "--title="))
+			case strings.HasPrefix(arg, "--max-output-tokens="):
+				value := strings.TrimSpace(strings.TrimPrefix(arg, "--max-output-tokens="))
+				if value != "" {
+					parsed, err := strconv.Atoi(value)
+					if err != nil {
+						return fmt.Errorf("invalid --max-output-tokens value: %w", err)
+					}
+					maxOutputTokens = parsed
+				}
+			}
+		}
+		if threadID == "" || input == "" {
+			return errors.New("usage: gen-code model run --thread=<threadId> --input=... [--provider=...] [--model=...] [--max-output-tokens=...] [--title=...]")
+		}
+		return runModelTask(ctx, runtimeFacade, threadID, title, providerKind, modelName, input, maxOutputTokens)
 	case "skills":
 		if len(args) < 2 || args[1] != "list" {
 			return errors.New("usage: gen-code skills list [--group=<group>]")
@@ -239,6 +272,25 @@ func run(ctx context.Context, args []string) error {
 			return errors.New("usage: gen-code mcp list")
 		}
 		return printMCP(ctx, runtimeFacade)
+	case "providers":
+		if len(args) < 2 || args[1] != "list" {
+			return errors.New("usage: gen-code providers list")
+		}
+		return printProviders(ctx, runtimeFacade)
+	case "provider":
+		if len(args) < 2 || args[1] != "probe" {
+			return errors.New("usage: gen-code provider probe --kind=<provider>")
+		}
+		var kind string
+		for _, arg := range args[2:] {
+			if strings.HasPrefix(arg, "--kind=") {
+				kind = strings.TrimSpace(strings.TrimPrefix(arg, "--kind="))
+			}
+		}
+		if kind == "" {
+			return errors.New("usage: gen-code provider probe --kind=<provider>")
+		}
+		return probeProvider(ctx, runtimeFacade, kind)
 	default:
 		printUsage()
 		return fmt.Errorf("unknown command: %s", strings.Join(args, " "))
@@ -261,9 +313,12 @@ func printUsage() {
 	fmt.Println("  tasks create --thread=<threadId> --kind=<kind> [--title=...] [--input=...]")
 	fmt.Println("  tasks run --thread=<threadId> --task=<taskId>")
 	fmt.Println("  tasks update-status --thread=<threadId> --task=<taskId> --status=<status>")
+	fmt.Println("  model run --thread=<threadId> --input=... [--provider=...] [--model=...] [--max-output-tokens=...] [--title=...]")
 	fmt.Println("  skills list [--group=<group>]")
 	fmt.Println("  tools list")
 	fmt.Println("  mcp list")
+	fmt.Println("  providers list")
+	fmt.Println("  provider probe --kind=<provider>")
 }
 
 func newRuntimeFacade() *runtimeFacade {
@@ -272,7 +327,7 @@ func newRuntimeFacade() *runtimeFacade {
 		client: &remoteRuntimeClient{
 			baseURL: strings.TrimRight(runtimeBaseURL(), "/"),
 			client: http.Client{
-				Timeout: 1500 * time.Millisecond,
+				Timeout: 90 * time.Second,
 			},
 		},
 		source: "local-fallback",
@@ -420,6 +475,24 @@ func (f *runtimeFacade) mcp(ctx context.Context) ([]runtimecontract.MCPServer, e
 	}
 	f.source = "local-fallback"
 	return f.service.MCPServers(ctx)
+}
+
+func (f *runtimeFacade) providers(ctx context.Context) ([]runtimecontract.Provider, error) {
+	if items, err := f.client.providers(); err == nil {
+		f.source = "remote-app-server"
+		return items, nil
+	}
+	f.source = "local-fallback"
+	return f.service.Providers(ctx)
+}
+
+func (f *runtimeFacade) probeProvider(ctx context.Context, kind string) (runtimecontract.ProviderProbeResult, error) {
+	if item, err := f.client.probeProvider(kind); err == nil {
+		f.source = "remote-app-server"
+		return item, nil
+	}
+	f.source = "local-fallback"
+	return f.service.ProbeProvider(ctx, kind)
 }
 
 func runDoctor(ctx context.Context, facade *runtimeFacade) error {
@@ -703,6 +776,55 @@ func createTask(ctx context.Context, facade *runtimeFacade, threadID string, tit
 	return nil
 }
 
+func runModelTask(ctx context.Context, facade *runtimeFacade, threadID string, title string, providerKind string, modelName string, input string, maxOutputTokens int) error {
+	if strings.TrimSpace(title) == "" {
+		title = "Model response"
+	}
+	payload := map[string]any{
+		"input": input,
+	}
+	if strings.TrimSpace(providerKind) != "" {
+		payload["provider"] = providerKind
+	}
+	if strings.TrimSpace(modelName) != "" {
+		payload["model"] = modelName
+	}
+	if maxOutputTokens > 0 {
+		payload["maxOutputTokens"] = maxOutputTokens
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	item, err := facade.createTask(ctx, threadID, runtimecontract.CreateTaskRequest{
+		Title: title,
+		Kind:  "model.response.create",
+		Input: string(raw),
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("model task created")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  id: %s\n", item.ID)
+	fmt.Printf("  thread id: %s\n", item.ThreadID)
+	fmt.Printf("  kind: %s\n", item.Kind)
+	fmt.Printf("  status: %s\n", item.Status)
+
+	result, err := facade.runTask(ctx, threadID, item.ID, runtimecontract.RunTaskRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Println("model task executed")
+	fmt.Printf("  id: %s\n", result.ID)
+	fmt.Printf("  status: %s\n", result.Status)
+	fmt.Printf("  result: %s\n", fallbackText(result.ResultSummary, "none"))
+	return nil
+}
+
 func runTask(ctx context.Context, facade *runtimeFacade, threadID string, taskID string) error {
 	item, err := facade.runTask(ctx, threadID, taskID, runtimecontract.RunTaskRequest{})
 	if err != nil {
@@ -802,6 +924,48 @@ func printMCP(ctx context.Context, facade *runtimeFacade) error {
 	}
 	for _, item := range items {
 		fmt.Printf("  - %s (%s, enabled=%t, tools=%d, resources=%d)\n", item.ID, fallbackText(item.Source, "unknown"), item.Enabled, item.ToolCount, item.ResourceCount)
+	}
+	return nil
+}
+
+func printProviders(ctx context.Context, facade *runtimeFacade) error {
+	fmt.Println("providers list")
+	items, err := facade.providers(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	for _, item := range items {
+		fmt.Printf(
+			"  - %s (enabled=%t, model=%s, preferredApi=%s, recommended=%t, hasAuth=%t)\n",
+			item.Kind,
+			item.Enabled,
+			fallbackText(item.DefaultModel, "none"),
+			fallbackText(item.PreferredAPIStyle, "unknown"),
+			item.Recommended,
+			item.HasAuthToken,
+		)
+	}
+	return nil
+}
+
+func probeProvider(ctx context.Context, facade *runtimeFacade, kind string) error {
+	item, err := facade.probeProvider(ctx, kind)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("provider probe")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  kind: %s\n", item.Kind)
+	fmt.Printf("  reachable: %t\n", item.Reachable)
+	fmt.Printf("  preferred api: %s\n", fallbackText(item.PreferredAPIStyle, "unknown"))
+	fmt.Printf("  message: %s\n", fallbackText(item.Message, "none"))
+	if len(item.Details) > 0 {
+		encoded, _ := json.Marshal(item.Details)
+		fmt.Printf("  details: %s\n", string(encoded))
 	}
 	return nil
 }
@@ -1070,6 +1234,20 @@ func (c *remoteRuntimeClient) mcpServers() ([]runtimecontract.MCPServer, error) 
 	return payload.Items, err
 }
 
+func (c *remoteRuntimeClient) providers() ([]runtimecontract.Provider, error) {
+	var payload struct {
+		Items []runtimecontract.Provider `json:"items"`
+	}
+	err := c.fetchEnvelope("/api/providers", &payload)
+	return payload.Items, err
+}
+
+func (c *remoteRuntimeClient) probeProvider(kind string) (runtimecontract.ProviderProbeResult, error) {
+	var item runtimecontract.ProviderProbeResult
+	err := c.postEnvelope("/api/providers/"+url.PathEscape(kind)+"/probe", map[string]any{}, &item)
+	return item, err
+}
+
 func (c *remoteRuntimeClient) fetchEnvelope(path string, target any) error {
 	response, err := c.client.Get(c.baseURL + path)
 	if err != nil {
@@ -1239,6 +1417,28 @@ func decodeEnvelope(response *http.Response, target any) error {
 	}:
 		var envelope apiEnvelope[struct {
 			Items []runtimecontract.MCPServer `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *runtimecontract.ProviderProbeResult:
+		var envelope apiEnvelope[runtimecontract.ProviderProbeResult]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
+		Items []runtimecontract.Provider `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []runtimecontract.Provider `json:"items"`
 		}]
 		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 			return err
