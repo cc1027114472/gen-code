@@ -87,5 +87,28 @@ func TestClientCreateResponseHandlesProviderError(t *testing.T) {
 	_, err := NewClient(registry).CreateResponse(context.Background(), ResponseRequest{
 		Input: "say hi",
 	})
-	require.ErrorContains(t, err, "provider error")
+	require.ErrorContains(t, err, "bad gateway")
+}
+
+func TestClientCreateResponseRejectsInvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(Anthropic)
+	registry.Register(Config{
+		Kind:      Anthropic,
+		Enabled:   true,
+		BaseURL:   server.URL,
+		AuthToken: "token-1",
+		Models: Models{
+			Default: "gpt-5.4-A",
+		},
+	})
+
+	_, err := NewClient(registry).CreateResponse(context.Background(), ResponseRequest{
+		Input: "say hi",
+	})
+	require.ErrorContains(t, err, "invalid provider response")
 }

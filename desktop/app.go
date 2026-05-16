@@ -68,6 +68,7 @@ type RuntimeStatus struct {
 	SkillsByGroup         map[string][]string `json:"skillsByGroup"`
 	ToolsByGroup          map[string][]string `json:"toolsByGroup"`
 	MCPByGroup            map[string][]string `json:"mcpByGroup"`
+	Providers             []ProviderSummary   `json:"providers"`
 	MissingPaths          []string            `json:"missingPaths"`
 	StateStore            string              `json:"stateStore"`
 	StatePath             string              `json:"statePath"`
@@ -238,6 +239,19 @@ type apiTool struct {
 	Executable  bool   `json:"executable"`
 }
 
+type apiProvider struct {
+	Kind              string `json:"kind"`
+	Enabled           bool   `json:"enabled"`
+	BaseURL           string `json:"baseUrl"`
+	DefaultModel      string `json:"defaultModel"`
+	HasAuthToken      bool   `json:"hasAuthToken"`
+	SupportsChat      bool   `json:"supportsChat"`
+	SupportsResponses bool   `json:"supportsResponses"`
+	PreferredAPIStyle string `json:"preferredApiStyle"`
+	Recommended       bool   `json:"recommended"`
+	RecommendedReason string `json:"recommendedReason"`
+}
+
 type apiMCPServer struct {
 	ID            string `json:"id"`
 	Source        string `json:"source"`
@@ -294,6 +308,19 @@ type TaskCreateInput struct {
 	Title string `json:"title"`
 	Kind  string `json:"kind"`
 	Input string `json:"input"`
+}
+
+type ProviderSummary struct {
+	Kind              string `json:"kind"`
+	Enabled           bool   `json:"enabled"`
+	BaseURL           string `json:"baseUrl"`
+	DefaultModel      string `json:"defaultModel"`
+	HasAuthToken      bool   `json:"hasAuthToken"`
+	SupportsChat      bool   `json:"supportsChat"`
+	SupportsResponses bool   `json:"supportsResponses"`
+	PreferredAPIStyle string `json:"preferredApiStyle"`
+	Recommended       bool   `json:"recommended"`
+	RecommendedReason string `json:"recommendedReason"`
 }
 
 type persistedMessage struct {
@@ -539,6 +566,7 @@ func buildBaseStatus(workspaceRoot string) (*RuntimeStatus, error) {
 		SkillsByGroup:         map[string][]string{},
 		ToolsByGroup:          map[string][]string{},
 		MCPByGroup:            map[string][]string{},
+		Providers:             localProviderCatalog(),
 		MissingPaths:          missingPaths,
 		StateStore:            "sqlite",
 		StatePath:             statePath,
@@ -564,6 +592,13 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 		Items []apiTool `json:"items"`
 	}
 	if err := client.fetchEnvelope("/api/tools", &toolsPayload); err != nil {
+		return RuntimeStatus{}, err
+	}
+
+	var providerPayload struct {
+		Items []apiProvider `json:"items"`
+	}
+	if err := client.fetchEnvelope("/api/providers", &providerPayload); err != nil {
 		return RuntimeStatus{}, err
 	}
 
@@ -642,6 +677,7 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	status.SkillsByGroup = groupSkills(skillsPayload.Items)
 	status.ToolsByGroup = groupTools(toolsPayload.Items)
 	status.MCPByGroup = groupMCPServers(mcpPayload.Items)
+	status.Providers = mapProviders(providerPayload.Items)
 	status.RecoverySummary = fmt.Sprintf("Live runtime connected. Active thread: %s, tasks: %d, messages: %d, tool calls: %d, artifacts: %d.", fallbackText(runtimeStatus.ActiveThreadID, "none"), len(status.Tasks), len(status.Messages), len(status.ToolCalls), len(status.Artifacts))
 	status.UpdatedAt = time.Now().Format(time.RFC3339)
 	return status, nil
@@ -1145,6 +1181,19 @@ func decodeEnvelope(response *http.Response, target any) error {
 		}
 		*typed = envelope.Data
 	case *struct {
+		Items []apiProvider `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []apiProvider `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
 		Items []apiArtifact `json:"items"`
 	}:
 		var envelope apiEnvelope[struct {
@@ -1221,6 +1270,48 @@ func formatToolLabel(id string, kind string, permission string, executable bool,
 		return id
 	}
 	return fmt.Sprintf("%s (%s)", id, strings.Join(parts, ", "))
+}
+
+func mapProviders(items []apiProvider) []ProviderSummary {
+	result := make([]ProviderSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, ProviderSummary{
+			Kind:              item.Kind,
+			Enabled:           item.Enabled,
+			BaseURL:           item.BaseURL,
+			DefaultModel:      item.DefaultModel,
+			HasAuthToken:      item.HasAuthToken,
+			SupportsChat:      item.SupportsChat,
+			SupportsResponses: item.SupportsResponses,
+			PreferredAPIStyle: item.PreferredAPIStyle,
+			Recommended:       item.Recommended,
+			RecommendedReason: item.RecommendedReason,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Recommended != result[j].Recommended {
+			return result[i].Recommended
+		}
+		return result[i].Kind < result[j].Kind
+	})
+	return result
+}
+
+func localProviderCatalog() []ProviderSummary {
+	return []ProviderSummary{
+		{
+			Kind:              "anthropic",
+			Enabled:           strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")) != "" || strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")) != "",
+			BaseURL:           strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")),
+			DefaultModel:      strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")),
+			HasAuthToken:      strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")) != "",
+			SupportsChat:      false,
+			SupportsResponses: true,
+			PreferredAPIStyle: "openai-responses",
+			Recommended:       true,
+			RecommendedReason: "Current gateway is wired through OpenAI Responses compatibility.",
+		},
+	}
 }
 
 func localToolCatalog() []apiTool {
@@ -1779,6 +1870,7 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	status.Artifacts = toArtifactSummaries(artifacts)
 	status.Events = toEventSummaries(events)
 	status.ToolsByGroup = groupTools(localToolCatalog())
+	status.Providers = localProviderCatalog()
 	status.RuntimeState = "fallback"
 	status.RuntimeReady = true
 	status.RuntimeMessage = "Using project-local SQLite runtime fallback because no external runtime is connected."

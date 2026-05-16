@@ -96,6 +96,7 @@ export default function App() {
       setRuntimeStatus(runtime);
       setBrowserState(browser);
       setBrowserOpen(browser.isOpen);
+
       const activeTab = browser.tabs.find((item) => item.id === browser.activeTabId) ?? browser.tabs[0];
       if (activeTab?.url && (addressDraftRef.current === lastSyncedPreviewURL.current || !addressDraftRef.current.trim())) {
         setAddressDraft(activeTab.url);
@@ -244,7 +245,7 @@ export default function App() {
 
   const runtimeSourceLabel =
     runtimeStatus?.runtimeSource === "runtime-http"
-      ? "远端 API"
+      ? "远端 App Server"
       : runtimeStatus?.runtimeSource === "desktop-local"
         ? "本地 fallback"
         : runtimeStatus?.runtimeSource || "未连接";
@@ -252,26 +253,25 @@ export default function App() {
   const projectName = runtimeStatus?.projectRoot?.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "gen-code";
   const contextSummary = `messages ${messages.length} / tool calls ${toolCalls.length} / artifacts ${artifacts.length}`;
   const activeThreadRememberedURL = activeThread ? threadPreviewMemory.current[activeThread.id] || "" : "";
+  const preferredProvider = runtimeStatus?.providers.find((item) => item.recommended) ?? runtimeStatus?.providers[0] ?? null;
+  const providerSummary = preferredProvider
+    ? `${preferredProvider.kind} / ${preferredProvider.preferredApiStyle || "unknown"} / ${preferredProvider.defaultModel || "no-model"}`
+    : "暂无 provider";
 
   const threadPreviewSeed = (threadID: string, rawURL?: string) => {
     const candidate = rawURL?.trim();
     if (candidate) {
       return candidate;
     }
-
     return threadPreviewMemory.current[threadID] || defaultPreviewURL;
   };
 
-  const navigatePreviewForThread = async (
-    thread: RuntimeStatus["threads"][number],
-    rawURL?: string,
-  ) => {
+  const navigatePreviewForThread = async (thread: RuntimeStatus["threads"][number], rawURL?: string) => {
     if (!browserOpen || !thread) {
       return;
     }
 
     const seedURL = threadPreviewSeed(thread.id, rawURL);
-
     if (!isThreadPreviewURL(seedURL)) {
       return;
     }
@@ -333,7 +333,12 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
-      const next = (await CreateTask(runtimeStatus.activeThreadId, JSON.stringify(draft))) as RuntimeStatus;
+      const payload = JSON.stringify({
+        title: draft.title,
+        kind: draft.kind,
+        input: normalizeTaskInput(draft.kind, draft.input),
+      });
+      const next = (await CreateTask(runtimeStatus.activeThreadId, payload)) as RuntimeStatus;
       setRuntimeStatus(next);
       setStatusMessage("已创建 task");
       setLastCheckedAt(formatTime(next.updatedAt));
@@ -353,7 +358,7 @@ export default function App() {
     try {
       const next = (await AdvanceTask(taskID)) as RuntimeStatus;
       setRuntimeStatus(next);
-      setStatusMessage("task 已执行");
+      setStatusMessage("task 已触发执行");
       setLastCheckedAt(formatTime(next.updatedAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "执行 task 失败");
@@ -501,7 +506,9 @@ export default function App() {
                   <p className="section-title">当前线程</p>
                   <h2>{activeThread?.name || "等待 active thread"}</h2>
                   <p className="stage-header__lead">
-                    {activeThread ? "这里展示当前 thread 的消息流、任务进展、工具调用和实时事件。" : "请先创建或激活一个 thread。"}
+                    {activeThread
+                      ? "这里展示当前 thread 的消息流、任务进展、工具调用和实时事件。"
+                      : "请先创建或激活一个 thread。"}
                   </p>
                 </div>
                 <div className="stage-header__meta">
@@ -525,7 +532,7 @@ export default function App() {
                     <input
                       value={draft.title}
                       onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
-                      placeholder="例如：读取 README"
+                      placeholder="例如：让模型总结 README"
                     />
                   </label>
 
@@ -546,7 +553,7 @@ export default function App() {
                   <textarea
                     value={draft.input}
                     onChange={(event) => setDraft((current) => ({ ...current, input: event.target.value }))}
-                    placeholder='例如：{"path":"README.md"}'
+                    placeholder='模型任务可直接输入提示词，或使用 JSON，例如 {"provider":"anthropic","model":"gpt-5.4-A","input":"请总结 README"}'
                     rows={4}
                   />
                 </label>
@@ -603,6 +610,8 @@ export default function App() {
                   <ResultCard label="Latest Event" title={latestEvent ? latestEvent.type : "暂无 event"} body={latestEvent?.message || "暂无 event"} />
                   <ResultCard label="Latest Artifact" title={latestArtifact ? latestArtifact.kind : "暂无 artifact"} body={latestArtifact?.path || "暂无 artifact"} />
                   <InfoCard label="Bridge / SSE" value={sseEnabled ? "Connected" : "Manual"} detail={`${bridgeResult?.message || "桥接待检查"} / ${streamState}`} />
+                  <InfoCard label="Provider" value={preferredProvider?.kind || "暂无 provider"} detail={providerSummary} />
+                  <InfoCard label="State Store" value={runtimeStatus?.stateStore || "sqlite"} detail={runtimeStatus?.statePath || "project-local state store"} />
                 </div>
               </section>
             </section>
@@ -777,6 +786,33 @@ function summarizeText(value: string, maxLength: number) {
   if (!compact) return "空内容";
   if (compact.length <= maxLength) return compact;
   return `${compact.slice(0, maxLength)}...`;
+}
+
+function normalizeTaskInput(kind: string, rawInput: string) {
+  const trimmed = rawInput.trim();
+  if (kind !== "model.response.create") {
+    return trimmed;
+  }
+
+  if (!trimmed) {
+    return JSON.stringify({ input: "" });
+  }
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      return JSON.stringify({
+        provider: typeof parsed.provider === "string" ? parsed.provider : undefined,
+        model: typeof parsed.model === "string" ? parsed.model : undefined,
+        input: typeof parsed.input === "string" ? parsed.input : trimmed,
+        maxOutputTokens: typeof parsed.maxOutputTokens === "number" ? parsed.maxOutputTokens : undefined,
+      });
+    } catch {
+      return JSON.stringify({ input: trimmed });
+    }
+  }
+
+  return JSON.stringify({ input: trimmed });
 }
 
 function isThreadPreviewURL(value: string) {

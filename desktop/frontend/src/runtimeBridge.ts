@@ -120,6 +120,19 @@ type ToolDescriptor = {
   source?: string;
 };
 
+type ProviderDescriptor = {
+  kind: string;
+  enabled: boolean;
+  baseUrl?: string;
+  defaultModel?: string;
+  hasAuthToken: boolean;
+  supportsChat: boolean;
+  supportsResponses: boolean;
+  preferredApiStyle?: string;
+  recommended: boolean;
+  recommendedReason?: string;
+};
+
 type MCPDescriptor = {
   id: string;
   source?: string;
@@ -198,6 +211,7 @@ export type RuntimeStatus = {
   skillsByGroup: Record<string, string[]>;
   toolsByGroup: Record<string, string[]>;
   mcpByGroup: Record<string, string[]>;
+  providers: ProviderDescriptor[];
   missingPaths: string[];
   stateStore: string;
   statePath: string;
@@ -312,6 +326,7 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
     threadPayload,
     skillPayload,
     toolPayload,
+    providerPayload,
     mcpPayload,
   ] = await Promise.all([
     fetchEnvelope<RuntimeApiStatus>("/api/runtime/status"),
@@ -319,6 +334,7 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
     fetchEnvelope<{ items: ThreadDescriptor[] }>("/api/threads"),
     fetchEnvelope<{ items: SkillDescriptor[] }>("/api/skills"),
     fetchEnvelope<{ items: ToolDescriptor[] }>("/api/tools"),
+    fetchEnvelope<{ items: ProviderDescriptor[] }>("/api/providers"),
     fetchEnvelope<{ items: MCPDescriptor[] }>("/api/mcp/servers"),
   ]);
 
@@ -387,6 +403,12 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
     skillsByGroup: groupItems(skillPayload.items),
     toolsByGroup: groupTools(toolPayload.items),
     mcpByGroup: groupMCP(mcpPayload.items),
+    providers: [...providerPayload.items].sort((left, right) => {
+      if (left.recommended !== right.recommended) {
+        return left.recommended ? -1 : 1;
+      }
+      return left.kind.localeCompare(right.kind);
+    }),
     missingPaths: [],
     stateStore: status.stateStore || "sqlite",
     statePath: status.statePath || "",

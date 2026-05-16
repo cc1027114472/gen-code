@@ -121,7 +121,7 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (R
 		if detail == "" {
 			detail = response.Status
 		}
-		return ResponseResult{}, fmt.Errorf("provider error: %s", detail)
+		return ResponseResult{}, fmt.Errorf("%s", detail)
 	}
 
 	result, err := parseResponsesResult(responseBody)
@@ -129,7 +129,7 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (R
 		return ResponseResult{}, err
 	}
 	if strings.TrimSpace(result.OutputText) == "" {
-		return ResponseResult{}, fmt.Errorf("provider returned empty output")
+		return ResponseResult{}, fmt.Errorf("empty output")
 	}
 	if strings.TrimSpace(result.Model) == "" {
 		result.Model = model
