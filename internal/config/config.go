@@ -12,8 +12,9 @@ import (
 
 // Config contains the runtime configuration required by the service.
 type Config struct {
-	App AppConfig
-	Log LogConfig
+	App       AppConfig
+	Log       LogConfig
+	Providers ProvidersConfig
 }
 
 // AppConfig defines the HTTP service runtime settings.
@@ -30,6 +31,30 @@ type AppConfig struct {
 type LogConfig struct {
 	Level      string
 	HTTPAccess bool
+}
+
+// ProvidersConfig defines model provider configuration loaded from env.
+type ProvidersConfig struct {
+	DefaultProvider string
+	Anthropic       ProviderConfig
+	OpenAI          ProviderConfig
+	Gemini          ProviderConfig
+}
+
+// ProviderConfig contains shared provider connection settings and model aliases.
+type ProviderConfig struct {
+	Enabled   bool
+	BaseURL   string
+	AuthToken string
+	Models    ProviderModels
+}
+
+// ProviderModels stores a provider's preferred model aliases.
+type ProviderModels struct {
+	Default string
+	Haiku   string
+	Sonnet  string
+	Opus    string
 }
 
 // Load reads configuration from the environment and optional .env file.
@@ -66,6 +91,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	providers, err := loadProviders()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		App: AppConfig{
 			Name:            appName,
@@ -79,7 +109,83 @@ func Load() (Config, error) {
 			Level:      logLevel,
 			HTTPAccess: logHTTPAccess,
 		},
+		Providers: providers,
 	}, nil
+}
+
+func loadProviders() (ProvidersConfig, error) {
+	anthropic, err := loadProviderConfig(
+		[]string{"ANTHROPIC_ENABLED"},
+		[]string{"ANTHROPIC_BASE_URL"},
+		[]string{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"},
+		ProviderModels{
+			Default: optionalString("", "ANTHROPIC_MODEL"),
+			Haiku:   optionalString("", "ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+			Sonnet:  optionalString("", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
+			Opus:    optionalString("", "ANTHROPIC_DEFAULT_OPUS_MODEL"),
+		},
+	)
+	if err != nil {
+		return ProvidersConfig{}, err
+	}
+
+	openAI, err := loadProviderConfig(
+		[]string{"OPENAI_ENABLED"},
+		[]string{"OPENAI_BASE_URL"},
+		[]string{"OPENAI_AUTH_TOKEN", "OPENAI_API_KEY"},
+		ProviderModels{
+			Default: optionalString("", "OPENAI_MODEL"),
+			Haiku:   optionalString("", "OPENAI_DEFAULT_MINI_MODEL"),
+			Sonnet:  optionalString("", "OPENAI_DEFAULT_MODEL"),
+			Opus:    optionalString("", "OPENAI_DEFAULT_REASONING_MODEL"),
+		},
+	)
+	if err != nil {
+		return ProvidersConfig{}, err
+	}
+
+	gemini, err := loadProviderConfig(
+		[]string{"GEMINI_ENABLED"},
+		[]string{"GEMINI_BASE_URL"},
+		[]string{"GEMINI_AUTH_TOKEN", "GEMINI_API_KEY"},
+		ProviderModels{
+			Default: optionalString("", "GEMINI_MODEL"),
+			Haiku:   optionalString("", "GEMINI_DEFAULT_FLASH_MODEL"),
+			Sonnet:  optionalString("", "GEMINI_DEFAULT_PRO_MODEL"),
+			Opus:    optionalString("", "GEMINI_DEFAULT_ULTRA_MODEL"),
+		},
+	)
+	if err != nil {
+		return ProvidersConfig{}, err
+	}
+
+	return ProvidersConfig{
+		DefaultProvider: optionalString("", "MODEL_PROVIDER", "LLM_PROVIDER", "PROVIDER_DEFAULT"),
+		Anthropic:       anthropic,
+		OpenAI:          openAI,
+		Gemini:          gemini,
+	}, nil
+}
+
+func loadProviderConfig(enabledKeys, baseURLKeys, authTokenKeys []string, models ProviderModels) (ProviderConfig, error) {
+	enabled, hasExplicitEnabled, err := optionalBoolWithPresence(enabledKeys...)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+
+	cfg := ProviderConfig{
+		BaseURL:   optionalString("", baseURLKeys...),
+		AuthToken: optionalString("", authTokenKeys...),
+		Models:    models,
+	}
+
+	if hasExplicitEnabled {
+		cfg.Enabled = enabled
+		return cfg, nil
+	}
+
+	cfg.Enabled = cfg.BaseURL != "" || cfg.AuthToken != "" || cfg.Models.Default != "" || cfg.Models.Haiku != "" || cfg.Models.Sonnet != "" || cfg.Models.Opus != ""
+	return cfg, nil
 }
 
 // requiredString reads the first non-empty value from the provided env keys.
@@ -157,6 +263,25 @@ func optionalBool(defaultValue bool, keys ...string) (bool, error) {
 	}
 
 	return defaultValue, nil
+}
+
+// optionalBoolWithPresence parses an optional boolean env var and reports whether any key was set.
+func optionalBoolWithPresence(keys ...string) (bool, bool, error) {
+	for _, key := range keys {
+		value, ok := os.LookupEnv(key)
+		if !ok || value == "" {
+			continue
+		}
+
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return false, true, fmt.Errorf("parse %s: %w", key, err)
+		}
+
+		return b, true, nil
+	}
+
+	return false, false, nil
 }
 
 // optionalDuration parses an optional duration environment variable.

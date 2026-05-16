@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,8 +10,21 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"llmtrace/internal/core/policy"
+	"llmtrace/internal/core/provider"
 	"llmtrace/internal/core/session"
 )
+
+type stubModelExecutor struct {
+	result provider.ResponseResult
+	err    error
+}
+
+func (s stubModelExecutor) CreateResponse(context.Context, provider.ResponseRequest) (provider.ResponseResult, error) {
+	if s.err != nil {
+		return provider.ResponseResult{}, s.err
+	}
+	return s.result, nil
+}
 
 func TestRunnerExecutesThreadLocalMessageTask(t *testing.T) {
 	registry := session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
@@ -28,7 +42,7 @@ func TestRunnerExecutesThreadLocalMessageTask(t *testing.T) {
 	})
 	require.True(t, ok)
 
-	result, err := New(registry).RunTask(context.Background(), thread.ID, task.ID)
+	result, err := New(registry, nil).RunTask(context.Background(), thread.ID, task.ID)
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.Status)
 	require.Contains(t, result.ResultSummary, "message appended")
@@ -75,7 +89,7 @@ func TestRunnerRecoversInterruptedRunningTasks(t *testing.T) {
 	_, err := registry.UpdateTaskStatus(thread.ID, task.ID, session.UpdateTaskStatusInput{Status: "running"})
 	require.NoError(t, err)
 
-	err = New(registry).RecoverInterruptedTasks()
+	err = New(registry, nil).RecoverInterruptedTasks()
 	require.NoError(t, err)
 
 	reloaded, err := registry.Task(thread.ID, task.ID)
@@ -112,7 +126,7 @@ func TestRunnerExecutesWorkspaceReadOnlyTools(t *testing.T) {
 		Input: `{"path":"README.md"}`,
 	})
 	require.True(t, ok)
-	result, err := New(registry).RunTask(context.Background(), thread.ID, readTask.ID)
+	result, err := New(registry, nil).RunTask(context.Background(), thread.ID, readTask.ID)
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.Status)
 	require.Contains(t, result.ResultSummary, "hello workspace")
@@ -123,7 +137,7 @@ func TestRunnerExecutesWorkspaceReadOnlyTools(t *testing.T) {
 		Input: `{"path":"."}`,
 	})
 	require.True(t, ok)
-	result, err = New(registry).RunTask(context.Background(), thread.ID, listTask.ID)
+	result, err = New(registry, nil).RunTask(context.Background(), thread.ID, listTask.ID)
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.Status)
 	require.Contains(t, result.ResultSummary, "README.md")
@@ -134,7 +148,7 @@ func TestRunnerExecutesWorkspaceReadOnlyTools(t *testing.T) {
 		Input: `{"query":"workspace","path":"."}`,
 	})
 	require.True(t, ok)
-	result, err = New(registry).RunTask(context.Background(), thread.ID, searchTask.ID)
+	result, err = New(registry, nil).RunTask(context.Background(), thread.ID, searchTask.ID)
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.Status)
 	require.Contains(t, result.ResultSummary, "README.md")
@@ -156,7 +170,7 @@ func TestRunnerRejectsReadToolForAskUserMode(t *testing.T) {
 	})
 	require.True(t, ok)
 
-	result, err := New(registry).RunTask(context.Background(), thread.ID, task.ID)
+	result, err := New(registry, nil).RunTask(context.Background(), thread.ID, task.ID)
 	require.NoError(t, err)
 	require.Equal(t, "failed", result.Status)
 	require.Contains(t, result.ResultSummary, "approval required")
@@ -179,8 +193,67 @@ func TestRunnerRejectsPathOutsideWorkspace(t *testing.T) {
 	})
 	require.True(t, ok)
 
-	result, err := New(registry).RunTask(context.Background(), thread.ID, task.ID)
+	result, err := New(registry, nil).RunTask(context.Background(), thread.ID, task.ID)
 	require.NoError(t, err)
 	require.Equal(t, "failed", result.Status)
 	require.Contains(t, result.ResultSummary, ErrPathOutsideWorkspace.Error())
+}
+
+func TestRunnerExecutesModelResponseTask(t *testing.T) {
+	registry := session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Model",
+		PermissionMode: policy.WorkspaceWrite,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Ask model",
+		Kind:  KindModelResponse,
+		Input: `{"input":"hello model","model":"gpt-5.4-A"}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry, stubModelExecutor{
+		result: provider.ResponseResult{
+			ResponseID: "resp-1",
+			Model:      "gpt-5.4-A",
+			OutputText: "assistant answer",
+			APIStyle:   provider.APIStyleOpenAIResponses,
+		},
+	}).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "response from gpt-5.4-A")
+
+	messages, ok := registry.Messages(thread.ID)
+	require.True(t, ok)
+	require.NotEmpty(t, messages)
+	require.Equal(t, "assistant", messages[len(messages)-1].Role)
+	require.Equal(t, "assistant answer", messages[len(messages)-1].Content)
+
+	toolCalls, ok := registry.ToolCalls(thread.ID)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 2)
+	require.Equal(t, KindModelResponse, toolCalls[0].ToolID)
+	require.Equal(t, "completed", toolCalls[1].Status)
+}
+
+func TestRunnerFailsModelResponseTaskWhenProviderFails(t *testing.T) {
+	registry := session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Model",
+		PermissionMode: policy.WorkspaceWrite,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Ask model",
+		Kind:  KindModelResponse,
+		Input: `{"input":"hello model"}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry, stubModelExecutor{
+		err: errors.New("gateway unavailable"),
+	}).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", result.Status)
+	require.Contains(t, result.ResultSummary, "provider error")
 }

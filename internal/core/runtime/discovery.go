@@ -10,6 +10,7 @@ import (
 
 	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
+	"llmtrace/internal/core/provider"
 	"llmtrace/internal/core/session"
 	"llmtrace/internal/core/skill"
 	"llmtrace/internal/core/state"
@@ -328,7 +329,7 @@ func workspaceRoot() string {
 	return filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(file))))
 }
 
-func newServiceFromDiscoveryWithStore(discovered discoverySet, explicitStore *state.Store) *Service {
+func newServiceFromDiscoveryWithStore(discovered discoverySet, explicitStore *state.Store, providers *provider.Registry) *Service {
 	registry := tool.NewRegistry()
 	for _, item := range discovered.tools {
 		registry.Register(item)
@@ -341,7 +342,7 @@ func newServiceFromDiscoveryWithStore(discovered discoverySet, explicitStore *st
 		opened, err := state.Open(projectRoot)
 		if err != nil {
 			sessions := session.NewRegistry(projectRoot)
-			return NewService(defaultVersion, skill.Common, policy.DefaultMode(), projectRoot, registry, skills, mcpManager, sessions)
+			return NewService(defaultVersion, skill.Common, policy.DefaultMode(), projectRoot, registry, skills, mcpManager, providers, sessions)
 		}
 		store = opened
 	}
@@ -349,7 +350,7 @@ func newServiceFromDiscoveryWithStore(discovered discoverySet, explicitStore *st
 	if err != nil {
 		sessions = session.NewRegistry(projectRoot)
 	}
-	return NewService(defaultVersion, skill.Common, policy.DefaultMode(), projectRoot, registry, skills, mcpManager, sessions)
+	return NewService(defaultVersion, skill.Common, policy.DefaultMode(), projectRoot, registry, skills, mcpManager, providers, sessions)
 }
 
 func newSkillResolver(discovered discoverySet) *skill.Resolver {

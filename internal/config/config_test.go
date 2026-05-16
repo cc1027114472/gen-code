@@ -43,6 +43,52 @@ func TestLoadAppliesDefaultsAndFlags(t *testing.T) {
 	require.Equal(t, "debug", cfg.Log.Level)
 	require.False(t, cfg.Log.HTTPAccess)
 	require.Equal(t, []string{"127.0.0.1", "10.0.0.1"}, cfg.App.TrustedProxies)
+	require.False(t, cfg.Providers.Anthropic.Enabled)
+	require.False(t, cfg.Providers.OpenAI.Enabled)
+	require.False(t, cfg.Providers.Gemini.Enabled)
+}
+
+func TestLoadProvidersFromAnthropicEnv(t *testing.T) {
+	clearAllConfigEnv(t)
+	t.Setenv("MODEL_PROVIDER", "anthropic")
+	t.Setenv("ANTHROPIC_BASE_URL", "http://localhost:1314")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "test-token")
+	t.Setenv("ANTHROPIC_MODEL", "gpt-5.4-A")
+	t.Setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "gpt-5.4-A")
+	t.Setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "gpt-5.4-A")
+	t.Setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "gpt-5.4-A")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "anthropic", cfg.Providers.DefaultProvider)
+	require.True(t, cfg.Providers.Anthropic.Enabled)
+	require.Equal(t, "http://localhost:1314", cfg.Providers.Anthropic.BaseURL)
+	require.Equal(t, "test-token", cfg.Providers.Anthropic.AuthToken)
+	require.Equal(t, "gpt-5.4-A", cfg.Providers.Anthropic.Models.Default)
+	require.Equal(t, "gpt-5.4-A", cfg.Providers.Anthropic.Models.Haiku)
+	require.Equal(t, "gpt-5.4-A", cfg.Providers.Anthropic.Models.Sonnet)
+	require.Equal(t, "gpt-5.4-A", cfg.Providers.Anthropic.Models.Opus)
+}
+
+func TestLoadProvidersRespectsExplicitDisable(t *testing.T) {
+	clearAllConfigEnv(t)
+	t.Setenv("ANTHROPIC_ENABLED", "false")
+	t.Setenv("ANTHROPIC_BASE_URL", "http://localhost:1314")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "test-token")
+	t.Setenv("ANTHROPIC_MODEL", "gpt-5.4-A")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.False(t, cfg.Providers.Anthropic.Enabled)
+	require.Equal(t, "http://localhost:1314", cfg.Providers.Anthropic.BaseURL)
+}
+
+func TestLoadReturnsErrorWhenProviderBoolMalformed(t *testing.T) {
+	clearAllConfigEnv(t)
+	t.Setenv("ANTHROPIC_ENABLED", "sometimes")
+
+	_, err := Load()
+	require.EqualError(t, err, "parse ANTHROPIC_ENABLED: strconv.ParseBool: parsing \"sometimes\": invalid syntax")
 }
 
 func TestLoadReturnsErrorWhenIntEnvMalformed(t *testing.T) {
@@ -81,6 +127,33 @@ func clearAllConfigEnv(t *testing.T) {
 		"APP_TRUSTED_PROXIES",
 		"LOG_LEVEL",
 		"LOG_HTTP_ACCESS",
+		"MODEL_PROVIDER",
+		"LLM_PROVIDER",
+		"PROVIDER_DEFAULT",
+		"ANTHROPIC_ENABLED",
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_AUTH_TOKEN",
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"OPENAI_ENABLED",
+		"OPENAI_BASE_URL",
+		"OPENAI_AUTH_TOKEN",
+		"OPENAI_API_KEY",
+		"OPENAI_MODEL",
+		"OPENAI_DEFAULT_MINI_MODEL",
+		"OPENAI_DEFAULT_MODEL",
+		"OPENAI_DEFAULT_REASONING_MODEL",
+		"GEMINI_ENABLED",
+		"GEMINI_BASE_URL",
+		"GEMINI_AUTH_TOKEN",
+		"GEMINI_API_KEY",
+		"GEMINI_MODEL",
+		"GEMINI_DEFAULT_FLASH_MODEL",
+		"GEMINI_DEFAULT_PRO_MODEL",
+		"GEMINI_DEFAULT_ULTRA_MODEL",
 	}
 
 	for _, key := range keys {

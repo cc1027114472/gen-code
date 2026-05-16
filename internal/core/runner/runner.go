@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"llmtrace/internal/core/policy"
+	"llmtrace/internal/core/provider"
 	"llmtrace/internal/core/session"
 )
 
@@ -22,6 +23,7 @@ const (
 	KindWorkspaceRead   = "workspace.read_file"
 	KindWorkspaceList   = "workspace.list_files"
 	KindWorkspaceSearch = "workspace.search_text"
+	KindModelResponse   = "model.response.create"
 	restartFailureLabel = "interrupted by runtime restart"
 )
 
@@ -45,10 +47,15 @@ type Registry interface {
 
 type Runner struct {
 	registry Registry
+	models   ModelExecutor
 }
 
-func New(registry Registry) *Runner {
-	return &Runner{registry: registry}
+type ModelExecutor interface {
+	CreateResponse(ctx context.Context, request provider.ResponseRequest) (provider.ResponseResult, error)
+}
+
+func New(registry Registry, models ModelExecutor) *Runner {
+	return &Runner{registry: registry, models: models}
 }
 
 func (r *Runner) RecoverInterruptedTasks() error {
@@ -96,7 +103,7 @@ func (r *Runner) RecoverInterruptedTasks() error {
 	return nil
 }
 
-func (r *Runner) RunTask(_ context.Context, threadID string, taskID string) (session.Task, error) {
+func (r *Runner) RunTask(ctx context.Context, threadID string, taskID string) (session.Task, error) {
 	task, err := r.registry.Task(threadID, taskID)
 	if err != nil {
 		return session.Task{}, err
@@ -131,7 +138,7 @@ func (r *Runner) RunTask(_ context.Context, threadID string, taskID string) (ses
 		_ = recorder.AppendRuntimeEvent(threadID, "toolcall.started", fmt.Sprintf("Tool call %s started", task.Kind))
 	}
 
-	summary, execErr := r.execute(threadID, task)
+	summary, execErr := r.execute(ctx, threadID, task)
 	if execErr != nil {
 		if recorder != nil {
 			_ = recorder.AppendRuntimeEvent(threadID, "toolcall.failed", execErr.Error())
@@ -180,13 +187,42 @@ func (r *Runner) RunTask(_ context.Context, threadID string, taskID string) (ses
 	return result, nil
 }
 
-func (r *Runner) execute(threadID string, task session.Task) (string, error) {
+func (r *Runner) execute(ctx context.Context, threadID string, task session.Task) (string, error) {
 	thread, ok := r.registry.Thread(threadID)
 	if !ok {
 		return "", session.ErrThreadNotFound
 	}
 
 	switch task.Kind {
+	case KindModelResponse:
+		if r.models == nil {
+			return "", fmt.Errorf("provider error: model execution is not configured")
+		}
+		var input struct {
+			Provider        string `json:"provider"`
+			Model           string `json:"model"`
+			Input           string `json:"input"`
+			MaxOutputTokens int    `json:"maxOutputTokens"`
+		}
+		if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
+			return "", err
+		}
+		result, err := r.models.CreateResponse(ctx, provider.ResponseRequest{
+			Provider:        input.Provider,
+			Model:           input.Model,
+			Input:           input.Input,
+			MaxOutputTokens: input.MaxOutputTokens,
+		})
+		if err != nil {
+			return "", fmt.Errorf("provider error: %w", err)
+		}
+		if _, err := r.registry.AppendMessage(threadID, session.AppendMessageInput{
+			Role:    "assistant",
+			Content: result.OutputText,
+		}); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("response from %s: %s", fallbackModel(result.Model, input.Model), compactSummary(result.OutputText, 240)), nil
 	case KindMessageAppend:
 		if err := ensureThreadMutationAllowed(thread.PermissionMode); err != nil {
 			return "", err
@@ -328,6 +364,16 @@ func (r *Runner) execute(threadID string, task session.Task) (string, error) {
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedTaskKind, task.Kind)
 	}
+}
+
+func fallbackModel(value string, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	if strings.TrimSpace(fallback) != "" {
+		return fallback
+	}
+	return "unknown-model"
 }
 
 func ensureReadAllowed(mode policy.Mode) error {

@@ -9,6 +9,7 @@ import (
 	"llmtrace/internal/appserver/runtimecontract"
 	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
+	"llmtrace/internal/core/provider"
 	"llmtrace/internal/core/session"
 	"llmtrace/internal/core/skill"
 	"llmtrace/internal/core/state"
@@ -55,6 +56,7 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 			ToolCount:     2,
 			ResourceCount: 3,
 		}}),
+		provider.NewRegistry(""),
 		sessions,
 	)
 

@@ -3,11 +3,13 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"llmtrace/internal/appserver/runtimecontract"
 	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
+	"llmtrace/internal/core/provider"
 	"llmtrace/internal/core/runner"
 	"llmtrace/internal/core/session"
 	"llmtrace/internal/core/skill"
@@ -53,16 +55,23 @@ type Service struct {
 	tools         *tool.Registry
 	skills        *skill.Manager
 	mcp           *mcp.Manager
+	providers     *provider.Registry
+	providerClient *provider.Client
+	prober        *provider.Prober
 	session       *session.Registry
 	runner        *runner.Runner
 }
 
 // NewService constructs a Service with static runtime metadata.
-func NewService(version string, group skill.Group, permission policy.Mode, projectRoot string, tools *tool.Registry, skills *skill.Manager, mcpManager *mcp.Manager, sessions *session.Registry) *Service {
+func NewService(version string, group skill.Group, permission policy.Mode, projectRoot string, tools *tool.Registry, skills *skill.Manager, mcpManager *mcp.Manager, providers *provider.Registry, sessions *session.Registry) *Service {
 	if sessions == nil {
 		sessions = session.NewRegistry(projectRoot)
 	}
-	taskRunner := runner.New(sessions)
+	if providers == nil {
+		providers = provider.NewRegistry("")
+	}
+	providerClient := provider.NewClient(providers)
+	taskRunner := runner.New(sessions, providerClient)
 	_ = taskRunner.RecoverInterruptedTasks()
 	return &Service{
 		version:       version,
@@ -75,6 +84,9 @@ func NewService(version string, group skill.Group, permission policy.Mode, proje
 		tools:         tools,
 		skills:        skills,
 		mcp:           mcpManager,
+		providers:     providers,
+		providerClient: providerClient,
+		prober:        provider.NewProber(),
 		session:       sessions,
 		runner:        taskRunner,
 	}
@@ -380,6 +392,47 @@ func (s *Service) Tools(context.Context) ([]runtimecontract.Tool, error) {
 		})
 	}
 	return result, nil
+}
+
+// Providers returns the configured runtime model providers.
+func (s *Service) Providers(context.Context) ([]runtimecontract.Provider, error) {
+	items := s.providers.List()
+	result := make([]runtimecontract.Provider, 0, len(items))
+	for _, item := range items {
+		recommendedStyle, reason := recommendedAPIStyle(item)
+		result = append(result, runtimecontract.Provider{
+			Kind:              string(item.Kind),
+			Enabled:           item.Enabled,
+			BaseURL:           item.BaseURL,
+			DefaultModel:      item.DefaultModel,
+			HasAuthToken:      item.HasAuthToken,
+			SupportsChat:      item.SupportsChat,
+			SupportsResponses: recommendedStyle == "openai-responses",
+			PreferredAPIStyle: recommendedStyle,
+			Recommended:       recommendedStyle != "",
+			RecommendedReason: reason,
+		})
+	}
+	return result, nil
+}
+
+// ProbeProvider performs a lightweight connectivity probe for a configured provider.
+func (s *Service) ProbeProvider(ctx context.Context, kind string) (runtimecontract.ProviderProbeResult, error) {
+	cfg, ok := s.providers.Resolve(provider.Kind(kind))
+	if !ok {
+		return runtimecontract.ProviderProbeResult{}, xerror.NotFound(1013, "provider not found")
+	}
+	result, err := s.prober.Probe(ctx, cfg)
+	if err != nil {
+		return runtimecontract.ProviderProbeResult{}, xerror.Internal(2002, err.Error())
+	}
+	return runtimecontract.ProviderProbeResult{
+		Kind:              string(result.Kind),
+		Reachable:         result.Reachable,
+		PreferredAPIStyle: result.PreferredAPIStyle,
+		Message:           result.Message,
+		Details:           result.Details,
+	}, nil
 }
 
 // ToolDescriptors returns the richer tool descriptors for CLI and desktop use.
@@ -699,4 +752,23 @@ func filterReplay(items []session.Event, request runtimecontract.StreamEventsReq
 		return append([]session.Event(nil), filtered...)
 	}
 	return append([]session.Event(nil), filtered[len(filtered)-limit:]...)
+}
+
+func recommendedAPIStyle(item provider.Descriptor) (string, string) {
+	baseURL := strings.ToLower(item.BaseURL)
+	model := strings.ToLower(item.DefaultModel)
+
+	if item.Kind == provider.Anthropic && strings.Contains(model, "gpt-") {
+		return "openai-responses", "configured as anthropic, but the selected model family is better matched by OpenAI Responses"
+	}
+	if item.Kind == provider.OpenAI {
+		return "openai-responses", "OpenAI-compatible providers should prefer the Responses API"
+	}
+	if item.Kind == provider.Anthropic {
+		return "anthropic", "Anthropic-compatible providers can start from the messages API"
+	}
+	if item.Kind == provider.Gemini && baseURL != "" {
+		return "gemini", "Gemini providers should use the Gemini-native API contract"
+	}
+	return "", ""
 }
