@@ -33,10 +33,37 @@ type FlowItem = {
   tone: "neutral" | "good" | "warning";
   badge: string;
   title: string;
-  body: string;
+  body: ReactNode;
   meta: string;
   timestamp: number;
   actions?: ReactNode;
+};
+
+type RuntimeTask = RuntimeStatus["tasks"][number];
+type RuntimeApproval = RuntimeStatus["approvals"][number];
+
+type PatchStats = {
+  added: number;
+  removed: number;
+  hasPreview: boolean;
+};
+
+type ApprovalViewModel = {
+  id: string;
+  taskId: string;
+  title: string;
+  toolKind: string;
+  taskKind: string;
+  taskStatus: string;
+  taskStatusLabel: string;
+  approvalStatus: string;
+  approvalStatusLabel: string;
+  summary: string;
+  targetPaths: string[];
+  patchPreview: string;
+  patchStats: PatchStats;
+  patchStatsLabel: string;
+  updatedAt: string;
 };
 
 const defaultDraft: Draft = {
@@ -181,35 +208,52 @@ export default function App() {
   const latestMessage = useMemo(() => newestBy(messages, (item) => item.createdAt), [messages]);
   const latestArtifact = useMemo(() => newestBy(artifacts, (item) => item.createdAt), [artifacts]);
   const latestEvent = useMemo(() => newestBy(events, (item) => item.createdAt), [events]);
-  const pendingApprovals = useMemo(() => approvals.filter((item) => item.status === "pending"), [approvals]);
+  const approvalViewModels = useMemo(() => {
+    const taskMap = new Map(tasks.map((task) => [task.id, task]));
+    return approvals
+      .map((approval) => createApprovalViewModel(approval, taskMap.get(approval.taskId)))
+      .sort((left, right) => toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt));
+  }, [approvals, tasks]);
+  const approvalByTaskID = useMemo(
+    () => new Map(approvalViewModels.map((item) => [item.taskId, item])),
+    [approvalViewModels],
+  );
+  const pendingApprovals = useMemo(
+    () => approvalViewModels.filter((item) => item.approvalStatus === "pending"),
+    [approvalViewModels],
+  );
 
   const flowItems = useMemo(() => {
     const items: FlowItem[] = [];
 
     for (const task of tasks.slice(0, 8)) {
+      const approval = approvalByTaskID.get(task.id);
+      const taskStatusLabel = formatTaskStatus(task.status);
       items.push({
         id: `task-${task.id}`,
-        tone: task.status === "completed" ? "good" : task.status === "failed" ? "warning" : "neutral",
-        badge: `task / ${task.status}`,
+        tone: task.status === "completed" ? "good" : task.status === "failed" || task.status === "needs_approval" ? "warning" : "neutral",
+        badge: `任务 / ${taskStatusLabel}`,
         title: `${task.title} / ${task.kind || "prompt"}`,
-        body: task.resultSummary || task.input || "等待任务输入",
+        body: approval ? (
+          <ApprovalDetails approval={approval} />
+        ) : (
+          <FlowBodyText text={task.resultSummary || task.input || "等待任务输入"} />
+        ),
         meta: formatTime(task.updatedAt || task.createdAt),
         timestamp: toTimestamp(task.updatedAt || task.createdAt),
         actions:
           task.status === "needs_approval"
             ? (
-                <div className="flow-item__actions">
-                  <button className="thread-action" onClick={() => void handleApproveTask(task.id)} disabled={loading}>
-                    Approve
-                  </button>
-                  <button className="thread-action thread-action--danger" onClick={() => void handleRejectTask(task.id)} disabled={loading}>
-                    Reject
-                  </button>
-                </div>
+                <ApprovalActions
+                  taskId={task.id}
+                  loading={loading}
+                  onApprove={handleApproveTask}
+                  onReject={handleRejectTask}
+                />
               )
             : (
                 <button className="thread-action" onClick={() => void handleRunTask(task.id)} disabled={loading}>
-                  Run Task
+                  运行任务
                 </button>
               ),
       });
@@ -219,9 +263,9 @@ export default function App() {
       items.push({
         id: `tool-${toolCall.id}`,
         tone: toolCall.status === "completed" ? "good" : toolCall.status === "failed" ? "warning" : "neutral",
-        badge: `tool call / ${toolCall.status}`,
+        badge: `工具调用 / ${formatToolCallStatus(toolCall.status)}`,
         title: toolCall.toolId,
-        body: toolCall.summary,
+        body: <FlowBodyText text={toolCall.summary} />,
         meta: formatTime(toolCall.createdAt),
         timestamp: toTimestamp(toolCall.createdAt),
       });
@@ -231,9 +275,9 @@ export default function App() {
       items.push({
         id: `message-${message.id}`,
         tone: message.role === "assistant" ? "good" : "neutral",
-        badge: `message / ${message.role}`,
+        badge: `消息 / ${formatMessageRole(message.role)}`,
         title: summarizeText(message.content, 48),
-        body: message.content,
+        body: <FlowBodyText text={message.content} />,
         meta: formatTime(message.createdAt),
         timestamp: toTimestamp(message.createdAt),
       });
@@ -243,16 +287,16 @@ export default function App() {
       items.push({
         id: `event-${event.id}`,
         tone: event.type.includes("failed") ? "warning" : event.type.includes("completed") ? "good" : "neutral",
-        badge: `event / ${event.type}`,
+        badge: `事件 / ${formatEventType(event.type)}`,
         title: event.type,
-        body: event.message,
+        body: <FlowBodyText text={event.message} />,
         meta: formatTime(event.createdAt),
         timestamp: toTimestamp(event.createdAt),
       });
     }
 
     return items.sort((left, right) => right.timestamp - left.timestamp).slice(0, 16);
-  }, [events, loading, messages, tasks, toolCalls]);
+  }, [approvalByTaskID, events, loading, messages, tasks, toolCalls]);
 
   const runtimeSourceLabel =
     runtimeStatus?.runtimeSource === "runtime-http"
@@ -649,20 +693,17 @@ export default function App() {
                     {pendingApprovals.map((approval) => (
                       <article className="flow-item flow-item--warning" key={approval.id}>
                         <div className="flow-item__header">
-                          <span className="mini-chip">approval / pending</span>
+                          <span className="mini-chip">{`审批 / ${approval.approvalStatusLabel}`}</span>
                           <span className="flow-item__meta">{formatTime(approval.updatedAt)}</span>
                         </div>
-                        <h4>{approval.toolKind}</h4>
-                        <p>{approval.summary}</p>
-                        <p>{approval.targetPaths.join(", ")}</p>
-                        <div className="flow-item__actions">
-                          <button className="thread-action" onClick={() => void handleApproveTask(approval.taskId)} disabled={loading}>
-                            Approve
-                          </button>
-                          <button className="thread-action thread-action--danger" onClick={() => void handleRejectTask(approval.taskId)} disabled={loading}>
-                            Reject
-                          </button>
-                        </div>
+                        <h4>{approval.title}</h4>
+                        <ApprovalDetails approval={approval} />
+                        <ApprovalActions
+                          taskId={approval.taskId}
+                          loading={loading}
+                          onApprove={handleApproveTask}
+                          onReject={handleRejectTask}
+                        />
                       </article>
                     ))}
                   </div>
@@ -679,7 +720,7 @@ export default function App() {
                           <span className="flow-item__meta">{item.meta}</span>
                         </div>
                         <h4>{item.title}</h4>
-                        <p>{item.body}</p>
+                        {item.body}
                         {item.actions ? <div className="flow-item__actions">{item.actions}</div> : null}
                       </article>
                     ))
@@ -697,15 +738,39 @@ export default function App() {
                 </div>
 
                 <div className="context-grid">
-                  <ResultCard label="Latest Task" title={latestTask ? `${latestTask.title} / ${latestTask.status}` : "暂无任务"} body={latestTask?.resultSummary || latestTask?.input || "暂无结果"} />
-                  <ResultCard label="Latest Tool Call" title={latestToolCall ? `${latestToolCall.toolId} / ${latestToolCall.status}` : "暂无 tool call"} body={latestToolCall?.summary || "暂无摘要"} />
-                  <ResultCard label="Latest Message" title={latestMessage ? latestMessage.role : "暂无 message"} body={latestMessage?.content || "暂无 message"} />
-                  <ResultCard label="Latest Event" title={latestEvent ? latestEvent.type : "暂无 event"} body={latestEvent?.message || "暂无 event"} />
-                  <ResultCard label="Latest Artifact" title={latestArtifact ? latestArtifact.kind : "暂无 artifact"} body={latestArtifact?.path || "暂无 artifact"} />
-                  <InfoCard label="Bridge / SSE" value={sseEnabled ? "Connected" : "Manual"} detail={`${bridgeResult?.message || "桥接待检查"} / ${streamState}`} />
-                  <InfoCard label="Approvals" value={String(pendingApprovals.length)} detail={pendingApprovals[0]?.summary || "当前没有待审批写任务"} />
+                  <ResultCard
+                    label="最新任务"
+                    title={latestTask ? `${latestTask.title} / ${formatTaskStatus(latestTask.status)}` : "暂无任务"}
+                    body={latestTask?.resultSummary || latestTask?.input || "暂无结果"}
+                  />
+                  <ResultCard
+                    label="最新工具调用"
+                    title={latestToolCall ? `${latestToolCall.toolId} / ${formatToolCallStatus(latestToolCall.status)}` : "暂无工具调用"}
+                    body={latestToolCall?.summary || "暂无摘要"}
+                  />
+                  <ResultCard
+                    label="最新消息"
+                    title={latestMessage ? formatMessageRole(latestMessage.role) : "暂无消息"}
+                    body={latestMessage?.content || "暂无消息"}
+                  />
+                  <ResultCard
+                    label="最新事件"
+                    title={latestEvent ? formatEventType(latestEvent.type) : "暂无事件"}
+                    body={latestEvent?.message || "暂无事件"}
+                  />
+                  <ResultCard
+                    label="最新产物"
+                    title={latestArtifact ? latestArtifact.kind : "暂无产物"}
+                    body={latestArtifact?.path || "暂无产物"}
+                  />
+                  <InfoCard label="桥接 / SSE" value={sseEnabled ? "已连接" : "手动刷新"} detail={`${bridgeResult?.message || "桥接待检查"} / ${streamState}`} />
+                  <InfoCard
+                    label="审批状态"
+                    value={pendingApprovals.length > 0 ? `${pendingApprovals.length} 条待审批` : "无待审批"}
+                    detail={pendingApprovals[0] ? `${pendingApprovals[0].summary} / ${pendingApprovals[0].patchStatsLabel}` : "当前没有待审批写任务"}
+                  />
                   <InfoCard label="Provider" value={preferredProvider?.kind || "暂无 provider"} detail={providerSummary} />
-                  <InfoCard label="State Store" value={runtimeStatus?.stateStore || "sqlite"} detail={runtimeStatus?.statePath || "project-local state store"} />
+                  <InfoCard label="状态存储" value={runtimeStatus?.stateStore || "sqlite"} detail={runtimeStatus?.statePath || "project-local state store"} />
                 </div>
               </section>
             </section>
@@ -853,6 +918,207 @@ function toolCallStatusWeight(status: string) {
     default:
       return 0;
   }
+}
+
+function createApprovalViewModel(approval: RuntimeApproval, task?: RuntimeTask): ApprovalViewModel {
+  const parsedPatch = parsePatchPreview(task?.input || "");
+  return {
+    id: approval.id,
+    taskId: approval.taskId,
+    title: task?.title || approval.toolKind,
+    toolKind: approval.toolKind,
+    taskKind: task?.kind || approval.toolKind,
+    taskStatus: task?.status || "",
+    taskStatusLabel: formatTaskStatus(task?.status || ""),
+    approvalStatus: task?.approvalStatus || approval.status,
+    approvalStatusLabel: formatApprovalStatus(task?.approvalStatus || approval.status),
+    summary: approval.summary || task?.resultSummary || "等待审批",
+    targetPaths: approval.targetPaths || [],
+    patchPreview: parsedPatch.preview,
+    patchStats: parsedPatch.stats,
+    patchStatsLabel: formatPatchStats(parsedPatch.stats),
+    updatedAt: approval.updatedAt || task?.updatedAt || approval.createdAt,
+  };
+}
+
+function parsePatchPreview(rawInput: string) {
+  const trimmed = rawInput.trim();
+  const fallback = {
+    preview: trimmed || "当前任务没有可展示的补丁预览。",
+    stats: createPatchStats(trimmed),
+  };
+
+  if (!trimmed) {
+    return {
+      preview: "当前任务没有可展示的补丁预览。",
+      stats: { added: 0, removed: 0, hasPreview: false },
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as { patch?: unknown; input?: unknown };
+    if (typeof parsed.patch === "string" && parsed.patch.trim()) {
+      return {
+        preview: parsed.patch.trim(),
+        stats: createPatchStats(parsed.patch),
+      };
+    }
+    if (typeof parsed.input === "string" && parsed.input.trim()) {
+      return {
+        preview: parsed.input.trim(),
+        stats: createPatchStats(parsed.input),
+      };
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
+}
+
+function createPatchStats(patchPreview: string): PatchStats {
+  if (!patchPreview.trim()) {
+    return { added: 0, removed: 0, hasPreview: false };
+  }
+
+  let added = 0;
+  let removed = 0;
+  for (const line of patchPreview.split(/\r?\n/)) {
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      continue;
+    }
+    if (line.startsWith("+")) {
+      added += 1;
+      continue;
+    }
+    if (line.startsWith("-")) {
+      removed += 1;
+    }
+  }
+
+  return { added, removed, hasPreview: true };
+}
+
+function formatPatchStats(stats: PatchStats) {
+  if (!stats.hasPreview) {
+    return "未提供补丁预览";
+  }
+  return `+${stats.added} / -${stats.removed}`;
+}
+
+function formatTaskStatus(status: string) {
+  switch (status) {
+    case "queued":
+      return "排队中";
+    case "running":
+      return "执行中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "已失败";
+    case "needs_approval":
+      return "待审批";
+    default:
+      return status || "未知状态";
+  }
+}
+
+function formatApprovalStatus(status: string) {
+  switch (status) {
+    case "pending":
+      return "待审批";
+    case "approved":
+      return "已批准";
+    case "rejected":
+      return "已拒绝";
+    case "executed":
+      return "已执行";
+    case "direct":
+      return "直接执行";
+    default:
+      return status || "未知审批状态";
+  }
+}
+
+function formatToolCallStatus(status: string) {
+  switch (status) {
+    case "queued":
+      return "排队中";
+    case "running":
+      return "执行中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "已失败";
+    default:
+      return status || "未知状态";
+  }
+}
+
+function formatMessageRole(role: string) {
+  switch (role) {
+    case "assistant":
+      return "助手";
+    case "user":
+      return "用户";
+    case "system":
+      return "系统";
+    default:
+      return role || "消息";
+  }
+}
+
+function formatEventType(type: string) {
+  return type || "事件";
+}
+
+function FlowBodyText({ text }: { text: string }) {
+  return <p>{text || "暂无内容"}</p>;
+}
+
+function ApprovalActions({
+  taskId,
+  loading,
+  onApprove,
+  onReject,
+}: {
+  taskId: string;
+  loading: boolean;
+  onApprove: (taskId: string) => Promise<void>;
+  onReject: (taskId: string) => Promise<void>;
+}) {
+  return (
+    <div className="flow-item__actions">
+      <button className="thread-action" onClick={() => void onApprove(taskId)} disabled={loading}>
+        批准执行
+      </button>
+      <button className="thread-action thread-action--danger" onClick={() => void onReject(taskId)} disabled={loading}>
+        拒绝
+      </button>
+    </div>
+  );
+}
+
+function ApprovalDetails({ approval }: { approval: ApprovalViewModel }) {
+  return (
+    <div className="approval-details">
+      <div className="approval-details__meta">
+        <span className="mini-chip">{approval.toolKind}</span>
+        <span className="mini-chip">{approval.taskStatusLabel}</span>
+        <span className="mini-chip">{approval.approvalStatusLabel}</span>
+        <span className="mini-chip">{approval.patchStatsLabel}</span>
+      </div>
+      <p>{approval.summary}</p>
+      <div className="approval-details__section">
+        <span className="approval-details__label">目标路径</span>
+        <p>{approval.targetPaths.length > 0 ? approval.targetPaths.join(", ") : "未提供目标路径"}</p>
+      </div>
+      <div className="approval-details__section">
+        <span className="approval-details__label">补丁预览</span>
+        <pre className="approval-details__patch">{approval.patchPreview}</pre>
+      </div>
+    </div>
+  );
 }
 
 function ResultCard({ label, title, body }: { label: string; title: string; body: string }) {

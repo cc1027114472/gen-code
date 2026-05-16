@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -142,6 +144,164 @@ func TestDesktopFallbackPersistsAcrossAppRestart(t *testing.T) {
 	if !strings.Contains(reloaded.RecoverySummary, "Recovered 1 thread") {
 		t.Fatalf("expected restart recovery summary, got %q", reloaded.RecoverySummary)
 	}
+}
+
+func TestDesktopFallbackApprovePatchTaskWritesFile(t *testing.T) {
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
+	t.Setenv("GENCODE_DESKTOP_STATE_PATH", filepath.Join(t.TempDir(), "approval-state.sqlite"))
+
+	app := NewApp()
+	defer app.shutdown(nil)
+
+	createdThread := app.CreateThread("Approval Thread")
+	if createdThread.ActiveThreadID == "" {
+		t.Fatal("expected active thread after create")
+	}
+	workspaceRoot := createdThread.WorkspaceRoot
+	if workspaceRoot == "" {
+		t.Fatal("expected workspace root in runtime status")
+	}
+
+	relativePath := filepath.ToSlash(filepath.Join(".tmp-desktop-tests", "approve-task.txt"))
+	absolutePath := filepath.Join(workspaceRoot, filepath.FromSlash(relativePath))
+	_ = os.Remove(absolutePath)
+	t.Cleanup(func() {
+		_ = os.Remove(absolutePath)
+		_ = os.Remove(filepath.Dir(absolutePath))
+	})
+
+	patch := "*** Begin Patch\n*** Add File: .tmp-desktop-tests/approve-task.txt\n+approved from desktop fallback\n*** End Patch\n"
+	payload := mustPatchTaskPayload(t, "Apply approval patch", relativePath, patch)
+	createdTask := app.CreateTask(createdThread.ActiveThreadID, payload)
+	if len(createdTask.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d with runtime message %q", len(createdTask.Tasks), createdTask.RuntimeMessage)
+	}
+	task := createdTask.Tasks[0]
+	if task.Status != "needs_approval" {
+		t.Fatalf("expected needs_approval status, got %q", task.Status)
+	}
+	if task.ApprovalStatus != "pending" {
+		t.Fatalf("expected pending approval, got %q", task.ApprovalStatus)
+	}
+	if len(createdTask.Approvals) != 1 {
+		t.Fatalf("expected 1 approval row, got %d", len(createdTask.Approvals))
+	}
+	if _, err := os.Stat(absolutePath); !os.IsNotExist(err) {
+		t.Fatalf("expected file to be absent before approval, stat err=%v", err)
+	}
+
+	approved := app.ApproveTask(createdThread.ActiveThreadID, task.ID)
+	if len(approved.Tasks) != 1 {
+		t.Fatalf(
+			"expected 1 task after approval, got %d (ready=%t state=%q message=%q approvals=%d events=%d)",
+			len(approved.Tasks),
+			approved.RuntimeReady,
+			approved.RuntimeState,
+			approved.RuntimeMessage,
+			len(approved.Approvals),
+			len(approved.Events),
+		)
+	}
+	if approved.Tasks[0].Status != "completed" {
+		t.Fatalf("expected completed task after approval, got %q", approved.Tasks[0].Status)
+	}
+	if approved.Tasks[0].ApprovalStatus != "executed" {
+		t.Fatalf("expected executed approval status, got %q", approved.Tasks[0].ApprovalStatus)
+	}
+	if len(approved.Approvals) != 1 {
+		t.Fatalf("expected 1 approval after approval flow, got %d", len(approved.Approvals))
+	}
+	if approved.Approvals[0].Status != "executed" {
+		t.Fatalf("expected approval executed status, got %q", approved.Approvals[0].Status)
+	}
+	content, err := os.ReadFile(absolutePath)
+	if err != nil {
+		t.Fatalf("expected approved patch file to exist: %v", err)
+	}
+	if string(content) != "approved from desktop fallback" {
+		t.Fatalf("unexpected file content after approval: %q", string(content))
+	}
+	if !strings.Contains(approved.Tasks[0].ResultSummary, "applied patch to .tmp-desktop-tests/approve-task.txt") {
+		t.Fatalf("expected patch result summary, got %q", approved.Tasks[0].ResultSummary)
+	}
+	if len(approved.ToolCalls) == 0 || approved.ToolCalls[0].ToolID != "workspace.apply_patch" {
+		t.Fatalf("expected workspace.apply_patch tool call, got %+v", approved.ToolCalls)
+	}
+}
+
+func TestDesktopFallbackRejectPatchTaskLeavesFileUntouched(t *testing.T) {
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
+	t.Setenv("GENCODE_DESKTOP_STATE_PATH", filepath.Join(t.TempDir(), "reject-state.sqlite"))
+
+	app := NewApp()
+	defer app.shutdown(nil)
+
+	createdThread := app.CreateThread("Reject Thread")
+	if createdThread.ActiveThreadID == "" {
+		t.Fatal("expected active thread after create")
+	}
+	workspaceRoot := createdThread.WorkspaceRoot
+	if workspaceRoot == "" {
+		t.Fatal("expected workspace root in runtime status")
+	}
+
+	relativePath := filepath.ToSlash(filepath.Join(".tmp-desktop-tests", "reject-task.txt"))
+	absolutePath := filepath.Join(workspaceRoot, filepath.FromSlash(relativePath))
+	_ = os.Remove(absolutePath)
+	t.Cleanup(func() {
+		_ = os.Remove(absolutePath)
+		_ = os.Remove(filepath.Dir(absolutePath))
+	})
+
+	patch := "*** Begin Patch\n*** Add File: .tmp-desktop-tests/reject-task.txt\n+should not be written\n*** End Patch\n"
+	payload := mustPatchTaskPayload(t, "Reject approval patch", relativePath, patch)
+	createdTask := app.CreateTask(createdThread.ActiveThreadID, payload)
+	if len(createdTask.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d with runtime message %q", len(createdTask.Tasks), createdTask.RuntimeMessage)
+	}
+	task := createdTask.Tasks[0]
+	if task.Status != "needs_approval" {
+		t.Fatalf("expected needs_approval status, got %q", task.Status)
+	}
+
+	rejected := app.RejectTask(createdThread.ActiveThreadID, task.ID)
+	if rejected.Tasks[0].Status != "failed" {
+		t.Fatalf("expected failed task after rejection, got %q", rejected.Tasks[0].Status)
+	}
+	if rejected.Tasks[0].ApprovalStatus != "rejected" {
+		t.Fatalf("expected rejected approval status, got %q", rejected.Tasks[0].ApprovalStatus)
+	}
+	if len(rejected.Approvals) != 1 || rejected.Approvals[0].Status != "rejected" {
+		t.Fatalf("expected rejected approval summary, got %+v", rejected.Approvals)
+	}
+	if _, err := os.Stat(absolutePath); !os.IsNotExist(err) {
+		t.Fatalf("expected file to remain absent after rejection, stat err=%v", err)
+	}
+	if !strings.Contains(rejected.Tasks[0].ResultSummary, "approval rejected") {
+		t.Fatalf("expected rejection summary, got %q", rejected.Tasks[0].ResultSummary)
+	}
+}
+
+func mustPatchTaskPayload(t *testing.T, title string, relativePath string, patch string) string {
+	t.Helper()
+
+	input, err := json.Marshal(map[string]string{
+		"path":  relativePath,
+		"patch": patch,
+	})
+	if err != nil {
+		t.Fatalf("marshal patch input: %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]string{
+		"title": title,
+		"kind":  "workspace.apply_patch",
+		"input": string(input),
+	})
+	if err != nil {
+		t.Fatalf("marshal task payload: %v", err)
+	}
+	return string(payload)
 }
 
 func TestCheckBridgeFallsBackLocally(t *testing.T) {

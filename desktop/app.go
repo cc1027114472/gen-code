@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -24,6 +26,8 @@ const (
 	defaultTaskTitle      = "New Task"
 	defaultThreadName     = "New Thread"
 )
+
+var localIDCounter atomic.Uint64
 
 type App struct {
 	ctx     context.Context
@@ -88,16 +92,16 @@ type ThreadSummary struct {
 }
 
 type TaskSummary struct {
-	ID            string `json:"id"`
-	ThreadID      string `json:"threadId"`
-	Title         string `json:"title"`
-	Kind          string `json:"kind"`
-	Input         string `json:"input"`
-	Status        string `json:"status"`
-	ResultSummary string `json:"resultSummary"`
+	ID             string `json:"id"`
+	ThreadID       string `json:"threadId"`
+	Title          string `json:"title"`
+	Kind           string `json:"kind"`
+	Input          string `json:"input"`
+	Status         string `json:"status"`
+	ResultSummary  string `json:"resultSummary"`
 	ApprovalStatus string `json:"approvalStatus"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt"`
+	CreatedAt      string `json:"createdAt"`
+	UpdatedAt      string `json:"updatedAt"`
 }
 
 type ApprovalSummary struct {
@@ -193,16 +197,16 @@ type apiThread struct {
 }
 
 type apiTask struct {
-	ID            string `json:"id"`
-	ThreadID      string `json:"threadId"`
-	Title         string `json:"title"`
-	Kind          string `json:"kind"`
-	Input         string `json:"input"`
-	Status        string `json:"status"`
-	ResultSummary string `json:"resultSummary"`
+	ID             string `json:"id"`
+	ThreadID       string `json:"threadId"`
+	Title          string `json:"title"`
+	Kind           string `json:"kind"`
+	Input          string `json:"input"`
+	Status         string `json:"status"`
+	ResultSummary  string `json:"resultSummary"`
 	ApprovalStatus string `json:"approvalStatus"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt"`
+	CreatedAt      string `json:"createdAt"`
+	UpdatedAt      string `json:"updatedAt"`
 }
 
 type apiApproval struct {
@@ -320,15 +324,28 @@ type persistedThread struct {
 }
 
 type persistedTask struct {
-	ID            string
-	ThreadID      string
-	Title         string
-	Kind          string
-	Input         string
-	Status        string
-	ResultSummary string
-	CreatedAt     string
-	UpdatedAt     string
+	ID             string
+	ThreadID       string
+	Title          string
+	Kind           string
+	Input          string
+	Status         string
+	ResultSummary  string
+	ApprovalStatus string
+	CreatedAt      string
+	UpdatedAt      string
+}
+
+type persistedApproval struct {
+	ID          string
+	ThreadID    string
+	TaskID      string
+	ToolKind    string
+	Status      string
+	Summary     string
+	TargetPaths []string
+	CreatedAt   string
+	UpdatedAt   string
 }
 
 type TaskCreateInput struct {
@@ -538,14 +555,14 @@ func (a *App) ApproveTask(threadID string, taskID string) RuntimeStatus {
 	if status, err := approveTask(newRuntimeClient(), threadID, taskID); err == nil {
 		return status
 	}
-	return runtimeErrorStatus(fmt.Errorf("desktop-local fallback does not yet support approval execution"))
+	return a.store.ApproveTask(threadID, taskID)
 }
 
 func (a *App) RejectTask(threadID string, taskID string) RuntimeStatus {
 	if status, err := rejectTask(newRuntimeClient(), threadID, taskID); err == nil {
 		return status
 	}
-	return runtimeErrorStatus(fmt.Errorf("desktop-local fallback does not yet support approval rejection"))
+	return a.store.RejectTask(threadID, taskID)
 }
 
 func (a *App) collectRuntimeStatus() (RuntimeStatus, error) {
@@ -1444,16 +1461,16 @@ func mapTasks(items []apiTask) []TaskSummary {
 	result := make([]TaskSummary, 0, len(items))
 	for _, item := range items {
 		result = append(result, TaskSummary{
-			ID:            item.ID,
-			ThreadID:      item.ThreadID,
-			Title:         item.Title,
-			Kind:          item.Kind,
-			Input:         item.Input,
-			Status:        item.Status,
-			ResultSummary: item.ResultSummary,
+			ID:             item.ID,
+			ThreadID:       item.ThreadID,
+			Title:          item.Title,
+			Kind:           item.Kind,
+			Input:          item.Input,
+			Status:         item.Status,
+			ResultSummary:  item.ResultSummary,
 			ApprovalStatus: item.ApprovalStatus,
-			CreatedAt:     item.CreatedAt,
-			UpdatedAt:     item.UpdatedAt,
+			CreatedAt:      item.CreatedAt,
+			UpdatedAt:      item.UpdatedAt,
 		})
 	}
 	return result
@@ -1586,7 +1603,7 @@ func (s *localRuntimeStore) CreateThread(name string) RuntimeStatus {
 	if _, err := tx.Exec(`
 		INSERT INTO threads(id, workspace_id, name, status, active_model, permission_mode, created_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?)
-	`, threadID, workspaceID, threadName, "idle", "", "workspace-write", now); err != nil {
+	`, threadID, workspaceID, threadName, "idle", "", "ask-user", now); err != nil {
 		return runtimeErrorStatus(err)
 	}
 	if err := s.saveWorkspace(tx, base.WorkspaceRoot, threadID); err != nil {
@@ -1595,7 +1612,7 @@ func (s *localRuntimeStore) CreateThread(name string) RuntimeStatus {
 	if _, err := tx.Exec(`
 		INSERT INTO events(id, thread_id, type, message, created_at)
 		VALUES(?, ?, ?, ?, ?)
-	`, fmt.Sprintf("local-event-%d", time.Now().UnixNano()), threadID, "thread.created", fmt.Sprintf("Created thread %s", threadName), now); err != nil {
+	`, nextLocalID("local-event"), threadID, "thread.created", fmt.Sprintf("Created thread %s", threadName), now); err != nil {
 		return runtimeErrorStatus(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -1644,7 +1661,7 @@ func (s *localRuntimeStore) ActivateThread(id string) RuntimeStatus {
 	if _, err := tx.Exec(`
 		INSERT INTO events(id, thread_id, type, message, created_at)
 		VALUES(?, ?, ?, ?, ?)
-	`, fmt.Sprintf("local-event-%d", time.Now().UnixNano()), threadID, "thread.activated", fmt.Sprintf("Activated thread %s", threadID), now); err != nil {
+	`, nextLocalID("local-event"), threadID, "thread.activated", fmt.Sprintf("Activated thread %s", threadID), now); err != nil {
 		return runtimeErrorStatus(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -1686,7 +1703,11 @@ func (s *localRuntimeStore) CreateTask(threadID string, input TaskCreateInput) R
 
 	normalized := normalizeTaskCreateInput(input)
 	now := time.Now().Format(time.RFC3339)
-	taskID := fmt.Sprintf("local-task-%d", time.Now().UnixNano())
+	taskID := nextLocalID("local-task")
+	permissionMode, err := s.readThreadPermissionMode(trimmedThreadID)
+	if err != nil {
+		return runtimeErrorStatus(err)
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -1694,22 +1715,71 @@ func (s *localRuntimeStore) CreateTask(threadID string, input TaskCreateInput) R
 	}
 	defer tx.Rollback()
 
+	statusValue := "queued"
+	resultSummary := ""
+	approvalStatus := ""
+	eventType := "task.created"
+	eventMessage := fmt.Sprintf("Created task %s (%s)", normalized.Title, normalized.Kind)
+	if normalized.Kind == "workspace.apply_patch" {
+		pathValue, patchValue, parseErr := parseLocalPatchInput(normalized.Input)
+		if parseErr != nil {
+			return runtimeErrorStatus(parseErr)
+		}
+		targets, targetErr := extractLocalPatchTargets(patchValue)
+		if targetErr != nil {
+			return runtimeErrorStatus(targetErr)
+		}
+		summary := fmt.Sprintf("%s; %s", localApprovalSummary(normalized.Kind, targets), localTruncatedPatchSummary(patchValue, 120))
+		switch permissionMode {
+		case "read-only":
+			statusValue = "failed"
+			resultSummary = "permission denied: read-only mode does not allow workspace writes"
+			approvalStatus = "rejected"
+			eventType = "task.failed"
+			eventMessage = resultSummary
+		case "", "ask-user":
+			statusValue = "needs_approval"
+			resultSummary = summary
+			approvalStatus = "pending"
+			eventType = "task.approval_required"
+			eventMessage = summary
+		default:
+			statusValue = "queued"
+			approvalStatus = "direct"
+		}
+		_ = pathValue
+	}
+
 	if _, err := tx.Exec(`
-		INSERT INTO tasks(id, thread_id, title, kind, input, status, result_summary, updated_at, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, taskID, trimmedThreadID, normalized.Title, normalized.Kind, normalized.Input, "queued", "", now, now); err != nil {
+		INSERT INTO tasks(id, thread_id, title, kind, input, status, result_summary, approval_status, updated_at, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, taskID, trimmedThreadID, normalized.Title, normalized.Kind, normalized.Input, statusValue, resultSummary, approvalStatus, now, now); err != nil {
 		return runtimeErrorStatus(err)
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO thread_messages(id, thread_id, role, content, created_at)
 		VALUES(?, ?, ?, ?, ?)
-	`, fmt.Sprintf("local-message-%d", time.Now().UnixNano()), trimmedThreadID, "user", normalized.Input, now); err != nil {
+	`, nextLocalID("local-message"), trimmedThreadID, "user", normalized.Input, now); err != nil {
 		return runtimeErrorStatus(err)
+	}
+	if normalized.Kind == "workspace.apply_patch" && approvalStatus == "pending" {
+		pathValue, patchValue, _ := parseLocalPatchInput(normalized.Input)
+		targets, _ := extractLocalPatchTargets(patchValue)
+		targetJSON := encodeTargetPaths(targets)
+		if len(targets) == 0 {
+			targetJSON = encodeTargetPaths([]string{pathValue})
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO thread_approvals(id, thread_id, task_id, tool_kind, status, summary, target_paths, created_at, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, nextLocalID("local-approval"), trimmedThreadID, taskID, normalized.Kind, "pending", resultSummary, targetJSON, now, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO events(id, thread_id, type, message, created_at)
 		VALUES(?, ?, ?, ?, ?)
-	`, fmt.Sprintf("local-event-%d", time.Now().UnixNano()), trimmedThreadID, "task.created", fmt.Sprintf("Created task %s (%s)", normalized.Title, normalized.Kind), now); err != nil {
+	`, nextLocalID("local-event"), trimmedThreadID, eventType, eventMessage, now); err != nil {
 		return runtimeErrorStatus(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -1745,13 +1815,14 @@ func (s *localRuntimeStore) RunTask(taskID string) RuntimeStatus {
 		return status
 	}
 
-	row := s.db.QueryRow(`SELECT thread_id, title, kind, input, status FROM tasks WHERE id = ?`, trimmedTaskID)
+	row := s.db.QueryRow(`SELECT thread_id, title, kind, input, status, approval_status FROM tasks WHERE id = ?`, trimmedTaskID)
 	var threadID string
 	var title string
 	var kind string
 	var input string
 	var currentStatus string
-	if err := row.Scan(&threadID, &title, &kind, &input, &currentStatus); err != nil {
+	var approvalStatus string
+	if err := row.Scan(&threadID, &title, &kind, &input, &currentStatus, &approvalStatus); err != nil {
 		status, snapshotErr := s.snapshotLocked(*base)
 		if snapshotErr != nil {
 			return runtimeErrorStatus(snapshotErr)
@@ -1766,27 +1837,36 @@ func (s *localRuntimeStore) RunTask(taskID string) RuntimeStatus {
 	}
 	defer tx.Rollback()
 
-	resultSummary := buildTaskResultSummary(kind, input, currentStatus)
-	if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "completed", resultSummary, now, trimmedTaskID); err != nil {
-		return runtimeErrorStatus(err)
-	}
-	if _, err := tx.Exec(`
-		INSERT INTO thread_tool_calls(id, thread_id, tool_id, status, summary, created_at)
-		VALUES(?, ?, ?, ?, ?, ?)
-	`, fmt.Sprintf("local-tool-call-%d", time.Now().UnixNano()), threadID, "task.run", "completed", resultSummary, now); err != nil {
-		return runtimeErrorStatus(err)
-	}
-	if _, err := tx.Exec(`
-		INSERT INTO thread_messages(id, thread_id, role, content, created_at)
-		VALUES(?, ?, ?, ?, ?)
-	`, fmt.Sprintf("local-message-%d", time.Now().UnixNano()), threadID, "assistant", resultSummary, now); err != nil {
-		return runtimeErrorStatus(err)
-	}
-	if _, err := tx.Exec(`
-		INSERT INTO events(id, thread_id, type, message, created_at)
-		VALUES(?, ?, ?, ?, ?)
-	`, fmt.Sprintf("local-event-%d", time.Now().UnixNano()), threadID, "task.run.completed", fmt.Sprintf("Ran task %s and completed it", title), now); err != nil {
-		return runtimeErrorStatus(err)
+	if kind == "workspace.apply_patch" {
+		if currentStatus == "needs_approval" {
+			return runtimeErrorStatus(fmt.Errorf("task approval required"))
+		}
+		if err := s.executePatchTask(tx, base.WorkspaceRoot, trimmedTaskID, threadID, title, input, approvalStatus, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+	} else {
+		resultSummary := buildTaskResultSummary(kind, input, currentStatus)
+		if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "completed", resultSummary, now, trimmedTaskID); err != nil {
+			return runtimeErrorStatus(err)
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO thread_tool_calls(id, thread_id, tool_id, status, summary, created_at)
+			VALUES(?, ?, ?, ?, ?, ?)
+		`, nextLocalID("local-tool-call"), threadID, "task.run", "completed", resultSummary, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO thread_messages(id, thread_id, role, content, created_at)
+			VALUES(?, ?, ?, ?, ?)
+		`, nextLocalID("local-message"), threadID, "assistant", resultSummary, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO events(id, thread_id, type, message, created_at)
+			VALUES(?, ?, ?, ?, ?)
+		`, nextLocalID("local-event"), threadID, "task.run.completed", fmt.Sprintf("Ran task %s and completed it", title), now); err != nil {
+			return runtimeErrorStatus(err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return runtimeErrorStatus(err)
@@ -1842,6 +1922,7 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 			input TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL,
 			result_summary TEXT NOT NULL DEFAULT '',
+			approval_status TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
@@ -1881,6 +1962,17 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 			message TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS thread_approvals (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			tool_kind TEXT NOT NULL,
+			status TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			target_paths TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 
 	for _, statement := range schema {
@@ -1893,6 +1985,7 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 		`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'prompt'`,
 		`ALTER TABLE tasks ADD COLUMN input TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE tasks ADD COLUMN result_summary TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE tasks ADD COLUMN approval_status TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, statement := range migrations {
 		if _, err := db.Exec(statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -1951,6 +2044,10 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	if err != nil {
 		return RuntimeStatus{}, err
 	}
+	approvals, err := s.readApprovals(workspaceRecord.ActiveThreadID)
+	if err != nil {
+		return RuntimeStatus{}, err
+	}
 
 	status := base
 	status.WorkspaceID = fallbackText(workspaceRecord.ID, filepath.Base(base.WorkspaceRoot))
@@ -1963,6 +2060,7 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	status.ToolCalls = toToolCallSummaries(toolCalls)
 	status.Artifacts = toArtifactSummaries(artifacts)
 	status.Events = toEventSummaries(events)
+	status.Approvals = toApprovalSummaries(approvals)
 	status.ToolsByGroup = groupTools(localToolCatalog())
 	status.Providers = localProviderCatalog()
 	status.RuntimeState = "fallback"
@@ -1975,7 +2073,7 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	status.StateStore = "sqlite"
 	status.StatePath = defaultStateStorePath(base.WorkspaceRoot)
 	status.UsesProjectLocalStore = true
-	status.RecoverySummary = fmt.Sprintf("Recovered %d thread(s), %d task(s), %d message(s), %d tool call(s), %d artifact(s), %d event(s) from project-local state store.", len(threads), len(tasks), len(messages), len(toolCalls), len(artifacts), len(events))
+	status.RecoverySummary = fmt.Sprintf("Recovered %d thread(s), %d task(s), %d approval(s), %d message(s), %d tool call(s), %d artifact(s), %d event(s) from project-local state store.", len(threads), len(tasks), len(approvals), len(messages), len(toolCalls), len(artifacts), len(events))
 	status.UpdatedAt = time.Now().Format(time.RFC3339)
 	return status, nil
 }
@@ -2050,7 +2148,7 @@ func (s *localRuntimeStore) saveWorkspace(tx *sql.Tx, workspaceRoot string, acti
 
 func (s *localRuntimeStore) readTasks(threadID string) ([]persistedTask, error) {
 	query := `
-		SELECT id, thread_id, title, kind, input, status, result_summary, created_at, updated_at
+		SELECT id, thread_id, title, kind, input, status, result_summary, approval_status, created_at, updated_at
 		FROM tasks
 	`
 	args := []any{}
@@ -2069,9 +2167,40 @@ func (s *localRuntimeStore) readTasks(threadID string) ([]persistedTask, error) 
 	result := []persistedTask{}
 	for rows.Next() {
 		var item persistedTask
-		if err := rows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Kind, &item.Input, &item.Status, &item.ResultSummary, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Kind, &item.Input, &item.Status, &item.ResultSummary, &item.ApprovalStatus, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *localRuntimeStore) readApprovals(threadID string) ([]persistedApproval, error) {
+	query := `
+		SELECT id, thread_id, task_id, tool_kind, status, summary, target_paths, created_at, updated_at
+		FROM thread_approvals
+	`
+	args := []any{}
+	if strings.TrimSpace(threadID) != "" {
+		query += ` WHERE thread_id = ?`
+		args = append(args, threadID)
+	}
+	query += ` ORDER BY datetime(updated_at) DESC, id DESC`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []persistedApproval{}
+	for rows.Next() {
+		var item persistedApproval
+		var targetPaths string
+		if err := rows.Scan(&item.ID, &item.ThreadID, &item.TaskID, &item.ToolKind, &item.Status, &item.Summary, &targetPaths, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.TargetPaths = decodeTargetPaths(targetPaths)
 		result = append(result, item)
 	}
 	return result, rows.Err()
@@ -2212,18 +2341,242 @@ func toTaskSummaries(items []persistedTask) []TaskSummary {
 	result := make([]TaskSummary, 0, len(items))
 	for _, item := range items {
 		result = append(result, TaskSummary{
-			ID:            item.ID,
-			ThreadID:      item.ThreadID,
-			Title:         item.Title,
-			Kind:          item.Kind,
-			Input:         item.Input,
-			Status:        item.Status,
-			ResultSummary: item.ResultSummary,
-			CreatedAt:     item.CreatedAt,
-			UpdatedAt:     item.UpdatedAt,
+			ID:             item.ID,
+			ThreadID:       item.ThreadID,
+			Title:          item.Title,
+			Kind:           item.Kind,
+			Input:          item.Input,
+			Status:         item.Status,
+			ResultSummary:  item.ResultSummary,
+			ApprovalStatus: item.ApprovalStatus,
+			CreatedAt:      item.CreatedAt,
+			UpdatedAt:      item.UpdatedAt,
 		})
 	}
 	return result
+}
+
+func toApprovalSummaries(items []persistedApproval) []ApprovalSummary {
+	result := make([]ApprovalSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, ApprovalSummary{
+			ID:          item.ID,
+			ThreadID:    item.ThreadID,
+			TaskID:      item.TaskID,
+			ToolKind:    item.ToolKind,
+			Status:      item.Status,
+			Summary:     item.Summary,
+			TargetPaths: append([]string(nil), item.TargetPaths...),
+			CreatedAt:   item.CreatedAt,
+			UpdatedAt:   item.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func (s *localRuntimeStore) ApproveTask(threadID string, taskID string) RuntimeStatus {
+	return s.handleApprovalAction(threadID, taskID, true)
+}
+
+func (s *localRuntimeStore) RejectTask(threadID string, taskID string) RuntimeStatus {
+	return s.handleApprovalAction(threadID, taskID, false)
+}
+
+func (s *localRuntimeStore) handleApprovalAction(threadID string, taskID string, approved bool) RuntimeStatus {
+	base, err := buildBaseStatusFromStore()
+	if err != nil {
+		return runtimeErrorStatus(err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.ensureDB(base.WorkspaceRoot); err != nil {
+		return runtimeErrorStatus(err)
+	}
+
+	trimmedThreadID := strings.TrimSpace(threadID)
+	trimmedTaskID := strings.TrimSpace(taskID)
+	if trimmedThreadID == "" || trimmedTaskID == "" {
+		return runtimeErrorStatus(fmt.Errorf("thread id and task id are required"))
+	}
+
+	task, err := s.readTaskByID(trimmedTaskID)
+	if err != nil {
+		return runtimeErrorStatus(err)
+	}
+	if task.ThreadID != trimmedThreadID {
+		return runtimeErrorStatus(fmt.Errorf("task does not belong to thread"))
+	}
+	approval, err := s.readApprovalByTask(trimmedThreadID, trimmedTaskID)
+	if err != nil {
+		return runtimeErrorStatus(err)
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return runtimeErrorStatus(err)
+	}
+	defer tx.Rollback()
+
+	if approved {
+		if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, approval_status = ?, updated_at = ? WHERE id = ?`, "queued", approval.Summary, "approved", now, trimmedTaskID); err != nil {
+			return runtimeErrorStatus(err)
+		}
+		if _, err := tx.Exec(`UPDATE thread_approvals SET status = ?, summary = ?, updated_at = ? WHERE task_id = ?`, "approved", approval.Summary, now, trimmedTaskID); err != nil {
+			return runtimeErrorStatus(err)
+		}
+		if err := insertEventTx(tx, trimmedThreadID, "task.approved", approval.Summary, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+		if err := insertEventTx(tx, trimmedThreadID, "toolcall.approved", approval.Summary, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+		if task.Kind == "workspace.apply_patch" {
+			if err := s.executePatchTask(tx, base.WorkspaceRoot, trimmedTaskID, trimmedThreadID, task.Title, task.Input, "approved", now); err != nil {
+				return runtimeErrorStatus(err)
+			}
+			if _, err := tx.Exec(`UPDATE thread_approvals SET status = ?, summary = ?, updated_at = ? WHERE task_id = ?`, "executed", readTaskResultSummaryTx(tx, trimmedTaskID), now, trimmedTaskID); err != nil {
+				return runtimeErrorStatus(err)
+			}
+			if _, err := tx.Exec(`UPDATE tasks SET approval_status = ?, updated_at = ? WHERE id = ?`, "executed", now, trimmedTaskID); err != nil {
+				return runtimeErrorStatus(err)
+			}
+		}
+	} else {
+		rejectedSummary := approval.Summary
+		if rejectedSummary == "" {
+			rejectedSummary = "approval rejected"
+		}
+		rejectedSummary = "approval rejected: " + rejectedSummary
+		if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, approval_status = ?, updated_at = ? WHERE id = ?`, "failed", rejectedSummary, "rejected", now, trimmedTaskID); err != nil {
+			return runtimeErrorStatus(err)
+		}
+		if _, err := tx.Exec(`UPDATE thread_approvals SET status = ?, summary = ?, updated_at = ? WHERE task_id = ?`, "rejected", rejectedSummary, now, trimmedTaskID); err != nil {
+			return runtimeErrorStatus(err)
+		}
+		if err := insertEventTx(tx, trimmedThreadID, "task.rejected", rejectedSummary, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+		if err := insertEventTx(tx, trimmedThreadID, "toolcall.rejected", rejectedSummary, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return runtimeErrorStatus(err)
+	}
+
+	status, err := s.snapshotLocked(*base)
+	if err != nil {
+		return runtimeErrorStatus(err)
+	}
+	return status
+}
+
+func (s *localRuntimeStore) readThreadPermissionMode(threadID string) (string, error) {
+	row := s.db.QueryRow(`SELECT permission_mode FROM threads WHERE id = ?`, threadID)
+	var mode string
+	if err := row.Scan(&mode); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(mode), nil
+}
+
+func (s *localRuntimeStore) readTaskByID(taskID string) (persistedTask, error) {
+	row := s.db.QueryRow(`
+		SELECT id, thread_id, title, kind, input, status, result_summary, approval_status, created_at, updated_at
+		FROM tasks
+		WHERE id = ?
+	`, taskID)
+	var item persistedTask
+	if err := row.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Kind, &item.Input, &item.Status, &item.ResultSummary, &item.ApprovalStatus, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		return persistedTask{}, err
+	}
+	return item, nil
+}
+
+func (s *localRuntimeStore) readApprovalByTask(threadID string, taskID string) (persistedApproval, error) {
+	row := s.db.QueryRow(`
+		SELECT id, thread_id, task_id, tool_kind, status, summary, target_paths, created_at, updated_at
+		FROM thread_approvals
+		WHERE thread_id = ? AND task_id = ?
+		ORDER BY datetime(updated_at) DESC
+		LIMIT 1
+	`, threadID, taskID)
+	var item persistedApproval
+	var targetPaths string
+	if err := row.Scan(&item.ID, &item.ThreadID, &item.TaskID, &item.ToolKind, &item.Status, &item.Summary, &targetPaths, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		return persistedApproval{}, err
+	}
+	item.TargetPaths = decodeTargetPaths(targetPaths)
+	return item, nil
+}
+
+func insertEventTx(tx *sql.Tx, threadID string, eventType string, message string, createdAt string) error {
+	_, err := tx.Exec(`
+		INSERT INTO events(id, thread_id, type, message, created_at)
+		VALUES(?, ?, ?, ?, ?)
+	`, nextLocalID("local-event"), threadID, eventType, message, createdAt)
+	return err
+}
+
+func readTaskResultSummaryTx(tx *sql.Tx, taskID string) string {
+	row := tx.QueryRow(`SELECT result_summary FROM tasks WHERE id = ?`, taskID)
+	var summary string
+	if err := row.Scan(&summary); err != nil {
+		return ""
+	}
+	return summary
+}
+
+func (s *localRuntimeStore) executePatchTask(tx *sql.Tx, workspaceRoot string, taskID string, threadID string, title string, rawInput string, approvalStatus string, now string) error {
+	pathValue, patchValue, err := parseLocalPatchInput(rawInput)
+	if err != nil {
+		return err
+	}
+	resolvedPath, err := resolveLocalWorkspacePath(workspaceRoot, pathValue)
+	if err != nil {
+		return err
+	}
+	if approvalStatus != "approved" && approvalStatus != "executed" && approvalStatus != "direct" {
+		return fmt.Errorf("task approval required")
+	}
+
+	resultSummary, err := applyLocalWorkspacePatch(resolvedPath, patchValue, workspaceRoot)
+	if err != nil {
+		if _, updateErr := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "failed", err.Error(), now, taskID); updateErr != nil {
+			return updateErr
+		}
+		if _, toolErr := tx.Exec(`
+			INSERT INTO thread_tool_calls(id, thread_id, tool_id, status, summary, created_at)
+			VALUES(?, ?, ?, ?, ?, ?)
+		`, nextLocalID("local-tool-call"), threadID, "workspace.apply_patch", "failed", err.Error(), now); toolErr != nil {
+			return toolErr
+		}
+		if eventErr := insertEventTx(tx, threadID, "toolcall.failed", err.Error(), now); eventErr != nil {
+			return eventErr
+		}
+		return insertEventTx(tx, threadID, "task.failed", err.Error(), now)
+	}
+
+	if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "completed", resultSummary, now, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO thread_tool_calls(id, thread_id, tool_id, status, summary, created_at)
+		VALUES(?, ?, ?, ?, ?, ?)
+	`, nextLocalID("local-tool-call"), threadID, "workspace.apply_patch", "completed", resultSummary, now); err != nil {
+		return err
+	}
+	if err := insertEventTx(tx, threadID, "toolcall.completed", resultSummary, now); err != nil {
+		return err
+	}
+	if err := insertEventTx(tx, threadID, "task.completed", fmt.Sprintf("Ran task %s and completed it", title), now); err != nil {
+		return err
+	}
+	return nil
 }
 
 func toMessageSummaries(items []persistedMessage) []MessageSummary {
@@ -2339,6 +2692,300 @@ func buildTaskResultSummary(kind string, input string, previousStatus string) st
 	return fmt.Sprintf("Task completed for %s with %s.", kindLabel, inputLabel)
 }
 
+func parseLocalPatchInput(raw string) (string, string, error) {
+	var input struct {
+		Path  string `json:"path"`
+		Patch string `json:"patch"`
+	}
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(input.Path) == "" {
+		return "", "", fmt.Errorf("path is required")
+	}
+	if strings.TrimSpace(input.Patch) == "" {
+		return "", "", fmt.Errorf("patch is required")
+	}
+	return strings.TrimSpace(input.Path), strings.TrimSpace(input.Patch), nil
+}
+
+func extractLocalPatchTargets(raw string) ([]string, error) {
+	lines := splitLocalPatchLines(strings.TrimSpace(raw))
+	targets := make([]string, 0)
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "*** Update File: "):
+			targets = append(targets, strings.TrimSpace(strings.TrimPrefix(line, "*** Update File: ")))
+		case strings.HasPrefix(line, "*** Add File: "):
+			targets = append(targets, strings.TrimSpace(strings.TrimPrefix(line, "*** Add File: ")))
+		case strings.HasPrefix(line, "*** Delete File: "):
+			return nil, fmt.Errorf("delete patch is not allowed")
+		}
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("patch does not declare target files")
+	}
+	seen := map[string]struct{}{}
+	unique := make([]string, 0, len(targets))
+	for _, target := range targets {
+		key := strings.ToLower(filepath.ToSlash(filepath.Clean(target)))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, target)
+	}
+	return unique, nil
+}
+
+func localApprovalSummary(kind string, targets []string) string {
+	label := strings.TrimSpace(kind)
+	if label == "" {
+		label = "write"
+	}
+	if len(targets) == 0 {
+		return fmt.Sprintf("approval required for %s", label)
+	}
+	return fmt.Sprintf("approval required for %s on %s", label, strings.Join(targets, ", "))
+}
+
+func localTruncatedPatchSummary(raw string, max int) string {
+	lines := splitLocalPatchLines(strings.TrimSpace(raw))
+	delta := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") {
+			delta++
+		}
+	}
+	summary := fmt.Sprintf("%d patch line(s)", delta)
+	return compactText(summary, max)
+}
+
+func splitLocalPatchLines(value string) []string {
+	scanner := bufio.NewScanner(strings.NewReader(value))
+	lines := make([]string, 0)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	return lines
+}
+
+func splitLocalTextLines(value string) []string {
+	normalized := strings.ReplaceAll(value, "\r\n", "\n")
+	normalized = strings.TrimSuffix(normalized, "\n")
+	if normalized == "" {
+		return []string{}
+	}
+	return strings.Split(normalized, "\n")
+}
+
+func resolveLocalWorkspacePath(workspaceRoot string, provided string) (string, error) {
+	root, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return "", err
+	}
+	target := strings.TrimSpace(provided)
+	if target == "" {
+		target = "."
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(root, target)
+	}
+	resolved, err := filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil {
+		return "", err
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path outside workspace")
+	}
+	return resolved, nil
+}
+
+func localWorkspaceRelative(workspaceRoot string, target string) string {
+	relative, err := filepath.Rel(workspaceRoot, target)
+	if err != nil || relative == "." {
+		return "."
+	}
+	return filepath.ToSlash(relative)
+}
+
+func applyLocalWorkspacePatch(targetPath string, patch string, workspaceRoot string) (string, error) {
+	trimmed := strings.TrimSpace(patch)
+	if trimmed == "" {
+		return "", fmt.Errorf("patch is required")
+	}
+	lines := splitLocalPatchLines(trimmed)
+	if len(lines) < 2 || lines[0] != "*** Begin Patch" {
+		return "", fmt.Errorf("unsupported patch format")
+	}
+	for _, line := range lines {
+		if strings.HasPrefix(line, "*** Delete File: ") {
+			return "", fmt.Errorf("delete patch is not allowed")
+		}
+	}
+
+	var op string
+	var patchPath string
+	start := -1
+	for index, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "*** Update File: "):
+			op = "update"
+			patchPath = strings.TrimSpace(strings.TrimPrefix(line, "*** Update File: "))
+			start = index + 1
+		case strings.HasPrefix(line, "*** Add File: "):
+			op = "add"
+			patchPath = strings.TrimSpace(strings.TrimPrefix(line, "*** Add File: "))
+			start = index + 1
+		}
+		if start != -1 {
+			break
+		}
+	}
+	if op == "" || patchPath == "" {
+		return "", fmt.Errorf("patch must contain a file operation")
+	}
+	if !sameLocalNormalizedPath(filepath.Clean(filepath.FromSlash(patchPath)), filepath.Clean(targetPath)) &&
+		filepath.Base(filepath.Clean(filepath.FromSlash(patchPath))) != filepath.Base(targetPath) {
+		return "", fmt.Errorf("patch path does not match target path")
+	}
+
+	switch op {
+	case "add":
+		return applyLocalAddFilePatch(targetPath, lines[start:], workspaceRoot)
+	case "update":
+		return applyLocalUpdateFilePatch(targetPath, lines[start:], workspaceRoot)
+	default:
+		return "", fmt.Errorf("unsupported patch operation")
+	}
+}
+
+func sameLocalNormalizedPath(left string, right string) bool {
+	leftAbs, leftErr := filepath.Abs(left)
+	rightAbs, rightErr := filepath.Abs(right)
+	if leftErr == nil && rightErr == nil {
+		return strings.EqualFold(filepath.Clean(leftAbs), filepath.Clean(rightAbs))
+	}
+	return strings.EqualFold(filepath.ToSlash(filepath.Clean(left)), filepath.ToSlash(filepath.Clean(right)))
+}
+
+func applyLocalAddFilePatch(targetPath string, lines []string, workspaceRoot string) (string, error) {
+	if _, err := os.Stat(targetPath); err == nil {
+		return "", fmt.Errorf("target file already exists")
+	}
+	content := make([]string, 0)
+	for _, line := range lines {
+		if line == "*** End Patch" {
+			break
+		}
+		if !strings.HasPrefix(line, "+") {
+			if strings.TrimSpace(line) == "" {
+				content = append(content, "")
+				continue
+			}
+			return "", fmt.Errorf("add patch must contain only added lines")
+		}
+		content = append(content, strings.TrimPrefix(line, "+"))
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(targetPath, []byte(strings.Join(content, "\n")), 0o644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("applied patch to %s: created %d line(s)", localWorkspaceRelative(workspaceRoot, targetPath), len(content)), nil
+}
+
+func applyLocalUpdateFilePatch(targetPath string, lines []string, workspaceRoot string) (string, error) {
+	originalBytes, err := os.ReadFile(targetPath)
+	if err != nil {
+		return "", err
+	}
+	original := splitLocalTextLines(string(originalBytes))
+	result := make([]string, 0, len(original))
+	sourceIndex := 0
+	appliedLines := 0
+
+	for _, line := range lines {
+		if line == "*** End Patch" {
+			break
+		}
+		if strings.HasPrefix(line, "*** Move to: ") {
+			return "", fmt.Errorf("move patch is not allowed")
+		}
+		if strings.HasPrefix(line, "@@") || line == "*** End of File" {
+			continue
+		}
+		if line == "" {
+			return "", fmt.Errorf("unexpected blank patch line")
+		}
+		marker := line[:1]
+		text := line[1:]
+		switch marker {
+		case " ":
+			found := findLocalNextLine(original, sourceIndex, text)
+			if found < 0 {
+				return "", fmt.Errorf("patch context not found: %s", text)
+			}
+			result = append(result, original[sourceIndex:found+1]...)
+			sourceIndex = found + 1
+		case "-":
+			found := findLocalNextLine(original, sourceIndex, text)
+			if found < 0 {
+				return "", fmt.Errorf("patch removal not found: %s", text)
+			}
+			result = append(result, original[sourceIndex:found]...)
+			sourceIndex = found + 1
+			appliedLines++
+		case "+":
+			result = append(result, text)
+			appliedLines++
+		default:
+			return "", fmt.Errorf("unsupported patch line: %s", line)
+		}
+	}
+	result = append(result, original[sourceIndex:]...)
+	if err := os.WriteFile(targetPath, []byte(strings.Join(result, "\n")), 0o644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("applied patch to %s: updated %d line(s)", localWorkspaceRelative(workspaceRoot, targetPath), appliedLines), nil
+}
+
+func findLocalNextLine(lines []string, start int, want string) int {
+	for index := start; index < len(lines); index++ {
+		if lines[index] == want {
+			return index
+		}
+	}
+	return -1
+}
+
+func encodeTargetPaths(paths []string) string {
+	if len(paths) == 0 {
+		return "[]"
+	}
+	encoded, err := json.Marshal(paths)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func decodeTargetPaths(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var paths []string
+	if err := json.Unmarshal([]byte(raw), &paths); err != nil {
+		return nil
+	}
+	return paths
+}
+
 func compactText(value string, max int) string {
 	normalized := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 	if normalized == "" || max <= 0 {
@@ -2349,6 +2996,11 @@ func compactText(value string, max int) string {
 		return normalized
 	}
 	return string(runes[:max]) + "..."
+}
+
+func nextLocalID(prefix string) string {
+	serial := localIDCounter.Add(1)
+	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixNano(), serial)
 }
 
 func defaultStateStorePath(workspaceRoot string) string {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,14 @@ type apiEnvelope[T any] struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    T      `json:"data"`
+}
+
+type taskCreateInputOptions struct {
+	Input       string
+	InputFile   string
+	PatchFile   string
+	PatchPath   string
+	InputSource string
 }
 
 func main() {
@@ -179,7 +188,8 @@ func run(ctx context.Context, args []string) error {
 			}
 			return printTasks(ctx, runtimeFacade, threadID)
 		case "create":
-			var threadID, title, kind, input string
+			var threadID, title, kind string
+			options := taskCreateInputOptions{}
 			for _, arg := range args[2:] {
 				switch {
 				case strings.HasPrefix(arg, "--thread="):
@@ -189,13 +199,19 @@ func run(ctx context.Context, args []string) error {
 				case strings.HasPrefix(arg, "--kind="):
 					kind = strings.TrimSpace(strings.TrimPrefix(arg, "--kind="))
 				case strings.HasPrefix(arg, "--input="):
-					input = strings.TrimSpace(strings.TrimPrefix(arg, "--input="))
+					options.Input = strings.TrimSpace(strings.TrimPrefix(arg, "--input="))
+				case strings.HasPrefix(arg, "--input-file="):
+					options.InputFile = strings.TrimSpace(strings.TrimPrefix(arg, "--input-file="))
+				case strings.HasPrefix(arg, "--patch-file="):
+					options.PatchFile = strings.TrimSpace(strings.TrimPrefix(arg, "--patch-file="))
+				case strings.HasPrefix(arg, "--path="):
+					options.PatchPath = strings.TrimSpace(strings.TrimPrefix(arg, "--path="))
 				}
 			}
 			if threadID == "" || kind == "" {
-				return errors.New("usage: gen-code tasks create --thread=<threadId> --kind=<kind> [--title=...] [--input=...]")
+				return errors.New("usage: gen-code tasks create --thread=<threadId> --kind=<kind> [--title=...] [--input=...] [--input-file=<path>] [--patch-file=<path> --path=<workspace-relative-path>]")
 			}
-			return createTask(ctx, runtimeFacade, threadID, title, kind, input)
+			return createTask(ctx, runtimeFacade, threadID, title, kind, options)
 		case "run":
 			var threadID, taskID string
 			for _, arg := range args[2:] {
@@ -350,7 +366,7 @@ func printUsage() {
 	fmt.Println("  threads artifacts --id=<threadId>")
 	fmt.Println("  threads approvals --id=<threadId>")
 	fmt.Println("  tasks list --thread=<threadId>")
-	fmt.Println("  tasks create --thread=<threadId> --kind=<kind> [--title=...] [--input=...]")
+	fmt.Println("  tasks create --thread=<threadId> --kind=<kind> [--title=...] [--input=...] [--input-file=<path>] [--patch-file=<path> --path=<workspace-relative-path>]")
 	fmt.Println("  tasks run --thread=<threadId> --task=<taskId>")
 	fmt.Println("  tasks approve --thread=<threadId> --task=<taskId>")
 	fmt.Println("  tasks reject --thread=<threadId> --task=<taskId>")
@@ -837,8 +853,11 @@ func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) err
 	return nil
 }
 
-func createTask(ctx context.Context, facade *runtimeFacade, threadID string, title string, kind string, input string) error {
-	normalizedInput := normalizeTaskInput(input)
+func createTask(ctx context.Context, facade *runtimeFacade, threadID string, title string, kind string, options taskCreateInputOptions) error {
+	normalizedInput, inputSource, err := resolveTaskCreateInput(kind, options)
+	if err != nil {
+		return err
+	}
 	item, err := facade.createTask(ctx, threadID, runtimecontract.CreateTaskRequest{
 		Title: title,
 		Kind:  kind,
@@ -857,8 +876,14 @@ func createTask(ctx context.Context, facade *runtimeFacade, threadID string, tit
 	fmt.Printf("  kind: %s\n", item.Kind)
 	fmt.Printf("  status: %s\n", item.Status)
 	fmt.Printf("  approval: %s\n", fallbackText(item.ApprovalStatus, "none"))
+	fmt.Printf("  input source: %s\n", inputSource)
 	fmt.Printf("  input: %s\n", fallbackText(item.InputSummary, "none"))
-	fmt.Println("  input hint: PowerShell JSON can use --input='{\"path\":\"go.mod\"}' or --input='{\"query\":\"workspace\",\"path\":\"internal\"}'")
+	fmt.Println("  recommended input: use --input-file=<path> for JSON payloads")
+	if kind == "workspace.apply_patch" {
+		fmt.Println("  recommended patch input: use --patch-file=<path> --path=<workspace-relative-path>")
+	} else {
+		fmt.Println("  inline fallback: PowerShell JSON can use --input='{\"path\":\"go.mod\"}' or --input='{\"query\":\"workspace\",\"path\":\"internal\"}'")
+	}
 	return nil
 }
 
@@ -1133,6 +1158,55 @@ func runtimeSourceDetail(source string) string {
 	default:
 		return "unknown runtime source"
 	}
+}
+
+func resolveTaskCreateInput(kind string, options taskCreateInputOptions) (string, string, error) {
+	hasInline := strings.TrimSpace(options.Input) != ""
+	hasInputFile := strings.TrimSpace(options.InputFile) != ""
+	hasPatchFile := strings.TrimSpace(options.PatchFile) != ""
+	hasPatchPath := strings.TrimSpace(options.PatchPath) != ""
+
+	if hasPatchFile || hasPatchPath {
+		if kind != "workspace.apply_patch" {
+			return "", "", errors.New("--patch-file and --path are only supported for --kind=workspace.apply_patch")
+		}
+		if !hasPatchFile || !hasPatchPath {
+			return "", "", errors.New("usage: gen-code tasks create --thread=<threadId> --kind=workspace.apply_patch --patch-file=<path> --path=<workspace-relative-path>")
+		}
+		if hasInline || hasInputFile {
+			return "", "", errors.New("use either --input/--input-file or --patch-file/--path, not both")
+		}
+		patchBytes, err := os.ReadFile(options.PatchFile)
+		if err != nil {
+			return "", "", fmt.Errorf("read patch file: %w", err)
+		}
+		payload, err := json.Marshal(map[string]string{
+			"path":  options.PatchPath,
+			"patch": string(patchBytes),
+		})
+		if err != nil {
+			return "", "", fmt.Errorf("encode patch input: %w", err)
+		}
+		return string(payload), fmt.Sprintf("patch file %s -> %s", filepath.Base(options.PatchFile), options.PatchPath), nil
+	}
+
+	if hasInline && hasInputFile {
+		return "", "", errors.New("use either --input or --input-file, not both")
+	}
+
+	if hasInputFile {
+		content, err := os.ReadFile(options.InputFile)
+		if err != nil {
+			return "", "", fmt.Errorf("read input file: %w", err)
+		}
+		return normalizeTaskInput(string(content)), fmt.Sprintf("input file %s", filepath.Base(options.InputFile)), nil
+	}
+
+	if hasInline {
+		return normalizeTaskInput(options.Input), "inline --input", nil
+	}
+
+	return normalizeTaskInput(options.Input), "empty", nil
 }
 
 func normalizeTaskInput(raw string) string {

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -153,7 +155,67 @@ func TestCreateTaskPrintsPowerShellInputHint(t *testing.T) {
 
 	require.Contains(t, output, "source detail: project-local SQLite fallback because app-server is unavailable")
 	require.Contains(t, output, "input: {\"path\":\"go.mod\"}")
-	require.Contains(t, output, "PowerShell JSON can use --input='{\"path\":\"go.mod\"}'")
+	require.Contains(t, output, "input source: inline --input")
+	require.Contains(t, output, "recommended input: use --input-file=<path> for JSON payloads")
+	require.Contains(t, output, "inline fallback: PowerShell JSON can use --input='{\"path\":\"go.mod\"}'")
+}
+
+func TestCreateTaskReadsInputFromInputFile(t *testing.T) {
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
+
+	dir := t.TempDir()
+	inputPath := filepath.Join(dir, "task-input.json")
+	require.NoError(t, os.WriteFile(inputPath, []byte("{\"path\":\"README.md\"}\n"), 0o600))
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"threads", "create", "--name=File Input Thread"})
+		require.NoError(t, err)
+		err = run(context.Background(), []string{"tasks", "create", "--thread=thread-1", "--title=Read README", "--kind=workspace.read_file", "--input-file=" + inputPath})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "input source: input file task-input.json")
+	require.Contains(t, output, "input: {\"path\":\"README.md\"}")
+}
+
+func TestCreatePatchTaskBuildsJSONFromPatchFileAndPath(t *testing.T) {
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
+
+	dir := t.TempDir()
+	patchPath := filepath.Join(dir, "sample.patch")
+	patch := "*** Begin Patch\n*** Add File: docs/sample.txt\n+hello\n*** End Patch\n"
+	require.NoError(t, os.WriteFile(patchPath, []byte(patch), 0o600))
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"threads", "create", "--name=Patch Thread", "--permission=ask-user"})
+		require.NoError(t, err)
+		err = run(context.Background(), []string{
+			"tasks", "create",
+			"--thread=thread-1",
+			"--title=Apply patch",
+			"--kind=workspace.apply_patch",
+			"--patch-file=" + patchPath,
+			"--path=docs/sample.txt",
+		})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "kind: workspace.apply_patch")
+	require.Contains(t, output, "approval: pending")
+	require.Contains(t, output, "input source: patch file sample.patch -> docs/sample.txt")
+	require.Contains(t, output, "docs/sample.txt")
+	require.Contains(t, output, "recommended patch input: use --patch-file=<path> --path=<workspace-relative-path>")
+}
+
+func TestCreateTaskRejectsConflictingInputFlags(t *testing.T) {
+	err := run(context.Background(), []string{
+		"tasks", "create",
+		"--thread=thread-1",
+		"--kind=workspace.read_file",
+		"--input={\"path\":\"go.mod\"}",
+		"--input-file=payload.json",
+	})
+	require.EqualError(t, err, "use either --input or --input-file, not both")
 }
 
 func TestModelRunExecutesThroughRemoteTaskAPI(t *testing.T) {
@@ -217,6 +279,14 @@ func TestNormalizeTaskInputLeavesValidJSONUntouched(t *testing.T) {
 	assertJSONEqual(t, `{"path":"go.mod"}`, normalizeTaskInput(`{"path":"go.mod"}`))
 }
 
+func TestResolveTaskCreateInputRejectsPatchFlagsForNonPatchKind(t *testing.T) {
+	_, _, err := resolveTaskCreateInput("workspace.read_file", taskCreateInputOptions{
+		PatchFile: "demo.patch",
+		PatchPath: "README.md",
+	})
+	require.EqualError(t, err, "--patch-file and --path are only supported for --kind=workspace.apply_patch")
+}
+
 func TestFallbackText(t *testing.T) {
 	require.Equal(t, "fallback", fallbackText("", "fallback"))
 	require.Equal(t, "fallback", fallbackText("   ", "fallback"))
@@ -241,13 +311,18 @@ func captureOutput(t *testing.T, fn func()) string {
 		os.Stdout = originalStdout
 	}()
 
+	var buffer bytes.Buffer
+	var copyWG sync.WaitGroup
+	copyWG.Add(1)
+	go func() {
+		defer copyWG.Done()
+		_, _ = io.Copy(&buffer, reader)
+	}()
+
 	fn()
 
 	require.NoError(t, writer.Close())
-
-	var buffer bytes.Buffer
-	_, err = io.Copy(&buffer, reader)
-	require.NoError(t, err)
+	copyWG.Wait()
 	require.NoError(t, reader.Close())
 
 	return buffer.String()

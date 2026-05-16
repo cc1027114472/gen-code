@@ -423,6 +423,7 @@ select {
 .result-stack,
 .summary-list,
 .flow-list,
+.approval-panel,
 .info-grid,
 .context-grid {
   display: grid;
@@ -629,6 +630,48 @@ select {
 .flow-item__actions {
   margin-top: 14px;
   justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.approval-details {
+  display: grid;
+  gap: 12px;
+  margin-left: 18px;
+  margin-top: 10px;
+}
+
+.approval-details__meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.approval-details__section {
+  display: grid;
+  gap: 6px;
+}
+
+.approval-details__label {
+  color: var(--text-faint);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.approval-details__patch {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(39, 52, 76, 0.08);
+  background: rgba(248, 249, 250, 0.95);
+  color: var(--text-main);
+  line-height: 1.7;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
 }
 
 .context-grid {
