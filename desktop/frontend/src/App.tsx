@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ActivateThread,
+  ApproveTask,
   AdvanceTask,
   BrowserActivateTab,
   BrowserBack,
@@ -15,6 +16,7 @@ import {
   GetAppInfo,
   GetBrowserState,
   GetRuntimeStatus,
+  RejectTask,
   type BridgeCheckResult,
   type BrowserWorkspaceState,
   type RuntimeStatus,
@@ -165,6 +167,7 @@ export default function App() {
   );
 
   const tasks = runtimeStatus?.tasks ?? [];
+  const approvals = runtimeStatus?.approvals ?? [];
   const messages = runtimeStatus?.messages ?? [];
   const toolCalls = runtimeStatus?.toolCalls ?? [];
   const artifacts = runtimeStatus?.artifacts ?? [];
@@ -183,6 +186,7 @@ export default function App() {
   const latestMessage = useMemo(() => newestBy(messages, (item) => item.createdAt), [messages]);
   const latestArtifact = useMemo(() => newestBy(artifacts, (item) => item.createdAt), [artifacts]);
   const latestEvent = useMemo(() => newestBy(events, (item) => item.createdAt), [events]);
+  const pendingApprovals = useMemo(() => approvals.filter((item) => item.status === "pending"), [approvals]);
 
   const flowItems = useMemo(() => {
     const items: FlowItem[] = [];
@@ -196,11 +200,23 @@ export default function App() {
         body: task.resultSummary || task.input || "等待任务输入",
         meta: formatTime(task.updatedAt || task.createdAt),
         timestamp: toTimestamp(task.updatedAt || task.createdAt),
-        actions: (
-          <button className="thread-action" onClick={() => void handleRunTask(task.id)} disabled={loading}>
-            Run Task
-          </button>
-        ),
+        actions:
+          task.status === "needs_approval"
+            ? (
+                <div className="flow-item__actions">
+                  <button className="thread-action" onClick={() => void handleApproveTask(task.id)} disabled={loading}>
+                    Approve
+                  </button>
+                  <button className="thread-action thread-action--danger" onClick={() => void handleRejectTask(task.id)} disabled={loading}>
+                    Reject
+                  </button>
+                </div>
+              )
+            : (
+                <button className="thread-action" onClick={() => void handleRunTask(task.id)} disabled={loading}>
+                  Run Task
+                </button>
+              ),
       });
     }
 
@@ -380,6 +396,40 @@ export default function App() {
       setLastCheckedAt(formatTime(next.updatedAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "执行 task 失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApproveTask = async (taskID: string) => {
+    if (!runtimeStatus?.activeThreadId) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      const next = (await ApproveTask(runtimeStatus.activeThreadId, taskID)) as RuntimeStatus;
+      setRuntimeStatus(next);
+      setStatusMessage("写任务已批准，正在执行补丁");
+      setLastCheckedAt(formatTime(next.updatedAt));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批准任务失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRejectTask = async (taskID: string) => {
+    if (!runtimeStatus?.activeThreadId) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      const next = (await RejectTask(runtimeStatus.activeThreadId, taskID)) as RuntimeStatus;
+      setRuntimeStatus(next);
+      setStatusMessage("写任务已拒绝，未修改项目文件");
+      setLastCheckedAt(formatTime(next.updatedAt));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "拒绝任务失败");
     } finally {
       setLoading(false);
     }
@@ -599,6 +649,30 @@ export default function App() {
                   <span className="mini-chip">{contextSummary}</span>
                 </div>
 
+                {pendingApprovals.length > 0 ? (
+                  <div className="approval-panel" data-testid="approval-panel">
+                    {pendingApprovals.map((approval) => (
+                      <article className="flow-item flow-item--warning" key={approval.id}>
+                        <div className="flow-item__header">
+                          <span className="mini-chip">approval / pending</span>
+                          <span className="flow-item__meta">{formatTime(approval.updatedAt)}</span>
+                        </div>
+                        <h4>{approval.toolKind}</h4>
+                        <p>{approval.summary}</p>
+                        <p>{approval.targetPaths.join(", ")}</p>
+                        <div className="flow-item__actions">
+                          <button className="thread-action" onClick={() => void handleApproveTask(approval.taskId)} disabled={loading}>
+                            Approve
+                          </button>
+                          <button className="thread-action thread-action--danger" onClick={() => void handleRejectTask(approval.taskId)} disabled={loading}>
+                            Reject
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+
                 <div className="flow-list">
                   {flowItems.length === 0 ? (
                     <div className="thread-empty">当前还没有可展示的消息流内容</div>
@@ -634,6 +708,7 @@ export default function App() {
                   <ResultCard label="Latest Event" title={latestEvent ? latestEvent.type : "暂无 event"} body={latestEvent?.message || "暂无 event"} />
                   <ResultCard label="Latest Artifact" title={latestArtifact ? latestArtifact.kind : "暂无 artifact"} body={latestArtifact?.path || "暂无 artifact"} />
                   <InfoCard label="Bridge / SSE" value={sseEnabled ? "Connected" : "Manual"} detail={`${bridgeResult?.message || "桥接待检查"} / ${streamState}`} />
+                  <InfoCard label="Approvals" value={String(pendingApprovals.length)} detail={pendingApprovals[0]?.summary || "当前没有待审批写任务"} />
                   <InfoCard label="Provider" value={preferredProvider?.kind || "暂无 provider"} detail={providerSummary} />
                   <InfoCard label="State Store" value={runtimeStatus?.stateStore || "sqlite"} detail={runtimeStatus?.statePath || "project-local state store"} />
                 </div>

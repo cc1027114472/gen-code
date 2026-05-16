@@ -58,8 +58,22 @@ type TaskDescriptor struct {
 	Kind          string `json:"kind,omitempty"`
 	InputSummary  string `json:"inputSummary,omitempty"`
 	ResultSummary string `json:"resultSummary,omitempty"`
+	ApprovalStatus string `json:"approvalStatus,omitempty"`
 	CreatedAt     string `json:"createdAt"`
 	UpdatedAt     string `json:"updatedAt,omitempty"`
+}
+
+// ApprovalDescriptor describes a single thread-local approval item.
+type ApprovalDescriptor struct {
+	ID          string   `json:"id"`
+	ThreadID    string   `json:"threadId"`
+	TaskID      string   `json:"taskId"`
+	ToolKind    string   `json:"toolKind"`
+	Status      string   `json:"status"`
+	Summary     string   `json:"summary"`
+	TargetPaths []string `json:"targetPaths"`
+	CreatedAt   string   `json:"createdAt"`
+	UpdatedAt   string   `json:"updatedAt"`
 }
 
 // MessageDescriptor describes a single thread-local message.
@@ -123,6 +137,12 @@ type CreateTaskRequest struct {
 
 // RunTaskRequest defines the minimum request body for running a task.
 type RunTaskRequest struct{}
+
+// ApproveTaskRequest defines the minimum request body for approving a task.
+type ApproveTaskRequest struct{}
+
+// RejectTaskRequest defines the minimum request body for rejecting a task.
+type RejectTaskRequest struct{}
 
 // CreateMessageRequest defines the minimum request body for appending a thread message.
 type CreateMessageRequest struct {
@@ -226,6 +246,9 @@ type Service interface {
 	Tasks(ctx context.Context, threadID string) ([]TaskDescriptor, error)
 	CreateTask(ctx context.Context, threadID string, request CreateTaskRequest) (TaskDescriptor, error)
 	RunTask(ctx context.Context, threadID string, taskID string, request RunTaskRequest) (TaskDescriptor, error)
+	Approvals(ctx context.Context, threadID string) ([]ApprovalDescriptor, error)
+	ApproveTask(ctx context.Context, threadID string, taskID string, request ApproveTaskRequest) (TaskDescriptor, error)
+	RejectTask(ctx context.Context, threadID string, taskID string, request RejectTaskRequest) (TaskDescriptor, error)
 	Messages(ctx context.Context, threadID string) ([]MessageDescriptor, error)
 	AppendMessage(ctx context.Context, threadID string, request CreateMessageRequest) (MessageDescriptor, error)
 	ToolCalls(ctx context.Context, threadID string) ([]ToolCallDescriptor, error)
@@ -293,6 +316,18 @@ func (noopService) CreateTask(context.Context, string, CreateTaskRequest) (TaskD
 }
 
 func (noopService) RunTask(context.Context, string, string, RunTaskRequest) (TaskDescriptor, error) {
+	return TaskDescriptor{}, nil
+}
+
+func (noopService) Approvals(context.Context, string) ([]ApprovalDescriptor, error) {
+	return []ApprovalDescriptor{}, nil
+}
+
+func (noopService) ApproveTask(context.Context, string, string, ApproveTaskRequest) (TaskDescriptor, error) {
+	return TaskDescriptor{}, nil
+}
+
+func (noopService) RejectTask(context.Context, string, string, RejectTaskRequest) (TaskDescriptor, error) {
 	return TaskDescriptor{}, nil
 }
 

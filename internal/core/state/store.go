@@ -46,6 +46,7 @@ type TaskRecord struct {
 	Kind          string
 	Input         string
 	ResultSummary string
+	ApprovalStatus string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
@@ -95,6 +96,19 @@ type EventRecord struct {
 	CreatedAt time.Time
 }
 
+// ApprovalRecord is the persisted approval row.
+type ApprovalRecord struct {
+	ID          string
+	ThreadID    string
+	TaskID      string
+	ToolKind    string
+	Status      string
+	Summary     string
+	TargetPaths string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 // Snapshot is the full persisted runtime state payload.
 type Snapshot struct {
 	Workspace WorkspaceRecord
@@ -105,6 +119,7 @@ type Snapshot struct {
 	Artifacts []ArtifactRecord
 	Flags     []RuntimeFlagRecord
 	Events    []EventRecord
+	Approvals []ApprovalRecord
 }
 
 // Store persists runtime state to SQLite.
@@ -199,7 +214,7 @@ func (s *Store) Load() (Snapshot, error) {
 	}
 
 	taskRows, err := s.db.Query(`
-		SELECT id, thread_id, title, status, kind, input, result_summary, created_at, updated_at
+		SELECT id, thread_id, title, status, kind, input, result_summary, approval_status, created_at, updated_at
 		FROM tasks
 		ORDER BY created_at ASC, id ASC
 	`)
@@ -211,7 +226,7 @@ func (s *Store) Load() (Snapshot, error) {
 	for taskRows.Next() {
 		var item TaskRecord
 		var created, updated string
-		if err := taskRows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Status, &item.Kind, &item.Input, &item.ResultSummary, &created, &updated); err != nil {
+		if err := taskRows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Status, &item.Kind, &item.Input, &item.ResultSummary, &item.ApprovalStatus, &created, &updated); err != nil {
 			return Snapshot{}, fmt.Errorf("scan task: %w", err)
 		}
 		item.CreatedAt, err = time.Parse(time.RFC3339, created)
@@ -340,6 +355,33 @@ func (s *Store) Load() (Snapshot, error) {
 		snapshot.Events = append(snapshot.Events, item)
 	}
 
+	approvalRows, err := s.db.Query(`
+		SELECT id, thread_id, task_id, tool_kind, status, summary, target_paths, created_at, updated_at
+		FROM thread_approvals
+		ORDER BY created_at ASC, id ASC
+	`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load approvals: %w", err)
+	}
+	defer approvalRows.Close()
+
+	for approvalRows.Next() {
+		var item ApprovalRecord
+		var created, updated string
+		if err := approvalRows.Scan(&item.ID, &item.ThreadID, &item.TaskID, &item.ToolKind, &item.Status, &item.Summary, &item.TargetPaths, &created, &updated); err != nil {
+			return Snapshot{}, fmt.Errorf("scan approval: %w", err)
+		}
+		item.CreatedAt, err = time.Parse(time.RFC3339, created)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse approval created_at: %w", err)
+		}
+		item.UpdatedAt, err = time.Parse(time.RFC3339, updated)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse approval updated_at: %w", err)
+		}
+		snapshot.Approvals = append(snapshot.Approvals, item)
+	}
+
 	return snapshot, nil
 }
 
@@ -382,8 +424,8 @@ func (s *Store) SaveThread(item ThreadRecord) error {
 // SaveTask upserts a task row.
 func (s *Store) SaveTask(item TaskRecord) error {
 	_, err := s.db.Exec(`
-		INSERT INTO tasks (id, thread_id, title, status, kind, input, result_summary, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO tasks (id, thread_id, title, status, kind, input, result_summary, approval_status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			thread_id=excluded.thread_id,
 			title=excluded.title,
@@ -391,9 +433,10 @@ func (s *Store) SaveTask(item TaskRecord) error {
 			kind=excluded.kind,
 			input=excluded.input,
 			result_summary=excluded.result_summary,
+			approval_status=excluded.approval_status,
 			created_at=excluded.created_at,
 			updated_at=excluded.updated_at
-	`, item.ID, item.ThreadID, item.Title, item.Status, item.Kind, item.Input, item.ResultSummary, item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339))
+	`, item.ID, item.ThreadID, item.Title, item.Status, item.Kind, item.Input, item.ResultSummary, item.ApprovalStatus, item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("save task: %w", err)
 	}
@@ -469,6 +512,27 @@ func (s *Store) SaveEvent(item EventRecord) error {
 	return nil
 }
 
+// SaveApproval upserts an approval row.
+func (s *Store) SaveApproval(item ApprovalRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO thread_approvals (id, thread_id, task_id, tool_kind, status, summary, target_paths, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			thread_id=excluded.thread_id,
+			task_id=excluded.task_id,
+			tool_kind=excluded.tool_kind,
+			status=excluded.status,
+			summary=excluded.summary,
+			target_paths=excluded.target_paths,
+			created_at=excluded.created_at,
+			updated_at=excluded.updated_at
+	`, item.ID, item.ThreadID, item.TaskID, item.ToolKind, item.Status, item.Summary, item.TargetPaths, item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("save approval: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) migrate() error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS schema_version (
@@ -498,6 +562,7 @@ func (s *Store) migrate() error {
 			kind TEXT NOT NULL DEFAULT '',
 			input TEXT NOT NULL DEFAULT '',
 			result_summary TEXT NOT NULL DEFAULT '',
+			approval_status TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
@@ -537,6 +602,17 @@ func (s *Store) migrate() error {
 			message TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS thread_approvals (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			tool_kind TEXT NOT NULL,
+			status TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			target_paths TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 
 	for _, query := range queries {
@@ -562,6 +638,9 @@ func (s *Store) migrate() error {
 	}
 	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN result_summary TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		return fmt.Errorf("add tasks.result_summary column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN approval_status TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add tasks.approval_status column: %w", err)
 	}
 	return nil
 }

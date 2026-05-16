@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -209,17 +210,7 @@ func (s *Service) Tasks(_ context.Context, threadID string) ([]runtimecontract.T
 
 	result := make([]runtimecontract.TaskDescriptor, 0, len(items))
 	for _, item := range items {
-		result = append(result, runtimecontract.TaskDescriptor{
-			ID:            item.ID,
-			ThreadID:      item.ThreadID,
-			Title:         item.Title,
-			Status:        item.Status,
-			Kind:          item.Kind,
-			InputSummary:  item.Input,
-			ResultSummary: item.ResultSummary,
-			CreatedAt:     item.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
-		})
+		result = append(result, toTaskDescriptor(item))
 	}
 	return result, nil
 }
@@ -227,6 +218,15 @@ func (s *Service) Tasks(_ context.Context, threadID string) ([]runtimecontract.T
 // CreateTask registers a task under the given thread.
 func (s *Service) CreateTask(_ context.Context, threadID string, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
 	request = normalizeCreateTaskRequest(request)
+	thread, ok := s.session.Thread(threadID)
+	if !ok {
+		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+	}
+
+	if request.Kind == runner.KindWorkspaceApplyPatch {
+		return s.createPatchTask(thread, request)
+	}
+
 	item, ok := s.session.CreateTask(threadID, session.CreateTaskInput{
 		Title: request.Title,
 		Kind:  request.Kind,
@@ -235,18 +235,7 @@ func (s *Service) CreateTask(_ context.Context, threadID string, request runtime
 	if !ok {
 		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
 	}
-
-	return runtimecontract.TaskDescriptor{
-		ID:            item.ID,
-		ThreadID:      item.ThreadID,
-		Title:         item.Title,
-		Status:        item.Status,
-		Kind:          item.Kind,
-		InputSummary:  item.Input,
-		ResultSummary: item.ResultSummary,
-		CreatedAt:     item.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
-	}, nil
+	return toTaskDescriptor(item), nil
 }
 
 func normalizeCreateTaskRequest(request runtimecontract.CreateTaskRequest) runtimecontract.CreateTaskRequest {
@@ -298,22 +287,72 @@ func (s *Service) RunTask(ctx context.Context, threadID string, taskID string, _
 			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1007, "task not found")
 		case errors.Is(err, session.ErrTaskAlreadyRunning):
 			return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1011, "thread already has a running task")
+		case errors.Is(err, runner.ErrApprovalRequired):
+			return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1014, "task approval required")
 		default:
 			return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1012, err.Error())
 		}
 	}
+	return toTaskDescriptor(item), nil
+}
 
-	return runtimecontract.TaskDescriptor{
-		ID:            item.ID,
-		ThreadID:      item.ThreadID,
-		Title:         item.Title,
-		Status:        item.Status,
-		Kind:          item.Kind,
-		InputSummary:  item.Input,
-		ResultSummary: item.ResultSummary,
-		CreatedAt:     item.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
-	}, nil
+// Approvals returns the approval descriptors under the given thread.
+func (s *Service) Approvals(_ context.Context, threadID string) ([]runtimecontract.ApprovalDescriptor, error) {
+	items, ok := s.session.Approvals(threadID)
+	if !ok {
+		return nil, xerror.NotFound(1004, "thread not found")
+	}
+	result := make([]runtimecontract.ApprovalDescriptor, 0, len(items))
+	for _, item := range items {
+		result = append(result, runtimecontract.ApprovalDescriptor{
+			ID:          item.ID,
+			ThreadID:    item.ThreadID,
+			TaskID:      item.TaskID,
+			ToolKind:    item.ToolKind,
+			Status:      item.Status,
+			Summary:     item.Summary,
+			TargetPaths: append([]string(nil), item.TargetPaths...),
+			CreatedAt:   item.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:   item.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	return result, nil
+}
+
+// ApproveTask approves and executes a pending task.
+func (s *Service) ApproveTask(ctx context.Context, threadID string, taskID string, _ runtimecontract.ApproveTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	item, err := s.runner.ApproveTask(ctx, threadID, taskID)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrThreadNotFound):
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		case errors.Is(err, session.ErrTaskNotFound):
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1007, "task not found")
+		case errors.Is(err, session.ErrApprovalNotFound):
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1015, "approval not found")
+		default:
+			return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1016, err.Error())
+		}
+	}
+	return toTaskDescriptor(item), nil
+}
+
+// RejectTask rejects a pending task without executing it.
+func (s *Service) RejectTask(_ context.Context, threadID string, taskID string, _ runtimecontract.RejectTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	item, err := s.runner.RejectTask(threadID, taskID)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrThreadNotFound):
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		case errors.Is(err, session.ErrTaskNotFound):
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1007, "task not found")
+		case errors.Is(err, session.ErrApprovalNotFound):
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1015, "approval not found")
+		default:
+			return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1017, err.Error())
+		}
+	}
+	return toTaskDescriptor(item), nil
 }
 
 // UpdateTaskStatus updates an existing task status under the given thread.
@@ -340,6 +379,7 @@ func (s *Service) UpdateTaskStatus(_ context.Context, threadID string, taskID st
 		Kind:          item.Kind,
 		InputSummary:  item.Input,
 		ResultSummary: item.ResultSummary,
+		ApprovalStatus: item.ApprovalStatus,
 		CreatedAt:     item.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
 	}, nil
@@ -561,6 +601,21 @@ func toThreadDescriptor(item session.Thread) runtimecontract.ThreadDescriptor {
 		ArtifactCount:       item.ArtifactCount,
 		CreatedAt:           item.CreatedAt.Format(time.RFC3339),
 		IsActive:            item.IsActive,
+	}
+}
+
+func toTaskDescriptor(item session.Task) runtimecontract.TaskDescriptor {
+	return runtimecontract.TaskDescriptor{
+		ID:             item.ID,
+		ThreadID:       item.ThreadID,
+		Title:          item.Title,
+		Status:         item.Status,
+		Kind:           item.Kind,
+		InputSummary:   item.Input,
+		ResultSummary:  item.ResultSummary,
+		ApprovalStatus: item.ApprovalStatus,
+		CreatedAt:      item.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:      item.UpdatedAt.Format(time.RFC3339),
 	}
 }
 
@@ -811,4 +866,69 @@ func recommendedAPIStyle(item provider.Descriptor) (string, string) {
 		return "gemini", "Gemini providers should use the Gemini-native API contract"
 	}
 	return "", ""
+}
+
+func (s *Service) createPatchTask(thread session.Thread, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	path, patch, err := runner.ParsePatchInput(request.Input)
+	if err != nil {
+		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, err.Error())
+	}
+	targets, err := runner.ExtractPatchTargets(patch)
+	if err != nil {
+		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, err.Error())
+	}
+	summary := fmt.Sprintf("%s; %s", runner.ApprovalSummary(request.Kind, targets), runner.TruncatedPatchSummary(patch, 120))
+
+	switch thread.PermissionMode {
+	case policy.ReadOnly:
+		item, ok := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+			Title:          request.Title,
+			Kind:           request.Kind,
+			Input:          request.Input,
+			Status:         "failed",
+			ResultSummary:  "permission denied: read-only mode does not allow workspace writes",
+			ApprovalStatus: "rejected",
+		})
+		if !ok {
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		_ = s.session.AppendRuntimeEvent(thread.ID, "task.failed", item.ResultSummary)
+		return toTaskDescriptor(item), nil
+	case policy.AskUser, "":
+		item, ok := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+			Title:          request.Title,
+			Kind:           request.Kind,
+			Input:          request.Input,
+			Status:         "needs_approval",
+			ResultSummary:  summary,
+			ApprovalStatus: "pending",
+		})
+		if !ok {
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		if _, err := s.session.CreateApproval(thread.ID, session.CreateApprovalInput{
+			TaskID:      item.ID,
+			ToolKind:    request.Kind,
+			Status:      "pending",
+			Summary:     summary,
+			TargetPaths: []string{path},
+		}); err != nil {
+			return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, err.Error())
+		}
+		_ = s.session.AppendRuntimeEvent(thread.ID, "task.approval_required", summary)
+		return toTaskDescriptor(item), nil
+	default:
+		item, ok := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+			Title:          request.Title,
+			Kind:           request.Kind,
+			Input:          request.Input,
+			Status:         "queued",
+			ResultSummary:  "",
+			ApprovalStatus: "direct",
+		})
+		if !ok {
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		return toTaskDescriptor(item), nil
+	}
 }

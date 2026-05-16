@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -50,6 +51,7 @@ type Task struct {
 	Kind          string    `json:"kind"`
 	Input         string    `json:"input"`
 	ResultSummary string    `json:"result_summary"`
+	ApprovalStatus string   `json:"approval_status"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -99,6 +101,19 @@ type Event struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ApprovalRecord describes a persisted thread-local approval state.
+type ApprovalRecord struct {
+	ID          string    `json:"id"`
+	ThreadID    string    `json:"thread_id"`
+	TaskID      string    `json:"task_id"`
+	ToolKind    string    `json:"tool_kind"`
+	Status      string    `json:"status"`
+	Summary     string    `json:"summary"`
+	TargetPaths []string  `json:"target_paths"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 // CreateThreadInput collects optional fields for creating a thread.
 type CreateThreadInput struct {
 	Name           string
@@ -108,9 +123,12 @@ type CreateThreadInput struct {
 
 // CreateTaskInput collects the minimum task fields for a thread-local task.
 type CreateTaskInput struct {
-	Title string
-	Kind  string
-	Input string
+	Title          string
+	Kind           string
+	Input          string
+	Status         string
+	ResultSummary  string
+	ApprovalStatus string
 }
 
 // AppendMessageInput collects the minimum message fields for a thread-local message.
@@ -142,6 +160,23 @@ type SetRuntimeFlagInput struct {
 type UpdateTaskStatusInput struct {
 	Status        string
 	ResultSummary string
+	ApprovalStatus *string
+}
+
+// CreateApprovalInput collects the minimum fields for a thread-local approval.
+type CreateApprovalInput struct {
+	TaskID      string
+	ToolKind    string
+	Status      string
+	Summary     string
+	TargetPaths []string
+}
+
+// UpdateApprovalInput collects the minimum fields required to update an approval.
+type UpdateApprovalInput struct {
+	Status      string
+	Summary     string
+	TargetPaths []string
 }
 
 var (
@@ -153,6 +188,8 @@ var (
 	ErrInvalidTaskStatus = errors.New("invalid task status")
 	// ErrTaskAlreadyRunning is returned when a thread already has a running task.
 	ErrTaskAlreadyRunning = errors.New("thread already has a running task")
+	// ErrApprovalNotFound is returned when a task approval lookup fails.
+	ErrApprovalNotFound = errors.New("approval not found")
 )
 
 // Registry holds the in-memory workspace and thread set for the current runtime process.
@@ -164,6 +201,7 @@ type Registry struct {
 	threads          map[string]Thread
 	tasks            map[string][]Task
 	events           map[string][]Event
+	approvals        map[string][]ApprovalRecord
 	order            []string
 	activeThreadID   string
 	nextThreadNumber int
@@ -172,6 +210,7 @@ type Registry struct {
 	nextMessageNum   int
 	nextToolCallNum  int
 	nextArtifactNum  int
+	nextApprovalNum  int
 }
 
 // NewRegistry creates the default single-workspace registry for the given project root.
@@ -207,6 +246,7 @@ func NewRegistryWithStore(projectRoot string, store *state.Store) (*Registry, er
 		threads:          map[string]Thread{},
 		tasks:            map[string][]Task{},
 		events:           map[string][]Event{},
+		approvals:        map[string][]ApprovalRecord{},
 		order:            []string{},
 		nextThreadNumber: 1,
 		nextTaskNumber:   1,
@@ -214,6 +254,7 @@ func NewRegistryWithStore(projectRoot string, store *state.Store) (*Registry, er
 		nextMessageNum:   1,
 		nextToolCallNum:  1,
 		nextArtifactNum:  1,
+		nextApprovalNum:  1,
 	}
 
 	if store != nil {
@@ -310,6 +351,7 @@ func (r *Registry) CreateThread(input CreateThreadInput) Thread {
 	r.threads[threadID] = thread
 	r.tasks[threadID] = []Task{}
 	r.events[threadID] = []Event{}
+	r.approvals[threadID] = []ApprovalRecord{}
 	r.order = append(r.order, threadID)
 	if r.activeThreadID == "" {
 		r.activeThreadID = threadID
@@ -358,6 +400,38 @@ func (r *Registry) Events(threadID string) ([]Event, bool) {
 	}
 	items := append([]Event(nil), r.events[threadID]...)
 	return items, true
+}
+
+// Approvals returns the approval records under the given thread.
+func (r *Registry) Approvals(threadID string) ([]ApprovalRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if _, ok := r.threads[threadID]; !ok {
+		return nil, false
+	}
+	items := append([]ApprovalRecord(nil), r.approvals[threadID]...)
+	for index := range items {
+		items[index].TargetPaths = append([]string(nil), items[index].TargetPaths...)
+	}
+	return items, true
+}
+
+// ApprovalByTask returns the approval associated with a task.
+func (r *Registry) ApprovalByTask(threadID string, taskID string) (ApprovalRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if _, ok := r.threads[threadID]; !ok {
+		return ApprovalRecord{}, ErrThreadNotFound
+	}
+	for _, item := range r.approvals[threadID] {
+		if item.TaskID == taskID {
+			item.TargetPaths = append([]string(nil), item.TargetPaths...)
+			return item, nil
+		}
+	}
+	return ApprovalRecord{}, ErrApprovalNotFound
 }
 
 // SubscribeEvents subscribes to real-time events for the given thread.
@@ -454,14 +528,19 @@ func (r *Registry) CreateTask(threadID string, input CreateTaskInput) (Task, boo
 		title = fmt.Sprintf("Task %d", taskNumber)
 	}
 
+	status := input.Status
+	if status == "" {
+		status = "queued"
+	}
 	task := Task{
 		ID:            fmt.Sprintf("task-%d", taskNumber),
 		ThreadID:      threadID,
 		Title:         title,
-		Status:        "queued",
+		Status:        status,
 		Kind:          input.Kind,
 		Input:         input.Input,
-		ResultSummary: "",
+		ResultSummary: input.ResultSummary,
+		ApprovalStatus: input.ApprovalStatus,
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	}
@@ -473,6 +552,93 @@ func (r *Registry) CreateTask(threadID string, input CreateTaskInput) (Task, boo
 	_ = r.persistTaskLocked(task)
 	_ = r.persistThreadLocked(thread)
 	return task, true
+}
+
+// CreateApproval creates or replaces a thread-local approval for a task.
+func (r *Registry) CreateApproval(threadID string, input CreateApprovalInput) (ApprovalRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return ApprovalRecord{}, ErrThreadNotFound
+	}
+	if _, err := r.taskLocked(threadID, input.TaskID); err != nil {
+		return ApprovalRecord{}, err
+	}
+
+	now := time.Now().UTC()
+	record := ApprovalRecord{
+		ID:          fmt.Sprintf("approval-%d", r.nextApprovalNum),
+		ThreadID:    threadID,
+		TaskID:      input.TaskID,
+		ToolKind:    input.ToolKind,
+		Status:      input.Status,
+		Summary:     input.Summary,
+		TargetPaths: append([]string(nil), input.TargetPaths...),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if record.Status == "" {
+		record.Status = "pending"
+	}
+
+	items := r.approvals[threadID]
+	for index, item := range items {
+		if item.TaskID != input.TaskID {
+			continue
+		}
+		record.ID = item.ID
+		record.CreatedAt = item.CreatedAt
+		record.UpdatedAt = now
+		items[index] = record
+		r.approvals[threadID] = items
+		_ = r.persistApprovalLocked(record)
+		_ = r.persistThreadLocked(thread)
+		return record, nil
+	}
+
+	r.nextApprovalNum++
+	r.approvals[threadID] = append(r.approvals[threadID], record)
+	_ = r.persistApprovalLocked(record)
+	_ = r.persistThreadLocked(thread)
+	return record, nil
+}
+
+// UpdateApproval updates an approval associated with a task.
+func (r *Registry) UpdateApproval(threadID string, taskID string, input UpdateApprovalInput) (ApprovalRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return ApprovalRecord{}, ErrThreadNotFound
+	}
+
+	items := r.approvals[threadID]
+	for index, item := range items {
+		if item.TaskID != taskID {
+			continue
+		}
+		if input.Status != "" {
+			item.Status = input.Status
+		}
+		if input.Summary != "" {
+			item.Summary = input.Summary
+		}
+		if input.TargetPaths != nil {
+			item.TargetPaths = append([]string(nil), input.TargetPaths...)
+		}
+		item.UpdatedAt = time.Now().UTC()
+		items[index] = item
+		r.approvals[threadID] = items
+		_ = r.persistApprovalLocked(item)
+		_ = r.persistThreadLocked(thread)
+		item.TargetPaths = append([]string(nil), item.TargetPaths...)
+		return item, nil
+	}
+
+	return ApprovalRecord{}, ErrApprovalNotFound
 }
 
 // AppendMessage appends a thread-local message and persists it.
@@ -618,6 +784,9 @@ func (r *Registry) UpdateTaskStatus(threadID string, taskID string, input Update
 
 		task.Status = input.Status
 		task.ResultSummary = input.ResultSummary
+		if input.ApprovalStatus != nil {
+			task.ApprovalStatus = *input.ApprovalStatus
+		}
 		task.UpdatedAt = time.Now().UTC()
 		tasks[index] = task
 		r.tasks[threadID] = tasks
@@ -671,7 +840,7 @@ func (r *Registry) appendEventLocked(threadID string, eventType string, message 
 
 func isSupportedTaskStatus(status string) bool {
 	switch status {
-	case "queued", "running", "completed", "failed":
+	case "queued", "running", "completed", "failed", "needs_approval":
 		return true
 	default:
 		return false
@@ -683,6 +852,18 @@ func (r *Registry) Task(threadID string, taskID string) (Task, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	if _, ok := r.threads[threadID]; !ok {
+		return Task{}, ErrThreadNotFound
+	}
+	for _, item := range r.tasks[threadID] {
+		if item.ID == taskID {
+			return item, nil
+		}
+	}
+	return Task{}, ErrTaskNotFound
+}
+
+func (r *Registry) taskLocked(threadID string, taskID string) (Task, error) {
 	if _, ok := r.threads[threadID]; !ok {
 		return Task{}, ErrThreadNotFound
 	}
@@ -762,6 +943,7 @@ func (r *Registry) restoreFromStore() error {
 			Kind:          item.Kind,
 			Input:         item.Input,
 			ResultSummary: item.ResultSummary,
+			ApprovalStatus: item.ApprovalStatus,
 			CreatedAt:     item.CreatedAt,
 			UpdatedAt:     item.UpdatedAt,
 		}
@@ -829,6 +1011,20 @@ func (r *Registry) restoreFromStore() error {
 		})
 	}
 
+	for _, item := range snapshot.Approvals {
+		r.approvals[item.ThreadID] = append(r.approvals[item.ThreadID], ApprovalRecord{
+			ID:          item.ID,
+			ThreadID:    item.ThreadID,
+			TaskID:      item.TaskID,
+			ToolKind:    item.ToolKind,
+			Status:      item.Status,
+			Summary:     item.Summary,
+			TargetPaths: decodeTargetPaths(item.TargetPaths),
+			CreatedAt:   item.CreatedAt,
+			UpdatedAt:   item.UpdatedAt,
+		})
+	}
+
 	r.nextThreadNumber = state.MaxSuffix(r.order, "thread-") + 1
 	if r.nextThreadNumber == 1 && len(r.order) == 0 {
 		r.nextThreadNumber = 1
@@ -883,6 +1079,17 @@ func (r *Registry) restoreFromStore() error {
 		r.nextArtifactNum = 1
 	}
 
+	approvalIDs := make([]string, 0)
+	for _, items := range r.approvals {
+		for _, item := range items {
+			approvalIDs = append(approvalIDs, item.ID)
+		}
+	}
+	r.nextApprovalNum = state.MaxSuffix(approvalIDs, "approval-") + 1
+	if r.nextApprovalNum == 1 && len(approvalIDs) == 0 {
+		r.nextApprovalNum = 1
+	}
+
 	return nil
 }
 
@@ -926,6 +1133,7 @@ func (r *Registry) persistTaskLocked(task Task) error {
 		Kind:          task.Kind,
 		Input:         task.Input,
 		ResultSummary: task.ResultSummary,
+		ApprovalStatus: task.ApprovalStatus,
 		CreatedAt:     task.CreatedAt,
 		UpdatedAt:     task.UpdatedAt,
 	})
@@ -994,4 +1202,43 @@ func (r *Registry) persistRuntimeFlagLocked(item RuntimeFlagRecord) error {
 		Value:     item.Value,
 		UpdatedAt: item.UpdatedAt,
 	})
+}
+
+func (r *Registry) persistApprovalLocked(item ApprovalRecord) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.SaveApproval(state.ApprovalRecord{
+		ID:          item.ID,
+		ThreadID:    item.ThreadID,
+		TaskID:      item.TaskID,
+		ToolKind:    item.ToolKind,
+		Status:      item.Status,
+		Summary:     item.Summary,
+		TargetPaths: encodeTargetPaths(item.TargetPaths),
+		CreatedAt:   item.CreatedAt,
+		UpdatedAt:   item.UpdatedAt,
+	})
+}
+
+func encodeTargetPaths(paths []string) string {
+	if len(paths) == 0 {
+		return "[]"
+	}
+	encoded, err := json.Marshal(paths)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func decodeTargetPaths(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var paths []string
+	if err := json.Unmarshal([]byte(raw), &paths); err != nil {
+		return nil
+	}
+	return paths
 }

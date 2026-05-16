@@ -53,6 +53,7 @@ type RuntimeStatus struct {
 	ActiveThreadID        string              `json:"activeThreadId"`
 	Threads               []ThreadSummary     `json:"threads"`
 	Tasks                 []TaskSummary       `json:"tasks"`
+	Approvals             []ApprovalSummary   `json:"approvals"`
 	Messages              []MessageSummary    `json:"messages"`
 	ToolCalls             []ToolCallSummary   `json:"toolCalls"`
 	Artifacts             []ArtifactSummary   `json:"artifacts"`
@@ -94,8 +95,21 @@ type TaskSummary struct {
 	Input         string `json:"input"`
 	Status        string `json:"status"`
 	ResultSummary string `json:"resultSummary"`
+	ApprovalStatus string `json:"approvalStatus"`
 	CreatedAt     string `json:"createdAt"`
 	UpdatedAt     string `json:"updatedAt"`
+}
+
+type ApprovalSummary struct {
+	ID          string   `json:"id"`
+	ThreadID    string   `json:"threadId"`
+	TaskID      string   `json:"taskId"`
+	ToolKind    string   `json:"toolKind"`
+	Status      string   `json:"status"`
+	Summary     string   `json:"summary"`
+	TargetPaths []string `json:"targetPaths"`
+	CreatedAt   string   `json:"createdAt"`
+	UpdatedAt   string   `json:"updatedAt"`
 }
 
 type MessageSummary struct {
@@ -186,8 +200,21 @@ type apiTask struct {
 	Input         string `json:"input"`
 	Status        string `json:"status"`
 	ResultSummary string `json:"resultSummary"`
+	ApprovalStatus string `json:"approvalStatus"`
 	CreatedAt     string `json:"createdAt"`
 	UpdatedAt     string `json:"updatedAt"`
+}
+
+type apiApproval struct {
+	ID          string   `json:"id"`
+	ThreadID    string   `json:"threadId"`
+	TaskID      string   `json:"taskId"`
+	ToolKind    string   `json:"toolKind"`
+	Status      string   `json:"status"`
+	Summary     string   `json:"summary"`
+	TargetPaths []string `json:"targetPaths"`
+	CreatedAt   string   `json:"createdAt"`
+	UpdatedAt   string   `json:"updatedAt"`
 }
 
 type apiMessage struct {
@@ -507,6 +534,20 @@ func (a *App) AdvanceTask(taskID string) RuntimeStatus {
 	return a.store.RunTask(taskID)
 }
 
+func (a *App) ApproveTask(threadID string, taskID string) RuntimeStatus {
+	if status, err := approveTask(newRuntimeClient(), threadID, taskID); err == nil {
+		return status
+	}
+	return runtimeErrorStatus(fmt.Errorf("desktop-local fallback does not yet support approval execution"))
+}
+
+func (a *App) RejectTask(threadID string, taskID string) RuntimeStatus {
+	if status, err := rejectTask(newRuntimeClient(), threadID, taskID); err == nil {
+		return status
+	}
+	return runtimeErrorStatus(fmt.Errorf("desktop-local fallback does not yet support approval rejection"))
+}
+
 func (a *App) collectRuntimeStatus() (RuntimeStatus, error) {
 	workspaceRoot, err := findWorkspaceRoot()
 	if err != nil {
@@ -619,6 +660,9 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	tasksPayload := struct {
 		Items []apiTask `json:"items"`
 	}{}
+	approvalsPayload := struct {
+		Items []apiApproval `json:"items"`
+	}{}
 	messagesPayload := struct {
 		Items []apiMessage `json:"items"`
 	}{}
@@ -634,6 +678,9 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	if runtimeStatus.ActiveThreadID != "" {
 		threadID := url.PathEscape(runtimeStatus.ActiveThreadID)
 		if err := client.fetchEnvelope("/api/threads/"+threadID+"/tasks", &tasksPayload); err != nil {
+			return RuntimeStatus{}, err
+		}
+		if err := client.fetchEnvelope("/api/threads/"+threadID+"/approvals", &approvalsPayload); err != nil {
 			return RuntimeStatus{}, err
 		}
 		if err := client.fetchEnvelope("/api/threads/"+threadID+"/messages", &messagesPayload); err != nil {
@@ -658,6 +705,7 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	status.ActiveThreadID = runtimeStatus.ActiveThreadID
 	status.Threads = mapThreads(threadPayload.Items)
 	status.Tasks = mapTasks(tasksPayload.Items)
+	status.Approvals = mapApprovals(approvalsPayload.Items)
 	status.Messages = mapMessages(messagesPayload.Items)
 	status.ToolCalls = mapToolCalls(toolCallsPayload.Items)
 	status.Artifacts = mapArtifacts(artifactsPayload.Items)
@@ -1026,6 +1074,32 @@ func runTask(client runtimeClient, threadID string, taskID string, tasks []TaskS
 	return NewApp().GetRuntimeStatus(), nil
 }
 
+func approveTask(client runtimeClient, threadID string, taskID string) (RuntimeStatus, error) {
+	trimmedThreadID := strings.TrimSpace(threadID)
+	trimmedTaskID := strings.TrimSpace(taskID)
+	if trimmedThreadID == "" || trimmedTaskID == "" {
+		return RuntimeStatus{}, fmt.Errorf("thread id and task id are required")
+	}
+	var updated map[string]any
+	if err := client.postEnvelope("/api/threads/"+url.PathEscape(trimmedThreadID)+"/tasks/"+url.PathEscape(trimmedTaskID)+"/approve", map[string]any{}, &updated); err != nil {
+		return RuntimeStatus{}, err
+	}
+	return NewApp().GetRuntimeStatus(), nil
+}
+
+func rejectTask(client runtimeClient, threadID string, taskID string) (RuntimeStatus, error) {
+	trimmedThreadID := strings.TrimSpace(threadID)
+	trimmedTaskID := strings.TrimSpace(taskID)
+	if trimmedThreadID == "" || trimmedTaskID == "" {
+		return RuntimeStatus{}, fmt.Errorf("thread id and task id are required")
+	}
+	var updated map[string]any
+	if err := client.postEnvelope("/api/threads/"+url.PathEscape(trimmedThreadID)+"/tasks/"+url.PathEscape(trimmedTaskID)+"/reject", map[string]any{}, &updated); err != nil {
+		return RuntimeStatus{}, err
+	}
+	return NewApp().GetRuntimeStatus(), nil
+}
+
 func (c runtimeClient) fetchEnvelope(path string, target any) error {
 	response, err := c.client.Get(c.baseURL + path)
 	if err != nil {
@@ -1319,6 +1393,7 @@ func localToolCatalog() []apiTool {
 		{ID: "workspace.read_file", Name: "Read File", Description: "Read a file from workspace", Permission: "read-only", Source: "runtime", Kind: "workspace.read_file", ReadOnly: true, Executable: true},
 		{ID: "workspace.list_files", Name: "List Files", Description: "List files from workspace", Permission: "read-only", Source: "runtime", Kind: "workspace.list_files", ReadOnly: true, Executable: true},
 		{ID: "workspace.search_text", Name: "Search Text", Description: "Search text in workspace", Permission: "read-only", Source: "runtime", Kind: "workspace.search_text", ReadOnly: true, Executable: true},
+		{ID: "workspace.apply_patch", Name: "Apply Patch", Description: "Apply an approved text patch inside the workspace", Permission: "ask-user", Source: "runtime", Kind: "workspace.apply_patch", ReadOnly: false, Executable: true},
 		{ID: "thread.message.append", Name: "Append Message", Description: "Append a thread-local message", Permission: "workspace-write", Source: "runtime", Kind: "thread.message.append", ReadOnly: false, Executable: true},
 	}
 }
@@ -1376,8 +1451,27 @@ func mapTasks(items []apiTask) []TaskSummary {
 			Input:         item.Input,
 			Status:        item.Status,
 			ResultSummary: item.ResultSummary,
+			ApprovalStatus: item.ApprovalStatus,
 			CreatedAt:     item.CreatedAt,
 			UpdatedAt:     item.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func mapApprovals(items []apiApproval) []ApprovalSummary {
+	result := make([]ApprovalSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, ApprovalSummary{
+			ID:          item.ID,
+			ThreadID:    item.ThreadID,
+			TaskID:      item.TaskID,
+			ToolKind:    item.ToolKind,
+			Status:      item.Status,
+			Summary:     item.Summary,
+			TargetPaths: append([]string(nil), item.TargetPaths...),
+			CreatedAt:   item.CreatedAt,
+			UpdatedAt:   item.UpdatedAt,
 		})
 	}
 	return result

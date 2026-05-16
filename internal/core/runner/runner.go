@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,7 @@ const (
 	KindWorkspaceRead   = "workspace.read_file"
 	KindWorkspaceList   = "workspace.list_files"
 	KindWorkspaceSearch = "workspace.search_text"
+	KindWorkspaceApplyPatch = "workspace.apply_patch"
 	KindModelResponse   = "model.response.create"
 	restartFailureLabel = "interrupted by runtime restart"
 )
@@ -31,6 +33,7 @@ var (
 	ErrUnsupportedTaskKind = errors.New("unsupported task kind")
 	ErrPermissionDenied    = errors.New("permission denied")
 	ErrPathOutsideWorkspace = errors.New("path outside workspace")
+	ErrApprovalRequired    = errors.New("approval required")
 )
 
 type Registry interface {
@@ -39,6 +42,10 @@ type Registry interface {
 	Thread(threadID string) (session.Thread, bool)
 	Workspace() session.Workspace
 	UpdateTaskStatus(threadID string, taskID string, input session.UpdateTaskStatusInput) (session.Task, error)
+	Approvals(threadID string) ([]session.ApprovalRecord, bool)
+	ApprovalByTask(threadID string, taskID string) (session.ApprovalRecord, error)
+	CreateApproval(threadID string, input session.CreateApprovalInput) (session.ApprovalRecord, error)
+	UpdateApproval(threadID string, taskID string, input session.UpdateApprovalInput) (session.ApprovalRecord, error)
 	AppendMessage(threadID string, input session.AppendMessageInput) (session.MessageRecord, error)
 	AppendToolCall(threadID string, input session.AppendToolCallInput) (session.ToolCallRecord, error)
 	AppendArtifact(threadID string, input session.AppendArtifactInput) (session.ArtifactRecord, error)
@@ -107,6 +114,9 @@ func (r *Runner) RunTask(ctx context.Context, threadID string, taskID string) (s
 	task, err := r.registry.Task(threadID, taskID)
 	if err != nil {
 		return session.Task{}, err
+	}
+	if task.Status == "needs_approval" {
+		return session.Task{}, ErrApprovalRequired
 	}
 	recorder, _ := r.registry.(interface {
 		AppendRuntimeEvent(threadID string, eventType string, message string) error
@@ -185,6 +195,91 @@ func (r *Runner) RunTask(ctx context.Context, threadID string, taskID string) (s
 		_ = recorder.AppendRuntimeEvent(threadID, "task.completed", summary)
 	}
 	return result, nil
+}
+
+func (r *Runner) ApproveTask(ctx context.Context, threadID string, taskID string) (session.Task, error) {
+	approval, err := r.registry.ApprovalByTask(threadID, taskID)
+	if err != nil {
+		return session.Task{}, err
+	}
+	if approval.Status == "rejected" {
+		return session.Task{}, fmt.Errorf("approval already rejected")
+	}
+
+	approved := "approved"
+	if _, err := r.registry.UpdateTaskStatus(threadID, taskID, session.UpdateTaskStatusInput{
+		Status:         "queued",
+		ResultSummary:  approval.Summary,
+		ApprovalStatus: &approved,
+	}); err != nil {
+		return session.Task{}, err
+	}
+	if _, err := r.registry.UpdateApproval(threadID, taskID, session.UpdateApprovalInput{
+		Status:  "approved",
+		Summary: approval.Summary,
+	}); err != nil {
+		return session.Task{}, err
+	}
+	if recorder, ok := r.registry.(interface {
+		AppendRuntimeEvent(threadID string, eventType string, message string) error
+	}); ok {
+		_ = recorder.AppendRuntimeEvent(threadID, "task.approved", approval.Summary)
+		_ = recorder.AppendRuntimeEvent(threadID, "toolcall.approved", approval.Summary)
+	}
+
+	result, err := r.RunTask(ctx, threadID, taskID)
+	if err != nil {
+		return session.Task{}, err
+	}
+	if result.Status == "completed" {
+		_, updateErr := r.registry.UpdateApproval(threadID, taskID, session.UpdateApprovalInput{
+			Status:  "executed",
+			Summary: result.ResultSummary,
+		})
+		if updateErr == nil {
+			executed := "executed"
+			result, _ = r.registry.UpdateTaskStatus(threadID, taskID, session.UpdateTaskStatusInput{
+				Status:         result.Status,
+				ResultSummary:  result.ResultSummary,
+				ApprovalStatus: &executed,
+			})
+		}
+	}
+	return result, nil
+}
+
+func (r *Runner) RejectTask(threadID string, taskID string) (session.Task, error) {
+	approval, err := r.registry.ApprovalByTask(threadID, taskID)
+	if err != nil {
+		return session.Task{}, err
+	}
+	rejectedSummary := approval.Summary
+	if rejectedSummary == "" {
+		rejectedSummary = "approval rejected"
+	}
+	rejectedSummary = "approval rejected: " + rejectedSummary
+	rejected := "rejected"
+	task, err := r.registry.UpdateTaskStatus(threadID, taskID, session.UpdateTaskStatusInput{
+		Status:         "failed",
+		ResultSummary:  rejectedSummary,
+		ApprovalStatus: &rejected,
+	})
+	if err != nil {
+		return session.Task{}, err
+	}
+	if _, err := r.registry.UpdateApproval(threadID, taskID, session.UpdateApprovalInput{
+		Status:  "rejected",
+		Summary: rejectedSummary,
+	}); err != nil {
+		return session.Task{}, err
+	}
+	if recorder, ok := r.registry.(interface {
+		AppendRuntimeEvent(threadID string, eventType string, message string) error
+	}); ok {
+		_ = recorder.AppendRuntimeEvent(threadID, "task.rejected", rejectedSummary)
+		_ = recorder.AppendRuntimeEvent(threadID, "toolcall.rejected", rejectedSummary)
+	}
+	return task, nil
 }
 
 func (r *Runner) execute(ctx context.Context, threadID string, task session.Task) (string, error) {
@@ -314,6 +409,27 @@ func (r *Runner) execute(ctx context.Context, threadID string, task session.Task
 			return fmt.Sprintf("no matches for %q under %s", input.Query, workspaceRelative(r.registry.Workspace().ProjectRoot, searchRoot)), nil
 		}
 		return fmt.Sprintf("found %d matches for %q: %s", len(matches), input.Query, compactSummary(strings.Join(matches, " | "), 240)), nil
+	case KindWorkspaceApplyPatch:
+		approvedWrite := task.ApprovalStatus == "approved" || task.ApprovalStatus == "executed" || task.ApprovalStatus == "direct"
+		if err := ensureWriteAllowed(thread.PermissionMode, approvedWrite); err != nil {
+			return "", err
+		}
+		var input struct {
+			Path  string `json:"path"`
+			Patch string `json:"patch"`
+		}
+		if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
+			return "", err
+		}
+		resolvedPath, err := resolveWorkspacePath(r.registry.Workspace().ProjectRoot, input.Path)
+		if err != nil {
+			return "", err
+		}
+		changed, err := applyWorkspacePatch(resolvedPath, input.Patch)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("applied patch to %s: %s", workspaceRelative(r.registry.Workspace().ProjectRoot, resolvedPath), changed), nil
 	case KindToolCallAppend:
 		var input struct {
 			ToolID  string `json:"toolId"`
@@ -398,6 +514,22 @@ func ensureThreadMutationAllowed(mode policy.Mode) error {
 	}
 }
 
+func ensureWriteAllowed(mode policy.Mode, alreadyApproved bool) error {
+	switch mode {
+	case policy.WorkspaceWrite, policy.FullAccess:
+		return nil
+	case "", policy.AskUser:
+		if alreadyApproved {
+			return nil
+		}
+		return fmt.Errorf("%w: approval required", ErrPermissionDenied)
+	case policy.ReadOnly:
+		return fmt.Errorf("%w: %s does not allow workspace writes", ErrPermissionDenied, mode)
+	default:
+		return fmt.Errorf("%w: unsupported permission mode %s", ErrPermissionDenied, mode)
+	}
+}
+
 func resolveWorkspacePath(workspaceRoot string, provided string) (string, error) {
 	root, err := filepath.Abs(workspaceRoot)
 	if err != nil {
@@ -472,4 +604,252 @@ func searchWorkspaceText(searchRoot string, query string, workspaceRoot string) 
 	}
 	sort.Strings(results)
 	return results, nil
+}
+
+func applyWorkspacePatch(targetPath string, patch string) (string, error) {
+	trimmed := strings.TrimSpace(patch)
+	if trimmed == "" {
+		return "", fmt.Errorf("patch is required")
+	}
+	lines := splitPatchLines(trimmed)
+	if len(lines) < 2 || lines[0] != "*** Begin Patch" {
+		return "", fmt.Errorf("unsupported patch format")
+	}
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "*** Delete File: ") {
+			return "", fmt.Errorf("delete patch is not allowed")
+		}
+	}
+
+	var op string
+	var patchPath string
+	start := -1
+	for index, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "*** Update File: "):
+			op = "update"
+			patchPath = strings.TrimSpace(strings.TrimPrefix(line, "*** Update File: "))
+			start = index + 1
+		case strings.HasPrefix(line, "*** Add File: "):
+			op = "add"
+			patchPath = strings.TrimSpace(strings.TrimPrefix(line, "*** Add File: "))
+			start = index + 1
+		}
+		if start != -1 {
+			break
+		}
+	}
+	if op == "" || patchPath == "" {
+		return "", fmt.Errorf("patch must contain a file operation")
+	}
+	if filepath.Clean(filepath.FromSlash(patchPath)) != filepath.Clean(targetPath) && filepath.Base(filepath.Clean(filepath.FromSlash(patchPath))) != filepath.Base(targetPath) {
+		if !sameNormalizedPath(filepath.Clean(filepath.FromSlash(patchPath)), filepath.Clean(targetPath)) {
+			return "", fmt.Errorf("patch path does not match target path")
+		}
+	}
+
+	switch op {
+	case "add":
+		return applyAddFilePatch(targetPath, lines[start:])
+	case "update":
+		return applyUpdateFilePatch(targetPath, lines[start:])
+	default:
+		return "", fmt.Errorf("unsupported patch operation")
+	}
+}
+
+func sameNormalizedPath(left string, right string) bool {
+	leftAbs, leftErr := filepath.Abs(left)
+	rightAbs, rightErr := filepath.Abs(right)
+	if leftErr == nil && rightErr == nil {
+		return strings.EqualFold(filepath.Clean(leftAbs), filepath.Clean(rightAbs))
+	}
+	return strings.EqualFold(filepath.ToSlash(filepath.Clean(left)), filepath.ToSlash(filepath.Clean(right)))
+}
+
+func applyAddFilePatch(targetPath string, lines []string) (string, error) {
+	if _, err := os.Stat(targetPath); err == nil {
+		return "", fmt.Errorf("target file already exists")
+	}
+	content := make([]string, 0)
+	for _, line := range lines {
+		if line == "*** End Patch" {
+			break
+		}
+		if !strings.HasPrefix(line, "+") {
+			if strings.TrimSpace(line) == "" {
+				content = append(content, "")
+				continue
+			}
+			return "", fmt.Errorf("add patch must contain only added lines")
+		}
+		content = append(content, strings.TrimPrefix(line, "+"))
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(targetPath, []byte(strings.Join(content, "\n")), 0o644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("created %d line(s)", len(content)), nil
+}
+
+func applyUpdateFilePatch(targetPath string, lines []string) (string, error) {
+	originalBytes, err := os.ReadFile(targetPath)
+	if err != nil {
+		return "", err
+	}
+	original := splitTextLines(string(originalBytes))
+	result := make([]string, 0, len(original))
+	sourceIndex := 0
+	appliedLines := 0
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		if line == "*** End Patch" {
+			break
+		}
+		if strings.HasPrefix(line, "*** Move to: ") {
+			return "", fmt.Errorf("move patch is not allowed")
+		}
+		if strings.HasPrefix(line, "@@") {
+			continue
+		}
+		if line == "*** End of File" {
+			continue
+		}
+		if line == "" {
+			return "", fmt.Errorf("unexpected blank patch line")
+		}
+		marker := line[:1]
+		text := line[1:]
+		switch marker {
+		case " ":
+			found := findNextLine(original, sourceIndex, text)
+			if found < 0 {
+				return "", fmt.Errorf("patch context not found: %s", text)
+			}
+			result = append(result, original[sourceIndex:found+1]...)
+			sourceIndex = found + 1
+		case "-":
+			found := findNextLine(original, sourceIndex, text)
+			if found < 0 {
+				return "", fmt.Errorf("patch removal not found: %s", text)
+			}
+			result = append(result, original[sourceIndex:found]...)
+			sourceIndex = found + 1
+			appliedLines++
+		case "+":
+			result = append(result, text)
+			appliedLines++
+		default:
+			return "", fmt.Errorf("unsupported patch line: %s", line)
+		}
+	}
+	result = append(result, original[sourceIndex:]...)
+	updated := strings.Join(result, "\n")
+	if err := os.WriteFile(targetPath, []byte(updated), 0o644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("updated %d line(s)", appliedLines), nil
+}
+
+func splitPatchLines(value string) []string {
+	scanner := bufio.NewScanner(strings.NewReader(value))
+	lines := make([]string, 0)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	return lines
+}
+
+func splitTextLines(value string) []string {
+	normalized := strings.ReplaceAll(value, "\r\n", "\n")
+	normalized = strings.TrimSuffix(normalized, "\n")
+	if normalized == "" {
+		return []string{}
+	}
+	return strings.Split(normalized, "\n")
+}
+
+func findNextLine(lines []string, start int, want string) int {
+	for index := start; index < len(lines); index++ {
+		if lines[index] == want {
+			return index
+		}
+	}
+	return -1
+}
+
+func ExtractPatchTargets(raw string) ([]string, error) {
+	lines := splitPatchLines(strings.TrimSpace(raw))
+	targets := make([]string, 0)
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "*** Update File: "):
+			targets = append(targets, strings.TrimSpace(strings.TrimPrefix(line, "*** Update File: ")))
+		case strings.HasPrefix(line, "*** Add File: "):
+			targets = append(targets, strings.TrimSpace(strings.TrimPrefix(line, "*** Add File: ")))
+		case strings.HasPrefix(line, "*** Delete File: "):
+			return nil, fmt.Errorf("delete patch is not allowed")
+		}
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("patch does not declare target files")
+	}
+	seen := map[string]struct{}{}
+	unique := make([]string, 0, len(targets))
+	for _, target := range targets {
+		key := strings.ToLower(filepath.ToSlash(filepath.Clean(target)))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, target)
+	}
+	return unique, nil
+}
+
+func ApprovalSummary(kind string, targets []string) string {
+	label := kind
+	if label == "" {
+		label = "write"
+	}
+	if len(targets) == 0 {
+		return fmt.Sprintf("approval required for %s", label)
+	}
+	return fmt.Sprintf("approval required for %s on %s", label, strings.Join(targets, ", "))
+}
+
+func TruncatedPatchSummary(raw string, max int) string {
+	lines := splitPatchLines(strings.TrimSpace(raw))
+	delta := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") {
+			delta++
+		}
+	}
+	summary := fmt.Sprintf("%d patch line(s)", delta)
+	if max <= 0 {
+		return summary
+	}
+	return compactSummary(summary, max)
+}
+
+func ParsePatchInput(raw string) (string, string, error) {
+	var input struct {
+		Path  string `json:"path"`
+		Patch string `json:"patch"`
+	}
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(input.Path) == "" {
+		return "", "", fmt.Errorf("path is required")
+	}
+	if strings.TrimSpace(input.Patch) == "" {
+		return "", "", fmt.Errorf("patch is required")
+	}
+	return input.Path, input.Patch, nil
 }

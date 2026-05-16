@@ -19,6 +19,8 @@ const (
 	errCodeInvalidCreateTaskBody     = 1005
 	errCodeInvalidTaskStatusBody     = 1001
 	errCodeInvalidRunTaskBody        = 1011
+	errCodeInvalidApproveTaskBody    = 1012
+	errCodeInvalidRejectTaskBody     = 1013
 	errCodeInvalidMessageBody        = 1006
 	errCodeInvalidToolCallBody       = 1008
 	errCodeInvalidArtifactBody       = 1009
@@ -150,6 +152,51 @@ func (h *RuntimeHandler) RunTask(c *gin.Context) {
 	}
 
 	data, err := h.runtime.RunTask(c.Request.Context(), c.Param("id"), c.Param("taskId"), payload)
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
+// Approvals returns the approvals under the given thread.
+func (h *RuntimeHandler) Approvals(c *gin.Context) {
+	data, err := h.runtime.Approvals(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, gin.H{"items": data})
+}
+
+// ApproveTask approves an existing thread-local task.
+func (h *RuntimeHandler) ApproveTask(c *gin.Context) {
+	var payload runtimecontract.ApproveTaskRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		xresp.BadRequest(c, errCodeInvalidApproveTaskBody, "invalid approve task payload")
+		return
+	}
+
+	data, err := h.runtime.ApproveTask(c.Request.Context(), c.Param("id"), c.Param("taskId"), payload)
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
+// RejectTask rejects an existing thread-local task.
+func (h *RuntimeHandler) RejectTask(c *gin.Context) {
+	var payload runtimecontract.RejectTaskRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		xresp.BadRequest(c, errCodeInvalidRejectTaskBody, "invalid reject task payload")
+		return
+	}
+
+	data, err := h.runtime.RejectTask(c.Request.Context(), c.Param("id"), c.Param("taskId"), payload)
 	if err != nil {
 		writeRuntimeError(c, err)
 		return

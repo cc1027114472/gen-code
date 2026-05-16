@@ -1,5 +1,6 @@
 import {
   ActivateThread as WailsActivateThread,
+  ApproveTask as WailsApproveTask,
   AdvanceTask as WailsAdvanceTask,
   BrowserActivateTab as WailsBrowserActivateTab,
   BrowserBack as WailsBrowserBack,
@@ -14,6 +15,7 @@ import {
   CreateThread as WailsCreateThread,
   GetAppInfo as WailsGetAppInfo,
   GetRuntimeStatus as WailsGetRuntimeStatus,
+  RejectTask as WailsRejectTask,
 } from "../wailsjs/go/main/App";
 
 type ApiEnvelope<T> = {
@@ -67,8 +69,21 @@ type TaskDescriptor = {
   kind?: string;
   inputSummary?: string;
   resultSummary?: string;
+  approvalStatus?: string;
   createdAt: string;
   updatedAt?: string;
+};
+
+type ApprovalDescriptor = {
+  id: string;
+  threadId: string;
+  taskId: string;
+  toolKind: string;
+  status: string;
+  summary: string;
+  targetPaths: string[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 type MessageDescriptor = {
@@ -193,9 +208,11 @@ export type RuntimeStatus = {
     input: string;
     status: string;
     resultSummary: string;
+    approvalStatus: string;
     createdAt: string;
     updatedAt: string;
   }>;
+  approvals: ApprovalDescriptor[];
   messages: MessageDescriptor[];
   toolCalls: ToolCallDescriptor[];
   artifacts: ArtifactDescriptor[];
@@ -339,9 +356,10 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
   ]);
 
   const activeThreadID = status.activeThreadId || "";
-  const [tasks, messages, toolCalls, artifacts, events] = activeThreadID
+  const [tasks, approvals, messages, toolCalls, artifacts, events] = activeThreadID
     ? await Promise.all([
         fetchEnvelope<{ items: TaskDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/tasks`),
+        fetchEnvelope<{ items: ApprovalDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/approvals`),
         fetchEnvelope<{ items: MessageDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/messages`),
         fetchEnvelope<{ items: ToolCallDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/tool-calls`),
         fetchEnvelope<{ items: ArtifactDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/artifacts`),
@@ -349,6 +367,7 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
       ])
     : [
         { items: [] as TaskDescriptor[] },
+        { items: [] as ApprovalDescriptor[] },
         { items: [] as MessageDescriptor[] },
         { items: [] as ToolCallDescriptor[] },
         { items: [] as ArtifactDescriptor[] },
@@ -385,9 +404,11 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
       input: item.inputSummary || "",
       status: item.status,
       resultSummary: item.resultSummary || "",
+      approvalStatus: item.approvalStatus || "",
       createdAt: item.createdAt,
       updatedAt: item.updatedAt || item.createdAt,
     })),
+    approvals: approvals.items,
     messages: messages.items,
     toolCalls: toolCalls.items,
     artifacts: artifacts.items,
@@ -499,6 +520,30 @@ export async function AdvanceTask(taskID: string): Promise<RuntimeStatus> {
   }
 
   await fetchEnvelope(`/api/threads/${encodeURIComponent(runtime.activeThreadId)}/tasks/${encodeURIComponent(taskID)}/run`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return buildRuntimeStatus();
+}
+
+export async function ApproveTask(threadID: string, taskID: string): Promise<RuntimeStatus> {
+  if (hasWailsBridge()) {
+    return WailsApproveTask(threadID, taskID);
+  }
+
+  await fetchEnvelope(`/api/threads/${encodeURIComponent(threadID)}/tasks/${encodeURIComponent(taskID)}/approve`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return buildRuntimeStatus();
+}
+
+export async function RejectTask(threadID: string, taskID: string): Promise<RuntimeStatus> {
+  if (hasWailsBridge()) {
+    return WailsRejectTask(threadID, taskID);
+  }
+
+  await fetchEnvelope(`/api/threads/${encodeURIComponent(threadID)}/tasks/${encodeURIComponent(taskID)}/reject`, {
     method: "POST",
     body: JSON.stringify({}),
   });

@@ -6,6 +6,10 @@ export function ActivateThread(arg1) {
   return window["go"]["main"]["App"]["ActivateThread"](arg1);
 }
 
+export function ApproveTask(arg1,arg2) {
+  return window["go"]["main"]["App"]["ApproveTask"](arg1,arg2);
+}
+
 export function AdvanceTask(arg1) {
   return window["go"]["main"]["App"]["AdvanceTask"](arg1);
 }
@@ -60,4 +64,8 @@ export function GetAppInfo() {
 
 export function GetRuntimeStatus() {
   return window["go"]["main"]["App"]["GetRuntimeStatus"]();
+}
+
+export function RejectTask(arg1,arg2) {
+  return window["go"]["main"]["App"]["RejectTask"](arg1,arg2);
 }

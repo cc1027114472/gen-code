@@ -171,6 +171,29 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			wantBody:       []string{`"id":"task-1"`, `"status":"completed"`, `"resultSummary":"message appended"`},
 		},
 		{
+			name:           "approvals",
+			method:         http.MethodGet,
+			path:           "/api/threads/thread-1/approvals",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"approval-1","threadId":"thread-1","taskId":"task-1","toolKind":"workspace.apply_patch","status":"pending"`},
+		},
+		{
+			name:           "approve task",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-1/tasks/task-1/approve",
+			body:           `{}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"task-1"`, `"approvalStatus":"executed"`, `"status":"completed"`},
+		},
+		{
+			name:           "reject task",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-1/tasks/task-1/reject",
+			body:           `{}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"task-1"`, `"approvalStatus":"rejected"`, `"status":"failed"`},
+		},
+		{
 			name:           "update task status",
 			method:         http.MethodPost,
 			path:           "/api/threads/thread-1/tasks/task-1/status",
@@ -617,8 +640,53 @@ func (stubRuntimeService) RunTask(_ context.Context, threadID string, taskID str
 		Kind:          "thread.message.append",
 		InputSummary:  `{"role":"user","content":"Draft spec"}`,
 		ResultSummary: "message appended",
+		ApprovalStatus: "",
 		CreatedAt:     "2026-05-15T00:00:00Z",
 		UpdatedAt:     "2026-05-15T00:05:00Z",
+	}, nil
+}
+
+func (stubRuntimeService) Approvals(context.Context, string) ([]runtimecontract.ApprovalDescriptor, error) {
+	return []runtimecontract.ApprovalDescriptor{{
+		ID:          "approval-1",
+		ThreadID:    "thread-1",
+		TaskID:      "task-1",
+		ToolKind:    "workspace.apply_patch",
+		Status:      "pending",
+		Summary:     "approval required for workspace.apply_patch on README.md",
+		TargetPaths: []string{"README.md"},
+		CreatedAt:   "2026-05-15T00:00:00Z",
+		UpdatedAt:   "2026-05-15T00:00:00Z",
+	}}, nil
+}
+
+func (stubRuntimeService) ApproveTask(_ context.Context, threadID string, taskID string, _ runtimecontract.ApproveTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	return runtimecontract.TaskDescriptor{
+		ID:             taskID,
+		ThreadID:       threadID,
+		Title:          "Task 1",
+		Status:         "completed",
+		Kind:           "workspace.apply_patch",
+		InputSummary:   `{"path":"README.md","patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch"}`,
+		ResultSummary:  "applied patch to README.md: updated 1 line(s)",
+		ApprovalStatus: "executed",
+		CreatedAt:      "2026-05-15T00:00:00Z",
+		UpdatedAt:      "2026-05-15T00:05:00Z",
+	}, nil
+}
+
+func (stubRuntimeService) RejectTask(_ context.Context, threadID string, taskID string, _ runtimecontract.RejectTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	return runtimecontract.TaskDescriptor{
+		ID:             taskID,
+		ThreadID:       threadID,
+		Title:          "Task 1",
+		Status:         "failed",
+		Kind:           "workspace.apply_patch",
+		InputSummary:   `{"path":"README.md","patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch"}`,
+		ResultSummary:  "approval rejected: approval required for workspace.apply_patch on README.md",
+		ApprovalStatus: "rejected",
+		CreatedAt:      "2026-05-15T00:00:00Z",
+		UpdatedAt:      "2026-05-15T00:05:00Z",
 	}, nil
 }
 
@@ -638,6 +706,7 @@ func (stubRuntimeService) UpdateTaskStatus(_ context.Context, threadID string, t
 		ThreadID:  threadID,
 		Title:     "Task 1",
 		Status:    request.Status,
+		ApprovalStatus: "",
 		CreatedAt: "2026-05-15T00:00:00Z",
 		UpdatedAt: "2026-05-15T00:05:00Z",
 	}, nil
@@ -786,6 +855,18 @@ func (errorRuntimeService) CreateTask(context.Context, string, runtimecontract.C
 }
 
 func (errorRuntimeService) RunTask(context.Context, string, string, runtimecontract.RunTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Approvals(context.Context, string) ([]runtimecontract.ApprovalDescriptor, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) ApproveTask(context.Context, string, string, runtimecontract.ApproveTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) RejectTask(context.Context, string, string, runtimecontract.RejectTaskRequest) (runtimecontract.TaskDescriptor, error) {
 	return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, "runtime unavailable")
 }
 

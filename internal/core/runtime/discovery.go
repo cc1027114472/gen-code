@@ -110,6 +110,17 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 			Executable:         true,
 		},
 		{
+			ID:                 "workspace.apply_patch",
+			Name:               "Workspace Apply Patch",
+			Description:        "Apply an approved text patch inside the current workspace root",
+			InputSchemaSummary: `{"path":"relative workspace path","patch":"*** Begin Patch..."}`,
+			PermissionMode:     policy.AskUser,
+			Source:             "runtime",
+			Kind:               "workspace.apply_patch",
+			ReadOnly:           false,
+			Executable:         true,
+		},
+		{
 			ID:                 "thread.message.append",
 			Name:               "Thread Message Append",
 			Description:        "Append a private message to the current thread context",

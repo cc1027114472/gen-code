@@ -70,7 +70,7 @@ func run(ctx context.Context, args []string) error {
 		return printWorkspace(ctx, runtimeFacade)
 	case "threads":
 		if len(args) < 2 {
-			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts>")
+			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts|approvals>")
 		}
 		switch args[1] {
 		case "list":
@@ -148,12 +148,23 @@ func run(ctx context.Context, args []string) error {
 				return errors.New("usage: gen-code threads artifacts --id=<threadId>")
 			}
 			return printArtifacts(ctx, runtimeFacade, id)
+		case "approvals":
+			var id string
+			for _, arg := range args[2:] {
+				if strings.HasPrefix(arg, "--id=") {
+					id = strings.TrimSpace(strings.TrimPrefix(arg, "--id="))
+				}
+			}
+			if id == "" {
+				return errors.New("usage: gen-code threads approvals --id=<threadId>")
+			}
+			return printApprovals(ctx, runtimeFacade, id)
 		default:
-			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts>")
+			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts|approvals>")
 		}
 	case "tasks":
 		if len(args) < 2 {
-			return errors.New("usage: gen-code tasks <list|create|run|update-status>")
+			return errors.New("usage: gen-code tasks <list|create|run|approve|reject|update-status>")
 		}
 		switch args[1] {
 		case "list":
@@ -199,6 +210,34 @@ func run(ctx context.Context, args []string) error {
 				return errors.New("usage: gen-code tasks run --thread=<threadId> --task=<taskId>")
 			}
 			return runTask(ctx, runtimeFacade, threadID, taskID)
+		case "approve":
+			var threadID, taskID string
+			for _, arg := range args[2:] {
+				switch {
+				case strings.HasPrefix(arg, "--thread="):
+					threadID = strings.TrimSpace(strings.TrimPrefix(arg, "--thread="))
+				case strings.HasPrefix(arg, "--task="):
+					taskID = strings.TrimSpace(strings.TrimPrefix(arg, "--task="))
+				}
+			}
+			if threadID == "" || taskID == "" {
+				return errors.New("usage: gen-code tasks approve --thread=<threadId> --task=<taskId>")
+			}
+			return approveTask(ctx, runtimeFacade, threadID, taskID)
+		case "reject":
+			var threadID, taskID string
+			for _, arg := range args[2:] {
+				switch {
+				case strings.HasPrefix(arg, "--thread="):
+					threadID = strings.TrimSpace(strings.TrimPrefix(arg, "--thread="))
+				case strings.HasPrefix(arg, "--task="):
+					taskID = strings.TrimSpace(strings.TrimPrefix(arg, "--task="))
+				}
+			}
+			if threadID == "" || taskID == "" {
+				return errors.New("usage: gen-code tasks reject --thread=<threadId> --task=<taskId>")
+			}
+			return rejectTask(ctx, runtimeFacade, threadID, taskID)
 		case "update-status":
 			var threadID, taskID, status string
 			for _, arg := range args[2:] {
@@ -216,7 +255,7 @@ func run(ctx context.Context, args []string) error {
 			}
 			return updateTaskStatus(ctx, runtimeFacade, threadID, taskID, status)
 		default:
-			return errors.New("usage: gen-code tasks <list|create|run|update-status>")
+			return errors.New("usage: gen-code tasks <list|create|run|approve|reject|update-status>")
 		}
 	case "model":
 		if len(args) < 2 || args[1] != "run" {
@@ -309,9 +348,12 @@ func printUsage() {
 	fmt.Println("  threads message-add --id=<threadId> --role=<role> --content=...")
 	fmt.Println("  threads tool-calls --id=<threadId>")
 	fmt.Println("  threads artifacts --id=<threadId>")
+	fmt.Println("  threads approvals --id=<threadId>")
 	fmt.Println("  tasks list --thread=<threadId>")
 	fmt.Println("  tasks create --thread=<threadId> --kind=<kind> [--title=...] [--input=...]")
 	fmt.Println("  tasks run --thread=<threadId> --task=<taskId>")
+	fmt.Println("  tasks approve --thread=<threadId> --task=<taskId>")
+	fmt.Println("  tasks reject --thread=<threadId> --task=<taskId>")
 	fmt.Println("  tasks update-status --thread=<threadId> --task=<taskId> --status=<status>")
 	fmt.Println("  model run --thread=<threadId> --input=... [--provider=...] [--model=...] [--max-output-tokens=...] [--title=...]")
 	fmt.Println("  skills list [--group=<group>]")
@@ -412,6 +454,33 @@ func (f *runtimeFacade) runTask(ctx context.Context, threadID string, taskID str
 	}
 	f.source = "local-fallback"
 	return f.service.RunTask(ctx, threadID, taskID, request)
+}
+
+func (f *runtimeFacade) approvals(ctx context.Context, threadID string) ([]runtimecontract.ApprovalDescriptor, error) {
+	if items, err := f.client.approvals(threadID); err == nil {
+		f.source = "remote-app-server"
+		return items, nil
+	}
+	f.source = "local-fallback"
+	return f.service.Approvals(ctx, threadID)
+}
+
+func (f *runtimeFacade) approveTask(ctx context.Context, threadID string, taskID string, request runtimecontract.ApproveTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	if item, err := f.client.approveTask(threadID, taskID, request); err == nil {
+		f.source = "remote-app-server"
+		return item, nil
+	}
+	f.source = "local-fallback"
+	return f.service.ApproveTask(ctx, threadID, taskID, request)
+}
+
+func (f *runtimeFacade) rejectTask(ctx context.Context, threadID string, taskID string, request runtimecontract.RejectTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	if item, err := f.client.rejectTask(threadID, taskID, request); err == nil {
+		f.source = "remote-app-server"
+		return item, nil
+	}
+	f.source = "local-fallback"
+	return f.service.RejectTask(ctx, threadID, taskID, request)
 }
 
 func (f *runtimeFacade) updateTaskStatus(ctx context.Context, threadID string, taskID string, request runtimecontract.UpdateTaskStatusRequest) (runtimecontract.TaskDescriptor, error) {
@@ -736,6 +805,22 @@ func printArtifacts(ctx context.Context, facade *runtimeFacade, threadID string)
 	return nil
 }
 
+func printApprovals(ctx context.Context, facade *runtimeFacade, threadID string) error {
+	items, err := facade.approvals(ctx, threadID)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("thread approvals")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  thread: %s\n", threadID)
+	for _, item := range items {
+		fmt.Printf("  - %s (%s, task=%s, tool=%s, targets=%s): %s\n", item.ID, item.Status, item.TaskID, item.ToolKind, strings.Join(item.TargetPaths, ","), item.Summary)
+	}
+	return nil
+}
+
 func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) error {
 	items, err := facade.tasks(ctx, threadID)
 	if err != nil {
@@ -747,7 +832,7 @@ func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) err
 	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  thread: %s\n", threadID)
 	for _, item := range items {
-		fmt.Printf("  - %s (%s, kind=%s, updated=%s, result=%s)\n", item.ID, item.Status, fallbackText(item.Kind, "none"), fallbackText(item.UpdatedAt, "none"), fallbackText(item.ResultSummary, "none"))
+		fmt.Printf("  - %s (%s, approval=%s, kind=%s, updated=%s, result=%s)\n", item.ID, item.Status, fallbackText(item.ApprovalStatus, "none"), fallbackText(item.Kind, "none"), fallbackText(item.UpdatedAt, "none"), fallbackText(item.ResultSummary, "none"))
 	}
 	return nil
 }
@@ -771,6 +856,7 @@ func createTask(ctx context.Context, facade *runtimeFacade, threadID string, tit
 	fmt.Printf("  title: %s\n", item.Title)
 	fmt.Printf("  kind: %s\n", item.Kind)
 	fmt.Printf("  status: %s\n", item.Status)
+	fmt.Printf("  approval: %s\n", fallbackText(item.ApprovalStatus, "none"))
 	fmt.Printf("  input: %s\n", fallbackText(item.InputSummary, "none"))
 	fmt.Println("  input hint: PowerShell JSON can use --input='{\"path\":\"go.mod\"}' or --input='{\"query\":\"workspace\",\"path\":\"internal\"}'")
 	return nil
@@ -838,6 +924,43 @@ func runTask(ctx context.Context, facade *runtimeFacade, threadID string, taskID
 	fmt.Printf("  thread id: %s\n", item.ThreadID)
 	fmt.Printf("  kind: %s\n", fallbackText(item.Kind, "none"))
 	fmt.Printf("  status: %s\n", item.Status)
+	fmt.Printf("  approval: %s\n", fallbackText(item.ApprovalStatus, "none"))
+	fmt.Printf("  result: %s\n", fallbackText(item.ResultSummary, "none"))
+	return nil
+}
+
+func approveTask(ctx context.Context, facade *runtimeFacade, threadID string, taskID string) error {
+	item, err := facade.approveTask(ctx, threadID, taskID, runtimecontract.ApproveTaskRequest{})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("task approved")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  id: %s\n", item.ID)
+	fmt.Printf("  thread id: %s\n", item.ThreadID)
+	fmt.Printf("  kind: %s\n", fallbackText(item.Kind, "none"))
+	fmt.Printf("  status: %s\n", item.Status)
+	fmt.Printf("  approval: %s\n", fallbackText(item.ApprovalStatus, "none"))
+	fmt.Printf("  result: %s\n", fallbackText(item.ResultSummary, "none"))
+	return nil
+}
+
+func rejectTask(ctx context.Context, facade *runtimeFacade, threadID string, taskID string) error {
+	item, err := facade.rejectTask(ctx, threadID, taskID, runtimecontract.RejectTaskRequest{})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("task rejected")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  id: %s\n", item.ID)
+	fmt.Printf("  thread id: %s\n", item.ThreadID)
+	fmt.Printf("  kind: %s\n", fallbackText(item.Kind, "none"))
+	fmt.Printf("  status: %s\n", item.Status)
+	fmt.Printf("  approval: %s\n", fallbackText(item.ApprovalStatus, "none"))
 	fmt.Printf("  result: %s\n", fallbackText(item.ResultSummary, "none"))
 	return nil
 }
@@ -1170,6 +1293,14 @@ func (c *remoteRuntimeClient) tasks(threadID string) ([]runtimecontract.TaskDesc
 	return payload.Items, err
 }
 
+func (c *remoteRuntimeClient) approvals(threadID string) ([]runtimecontract.ApprovalDescriptor, error) {
+	var payload struct {
+		Items []runtimecontract.ApprovalDescriptor `json:"items"`
+	}
+	err := c.fetchEnvelope("/api/threads/"+url.PathEscape(threadID)+"/approvals", &payload)
+	return payload.Items, err
+}
+
 func (c *remoteRuntimeClient) messages(threadID string) ([]runtimecontract.MessageDescriptor, error) {
 	var payload struct {
 		Items []runtimecontract.MessageDescriptor `json:"items"`
@@ -1209,6 +1340,18 @@ func (c *remoteRuntimeClient) createTask(threadID string, request runtimecontrac
 func (c *remoteRuntimeClient) runTask(threadID string, taskID string, request runtimecontract.RunTaskRequest) (runtimecontract.TaskDescriptor, error) {
 	var item runtimecontract.TaskDescriptor
 	err := c.postEnvelope("/api/threads/"+url.PathEscape(threadID)+"/tasks/"+url.PathEscape(taskID)+"/run", request, &item)
+	return item, err
+}
+
+func (c *remoteRuntimeClient) approveTask(threadID string, taskID string, request runtimecontract.ApproveTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	var item runtimecontract.TaskDescriptor
+	err := c.postEnvelope("/api/threads/"+url.PathEscape(threadID)+"/tasks/"+url.PathEscape(taskID)+"/approve", request, &item)
+	return item, err
+}
+
+func (c *remoteRuntimeClient) rejectTask(threadID string, taskID string, request runtimecontract.RejectTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	var item runtimecontract.TaskDescriptor
+	err := c.postEnvelope("/api/threads/"+url.PathEscape(threadID)+"/tasks/"+url.PathEscape(taskID)+"/reject", request, &item)
 	return item, err
 }
 
@@ -1391,6 +1534,19 @@ func decodeEnvelope(response *http.Response, target any) error {
 	}:
 		var envelope apiEnvelope[struct {
 			Items []runtimecontract.ArtifactDescriptor `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
+		Items []runtimecontract.ApprovalDescriptor `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []runtimecontract.ApprovalDescriptor `json:"items"`
 		}]
 		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 			return err
