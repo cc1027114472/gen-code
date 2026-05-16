@@ -376,6 +376,28 @@ func (h *RuntimeHandler) Tools(c *gin.Context) {
 	xresp.OK(c, gin.H{"items": data})
 }
 
+// Providers returns the configured model providers exposed by the runtime.
+func (h *RuntimeHandler) Providers(c *gin.Context) {
+	data, err := h.runtime.Providers(c.Request.Context())
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, gin.H{"items": data})
+}
+
+// ProbeProvider runs a lightweight connectivity probe for the requested provider.
+func (h *RuntimeHandler) ProbeProvider(c *gin.Context) {
+	data, err := h.runtime.ProbeProvider(c.Request.Context(), c.Param("kind"))
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
 // MCPServers returns the configured MCP servers exposed by the runtime.
 func (h *RuntimeHandler) MCPServers(c *gin.Context) {
 	data, err := h.runtime.MCPServers(c.Request.Context())

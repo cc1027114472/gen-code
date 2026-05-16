@@ -60,6 +60,8 @@ func New(base logger.Logger, appName string, trustedProxies []string, httpAccess
 		api.GET("/threads/:id/events/stream", handlers.Runtime.StreamEvents)
 		api.GET("/skills", handlers.Runtime.Skills)
 		api.GET("/tools", handlers.Runtime.Tools)
+		api.GET("/providers", handlers.Runtime.Providers)
+		api.POST("/providers/:kind/probe", handlers.Runtime.ProbeProvider)
 		api.GET("/mcp/servers", handlers.Runtime.MCPServers)
 		api.POST("/bridge/check", handlers.Runtime.CheckBridge)
 	}

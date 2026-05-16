@@ -175,6 +175,29 @@ type Tool struct {
 	Executable  bool   `json:"executable"`
 }
 
+// Provider describes a configured model provider exposed by the runtime.
+type Provider struct {
+	Kind              string `json:"kind"`
+	Enabled           bool   `json:"enabled"`
+	BaseURL           string `json:"baseUrl,omitempty"`
+	DefaultModel      string `json:"defaultModel,omitempty"`
+	HasAuthToken      bool   `json:"hasAuthToken"`
+	SupportsChat      bool   `json:"supportsChat"`
+	SupportsResponses bool   `json:"supportsResponses"`
+	PreferredAPIStyle string `json:"preferredApiStyle,omitempty"`
+	Recommended       bool   `json:"recommended"`
+	RecommendedReason string `json:"recommendedReason,omitempty"`
+}
+
+// ProviderProbeResult describes the result of a lightweight provider connectivity probe.
+type ProviderProbeResult struct {
+	Kind              string         `json:"kind"`
+	Reachable         bool           `json:"reachable"`
+	PreferredAPIStyle string         `json:"preferredApiStyle,omitempty"`
+	Message           string         `json:"message,omitempty"`
+	Details           map[string]any `json:"details,omitempty"`
+}
+
 // MCPServer describes a configured MCP server.
 type MCPServer struct {
 	ID            string `json:"id"`
@@ -216,6 +239,8 @@ type Service interface {
 	StreamEvents(ctx context.Context, threadID string, request StreamEventsRequest) (<-chan EventDescriptor, error)
 	Skills(ctx context.Context) ([]Skill, error)
 	Tools(ctx context.Context) ([]Tool, error)
+	Providers(ctx context.Context) ([]Provider, error)
+	ProbeProvider(ctx context.Context, kind string) (ProviderProbeResult, error)
 	MCPServers(ctx context.Context) ([]MCPServer, error)
 	CheckBridge(ctx context.Context, request map[string]any) (BridgeCheckResult, error)
 }
@@ -319,6 +344,14 @@ func (noopService) StreamEvents(context.Context, string, StreamEventsRequest) (<
 
 func (noopService) Tools(context.Context) ([]Tool, error) {
 	return []Tool{}, nil
+}
+
+func (noopService) Providers(context.Context) ([]Provider, error) {
+	return []Provider{}, nil
+}
+
+func (noopService) ProbeProvider(context.Context, string) (ProviderProbeResult, error) {
+	return ProviderProbeResult{}, nil
 }
 
 func (noopService) MCPServers(context.Context) ([]MCPServer, error) {

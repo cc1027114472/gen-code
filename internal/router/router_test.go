@@ -207,6 +207,21 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			wantBody:       []string{`"items":[{"id":"tool-1","name":"Tool One","description":"Tool description","permissionMode":"ask-user","source":"runtime","kind":"workspace.read_file","readOnly":true,"executable":true}`},
 		},
 		{
+			name:           "providers",
+			method:         http.MethodGet,
+			path:           "/api/providers",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"kind":"anthropic","enabled":true,"baseUrl":"http://localhost:1314","defaultModel":"gpt-5.4-A","hasAuthToken":true,"supportsChat":true,"supportsResponses":true,"preferredApiStyle":"openai-responses","recommended":true`},
+		},
+		{
+			name:           "provider probe",
+			method:         http.MethodPost,
+			path:           "/api/providers/anthropic/probe",
+			body:           `{}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"kind":"anthropic"`, `"reachable":true`, `"preferredApiStyle":"openai-responses"`},
+		},
+		{
 			name:           "mcp servers",
 			method:         http.MethodGet,
 			path:           "/api/mcp/servers",
@@ -696,6 +711,33 @@ func (stubRuntimeService) MCPServers(context.Context) ([]runtimecontract.MCPServ
 	}}, nil
 }
 
+func (stubRuntimeService) Providers(context.Context) ([]runtimecontract.Provider, error) {
+	return []runtimecontract.Provider{{
+		Kind:              "anthropic",
+		Enabled:           true,
+		BaseURL:           "http://localhost:1314",
+		DefaultModel:      "gpt-5.4-A",
+		HasAuthToken:      true,
+		SupportsChat:      true,
+		SupportsResponses: true,
+		PreferredAPIStyle: "openai-responses",
+		Recommended:       true,
+		RecommendedReason: "gpt models should use responses",
+	}}, nil
+}
+
+func (stubRuntimeService) ProbeProvider(context.Context, string) (runtimecontract.ProviderProbeResult, error) {
+	return runtimecontract.ProviderProbeResult{
+		Kind:              "anthropic",
+		Reachable:         true,
+		PreferredAPIStyle: "openai-responses",
+		Message:           "provider reachable",
+		Details: map[string]any{
+			"supported_endpoint_types": []string{"openai"},
+		},
+	}, nil
+}
+
 func (stubRuntimeService) CheckBridge(_ context.Context, request map[string]any) (runtimecontract.BridgeCheckResult, error) {
 	return runtimecontract.BridgeCheckResult{
 		OK: true,
@@ -797,6 +839,14 @@ func (errorRuntimeService) Tools(context.Context) ([]runtimecontract.Tool, error
 
 func (errorRuntimeService) MCPServers(context.Context) ([]runtimecontract.MCPServer, error) {
 	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) Providers(context.Context) ([]runtimecontract.Provider, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) ProbeProvider(context.Context, string) (runtimecontract.ProviderProbeResult, error) {
+	return runtimecontract.ProviderProbeResult{}, xerror.Internal(2001, "runtime unavailable")
 }
 
 func (errorRuntimeService) CheckBridge(context.Context, map[string]any) (runtimecontract.BridgeCheckResult, error) {
