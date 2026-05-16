@@ -423,7 +423,7 @@ export default function App() {
     }
   };
 
-  const handleRunTask = async (taskID: string) => {
+  async function handleRunTask(taskID: string) {
     if (!runtimeStatus?.activeThreadId) return;
 
     setLoading(true);
@@ -438,9 +438,9 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const handleApproveTask = async (taskID: string) => {
+  async function handleApproveTask(taskID: string) {
     if (!runtimeStatus?.activeThreadId) return;
 
     setLoading(true);
@@ -455,9 +455,9 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const handleRejectTask = async (taskID: string) => {
+  async function handleRejectTask(taskID: string) {
     if (!runtimeStatus?.activeThreadId) return;
 
     setLoading(true);
@@ -472,7 +472,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   const handleOpenPreview = async () => {
     const draftValue = addressInputRef.current?.value || addressDraftRef.current;
