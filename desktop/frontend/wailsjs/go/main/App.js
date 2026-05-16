@@ -10,6 +10,38 @@ export function AdvanceTask(arg1) {
   return window["go"]["main"]["App"]["AdvanceTask"](arg1);
 }
 
+export function BrowserActivateTab(arg1) {
+  return window["go"]["main"]["App"]["BrowserActivateTab"](arg1);
+}
+
+export function BrowserBack(arg1) {
+  return window["go"]["main"]["App"]["BrowserBack"](arg1);
+}
+
+export function BrowserCloseTab(arg1) {
+  return window["go"]["main"]["App"]["BrowserCloseTab"](arg1);
+}
+
+export function BrowserForward(arg1) {
+  return window["go"]["main"]["App"]["BrowserForward"](arg1);
+}
+
+export function BrowserNavigate(arg1,arg2) {
+  return window["go"]["main"]["App"]["BrowserNavigate"](arg1,arg2);
+}
+
+export function BrowserOpen(arg1) {
+  return window["go"]["main"]["App"]["BrowserOpen"](arg1);
+}
+
+export function BrowserReload(arg1) {
+  return window["go"]["main"]["App"]["BrowserReload"](arg1);
+}
+
+export function BrowserState() {
+  return window["go"]["main"]["App"]["BrowserState"]();
+}
+
 export function CheckBridge() {
   return window["go"]["main"]["App"]["CheckBridge"]();
 }

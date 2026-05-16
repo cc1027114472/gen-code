@@ -3,6 +3,14 @@
 
 export function ActivateThread(arg1: string): Promise<any>;
 export function AdvanceTask(arg1: string): Promise<any>;
+export function BrowserActivateTab(arg1: string): Promise<any>;
+export function BrowserBack(arg1: string): Promise<any>;
+export function BrowserCloseTab(arg1: string): Promise<any>;
+export function BrowserForward(arg1: string): Promise<any>;
+export function BrowserNavigate(arg1: string,arg2: string): Promise<any>;
+export function BrowserOpen(arg1: string): Promise<any>;
+export function BrowserReload(arg1: string): Promise<any>;
+export function BrowserState(): Promise<any>;
 export function CheckBridge(): Promise<any>;
 export function CreateTask(arg1: string,arg2: string): Promise<any>;
 export function CreateThread(arg1: string): Promise<any>;

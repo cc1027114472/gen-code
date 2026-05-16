@@ -162,3 +162,54 @@ func TestCheckBridgeFallsBackLocally(t *testing.T) {
 		t.Fatalf("expected local runtime hint, got %q", result.RuntimeHint)
 	}
 }
+
+func TestBrowserWorkspaceFlow(t *testing.T) {
+	app := NewApp()
+	defer app.shutdown(nil)
+
+	initial := app.BrowserState()
+	if !initial.IsOpen {
+		t.Fatal("expected browser workspace open by default")
+	}
+	if len(initial.Tabs) != 1 {
+		t.Fatalf("expected 1 default tab, got %d", len(initial.Tabs))
+	}
+	if initial.ActiveTabID == "" {
+		t.Fatal("expected active browser tab id")
+	}
+	if initial.Tabs[0].URL == "" {
+		t.Fatal("expected default browser url")
+	}
+
+	opened := app.BrowserOpen("http://127.0.0.1:5174/")
+	if len(opened.Tabs) != 2 {
+		t.Fatalf("expected 2 tabs after open, got %d", len(opened.Tabs))
+	}
+	activeID := opened.ActiveTabID
+
+	navigated := app.BrowserNavigate(activeID, "http://localhost:10008/")
+	if navigated.ActiveTabID != activeID {
+		t.Fatalf("expected active tab %q, got %q", activeID, navigated.ActiveTabID)
+	}
+	if navigated.Tabs[len(navigated.Tabs)-1].URL != "http://localhost:10008/" {
+		t.Fatalf("expected navigated URL, got %q", navigated.Tabs[len(navigated.Tabs)-1].URL)
+	}
+
+	reloaded := app.BrowserReload(activeID)
+	if reloaded.ActiveTabID != activeID {
+		t.Fatalf("expected active tab after reload, got %q", reloaded.ActiveTabID)
+	}
+
+	activated := app.BrowserActivateTab(initial.Tabs[0].ID)
+	if activated.ActiveTabID != initial.Tabs[0].ID {
+		t.Fatalf("expected first tab active, got %q", activated.ActiveTabID)
+	}
+
+	closed := app.BrowserCloseTab(initial.Tabs[0].ID)
+	if len(closed.Tabs) != 1 {
+		t.Fatalf("expected 1 tab after close, got %d", len(closed.Tabs))
+	}
+	if closed.ActiveTabID == "" {
+		t.Fatal("expected remaining active tab after close")
+	}
+}

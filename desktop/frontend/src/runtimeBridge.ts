@@ -1,6 +1,14 @@
 import {
   ActivateThread as WailsActivateThread,
   AdvanceTask as WailsAdvanceTask,
+  BrowserActivateTab as WailsBrowserActivateTab,
+  BrowserBack as WailsBrowserBack,
+  BrowserCloseTab as WailsBrowserCloseTab,
+  BrowserForward as WailsBrowserForward,
+  BrowserNavigate as WailsBrowserNavigate,
+  BrowserOpen as WailsBrowserOpen,
+  BrowserReload as WailsBrowserReload,
+  BrowserState as WailsBrowserState,
   CheckBridge as WailsCheckBridge,
   CreateTask as WailsCreateTask,
   CreateThread as WailsCreateThread,
@@ -126,6 +134,22 @@ export type BridgeCheckResult = {
   runtimeHint: string;
 };
 
+export type BrowserTab = {
+  id: string;
+  title: string;
+  url: string;
+  status: string;
+  isActive: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+};
+
+export type BrowserWorkspaceState = {
+  isOpen: boolean;
+  tabs: BrowserTab[];
+  activeTabId: string;
+};
+
 export type RuntimeStatus = {
   appName: string;
   appEnv: string;
@@ -198,6 +222,7 @@ type BrowserImportMeta = ImportMeta & {
 };
 
 const defaultRuntimeBaseURL = "http://127.0.0.1:10008";
+let fallbackBrowserState: BrowserWorkspaceState | null = null;
 
 function hasWailsBridge() {
   return typeof window !== "undefined" && !!window.go?.main?.App;
@@ -456,4 +481,146 @@ export async function AdvanceTask(taskID: string): Promise<RuntimeStatus> {
     body: JSON.stringify({}),
   });
   return buildRuntimeStatus();
+}
+
+function defaultBrowserState(): BrowserWorkspaceState {
+  return {
+    isOpen: true,
+    activeTabId: "browser-tab-local",
+    tabs: [
+      {
+        id: "browser-tab-local",
+        title: "127.0.0.1:5174",
+        url: "http://127.0.0.1:5174/",
+        status: "ready",
+        isActive: true,
+        canGoBack: false,
+        canGoForward: false,
+      },
+    ],
+  };
+}
+
+function cloneBrowserState(state: BrowserWorkspaceState): BrowserWorkspaceState {
+  return {
+    isOpen: state.isOpen,
+    activeTabId: state.activeTabId,
+    tabs: state.tabs.map((tab) => ({ ...tab })),
+  };
+}
+
+function ensureFallbackBrowserState(): BrowserWorkspaceState {
+  if (!fallbackBrowserState) {
+    fallbackBrowserState = defaultBrowserState();
+  }
+  return fallbackBrowserState;
+}
+
+export async function GetBrowserState(): Promise<BrowserWorkspaceState> {
+  if (hasWailsBridge()) {
+    return WailsBrowserState();
+  }
+  return cloneBrowserState(ensureFallbackBrowserState());
+}
+
+export async function BrowserOpen(url?: string): Promise<BrowserWorkspaceState> {
+  if (hasWailsBridge()) {
+    return WailsBrowserOpen(url || "");
+  }
+  const current = ensureFallbackBrowserState();
+  const nextID = `browser-tab-local-${current.tabs.length + 1}`;
+  current.tabs = current.tabs.map((item: BrowserTab) => ({ ...item, isActive: false }));
+  current.tabs.push({
+    id: nextID,
+    title: url || "本地预览",
+    url: url || "http://127.0.0.1:5174/",
+    status: "ready",
+    isActive: true,
+    canGoBack: false,
+    canGoForward: false,
+  });
+  current.activeTabId = nextID;
+  current.isOpen = true;
+  return cloneBrowserState(current);
+}
+
+export async function BrowserNavigate(tabId: string, url: string): Promise<BrowserWorkspaceState> {
+  if (hasWailsBridge()) {
+    return WailsBrowserNavigate(tabId, url);
+  }
+  const current = ensureFallbackBrowserState();
+  const targetID = tabId || current.activeTabId || current.tabs[0]?.id || "browser-tab-local";
+  const hasTarget = current.tabs.some((item: BrowserTab) => item.id === targetID);
+  if (hasTarget) {
+    current.tabs = current.tabs.map((item: BrowserTab) =>
+      item.id === targetID
+        ? { ...item, title: url, url, status: "ready", isActive: true, canGoBack: false, canGoForward: false }
+        : { ...item, isActive: false },
+    );
+  } else {
+    current.tabs = [
+      ...current.tabs.map((item: BrowserTab) => ({ ...item, isActive: false })),
+      {
+        id: targetID,
+        title: url,
+        url,
+        status: "ready",
+        isActive: true,
+        canGoBack: false,
+        canGoForward: false,
+      },
+    ];
+  }
+  current.activeTabId = targetID;
+  current.isOpen = true;
+  return cloneBrowserState(current);
+}
+
+export async function BrowserBack(tabId: string): Promise<BrowserWorkspaceState> {
+  if (hasWailsBridge()) {
+    return WailsBrowserBack(tabId);
+  }
+  return cloneBrowserState(ensureFallbackBrowserState());
+}
+
+export async function BrowserForward(tabId: string): Promise<BrowserWorkspaceState> {
+  if (hasWailsBridge()) {
+    return WailsBrowserForward(tabId);
+  }
+  return cloneBrowserState(ensureFallbackBrowserState());
+}
+
+export async function BrowserReload(tabId: string): Promise<BrowserWorkspaceState> {
+  if (hasWailsBridge()) {
+    return WailsBrowserReload(tabId);
+  }
+  return cloneBrowserState(ensureFallbackBrowserState());
+}
+
+export async function BrowserCloseTab(tabId: string): Promise<BrowserWorkspaceState> {
+  if (hasWailsBridge()) {
+    return WailsBrowserCloseTab(tabId);
+  }
+  const current = ensureFallbackBrowserState();
+  current.tabs = current.tabs.filter((item: BrowserTab) => item.id !== tabId);
+  if (current.tabs.length === 0) {
+    fallbackBrowserState = defaultBrowserState();
+    return cloneBrowserState(fallbackBrowserState);
+  }
+  if (!current.tabs.some((item: BrowserTab) => item.id === current.activeTabId)) {
+    current.activeTabId = current.tabs[0].id;
+  }
+  current.tabs = current.tabs.map((item: BrowserTab) => ({ ...item, isActive: item.id === current.activeTabId }));
+  return cloneBrowserState(current);
+}
+
+export async function BrowserActivateTab(tabId: string): Promise<BrowserWorkspaceState> {
+  if (hasWailsBridge()) {
+    return WailsBrowserActivateTab(tabId);
+  }
+  const current = ensureFallbackBrowserState();
+  current.activeTabId = tabId;
+  current.tabs = current.tabs.map((item: BrowserTab) => ({ ...item, isActive: item.id === tabId }));
+  current.isOpen = true;
+  return cloneBrowserState(current);
 }

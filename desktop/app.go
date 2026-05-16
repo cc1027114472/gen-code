@@ -26,8 +26,9 @@ const (
 )
 
 type App struct {
-	ctx   context.Context
-	store *localRuntimeStore
+	ctx     context.Context
+	store   *localRuntimeStore
+	browser *browserWorkspace
 }
 
 type apiEnvelope[T any] struct {
@@ -136,6 +137,22 @@ type BridgeCheckResult struct {
 	RuntimeHint string `json:"runtimeHint"`
 }
 
+type BrowserTab struct {
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	URL          string `json:"url"`
+	Status       string `json:"status"`
+	IsActive     bool   `json:"isActive"`
+	CanGoBack    bool   `json:"canGoBack"`
+	CanGoForward bool   `json:"canGoForward"`
+}
+
+type BrowserWorkspaceState struct {
+	IsOpen      bool         `json:"isOpen"`
+	Tabs        []BrowserTab `json:"tabs"`
+	ActiveTabID string       `json:"activeTabId"`
+}
+
 type apiStatus struct {
 	State          string `json:"state"`
 	Ready          bool   `json:"ready"`
@@ -239,6 +256,14 @@ type runtimeClient struct {
 	client  http.Client
 }
 
+type browserWorkspace struct {
+	mu         sync.Mutex
+	isOpen     bool
+	tabs       []BrowserTab
+	activeTab  string
+	nextTabNum int
+}
+
 type localRuntimeStore struct {
 	mu sync.Mutex
 	db *sql.DB
@@ -306,7 +331,8 @@ type persistedEvent struct {
 
 func NewApp() *App {
 	return &App{
-		store: newLocalRuntimeStore(),
+		store:   newLocalRuntimeStore(),
+		browser: newBrowserWorkspace(),
 	}
 }
 
@@ -323,6 +349,62 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) GetAppInfo() string {
 	return "gen-code desktop shell ready"
+}
+
+func (a *App) BrowserState() BrowserWorkspaceState {
+	if a == nil || a.browser == nil {
+		return BrowserWorkspaceState{}
+	}
+	return a.browser.State()
+}
+
+func (a *App) BrowserOpen(rawURL string) BrowserWorkspaceState {
+	if a == nil || a.browser == nil {
+		return BrowserWorkspaceState{}
+	}
+	return a.browser.Open(rawURL)
+}
+
+func (a *App) BrowserNavigate(tabID string, rawURL string) BrowserWorkspaceState {
+	if a == nil || a.browser == nil {
+		return BrowserWorkspaceState{}
+	}
+	return a.browser.Navigate(tabID, rawURL)
+}
+
+func (a *App) BrowserBack(tabID string) BrowserWorkspaceState {
+	if a == nil || a.browser == nil {
+		return BrowserWorkspaceState{}
+	}
+	return a.browser.Back(tabID)
+}
+
+func (a *App) BrowserForward(tabID string) BrowserWorkspaceState {
+	if a == nil || a.browser == nil {
+		return BrowserWorkspaceState{}
+	}
+	return a.browser.Forward(tabID)
+}
+
+func (a *App) BrowserReload(tabID string) BrowserWorkspaceState {
+	if a == nil || a.browser == nil {
+		return BrowserWorkspaceState{}
+	}
+	return a.browser.Reload(tabID)
+}
+
+func (a *App) BrowserCloseTab(tabID string) BrowserWorkspaceState {
+	if a == nil || a.browser == nil {
+		return BrowserWorkspaceState{}
+	}
+	return a.browser.CloseTab(tabID)
+}
+
+func (a *App) BrowserActivateTab(tabID string) BrowserWorkspaceState {
+	if a == nil || a.browser == nil {
+		return BrowserWorkspaceState{}
+	}
+	return a.browser.ActivateTab(tabID)
 }
 
 func (a *App) GetRuntimeStatus() RuntimeStatus {
@@ -569,9 +651,253 @@ func newRuntimeClient() runtimeClient {
 	return runtimeClient{
 		baseURL: strings.TrimRight(runtimeBaseURL(), "/"),
 		client: http.Client{
-			Timeout: 1500 * time.Millisecond,
+			Timeout: 90 * time.Second,
 		},
 	}
+}
+
+func newBrowserWorkspace() *browserWorkspace {
+	workspace := &browserWorkspace{
+		isOpen:     true,
+		tabs:       []BrowserTab{},
+		nextTabNum: 1,
+	}
+	workspace.openLocked(defaultBrowserURL())
+	return workspace
+}
+
+func defaultBrowserURL() string {
+	base := strings.TrimSpace(os.Getenv("GENCODE_DESKTOP_BROWSER_URL"))
+	if base != "" {
+		return normalizeBrowserURL(base)
+	}
+	return "http://127.0.0.1:5174/"
+}
+
+func normalizeBrowserURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return defaultRuntimeBaseURL
+	}
+	if strings.HasPrefix(trimmed, "localhost:") || strings.HasPrefix(trimmed, "127.0.0.1:") {
+		return "http://" + trimmed
+	}
+	if !strings.Contains(trimmed, "://") {
+		return "http://" + trimmed
+	}
+	return trimmed
+}
+
+func browserTabTitle(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "本地预览"
+	}
+	if parsed.Host != "" {
+		return parsed.Host
+	}
+	if parsed.Path != "" {
+		return filepath.Base(parsed.Path)
+	}
+	return "本地预览"
+}
+
+func cloneBrowserTabs(items []BrowserTab, activeID string) []BrowserTab {
+	cloned := make([]BrowserTab, 0, len(items))
+	for _, item := range items {
+		item.IsActive = item.ID == activeID
+		cloned = append(cloned, item)
+	}
+	return cloned
+}
+
+func (b *browserWorkspace) State() BrowserWorkspaceState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return BrowserWorkspaceState{
+		IsOpen:      b.isOpen,
+		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
+		ActiveTabID: b.activeTab,
+	}
+}
+
+func (b *browserWorkspace) Open(rawURL string) BrowserWorkspaceState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.isOpen = true
+	b.openLocked(rawURL)
+	return BrowserWorkspaceState{
+		IsOpen:      b.isOpen,
+		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
+		ActiveTabID: b.activeTab,
+	}
+}
+
+func (b *browserWorkspace) Navigate(tabID string, rawURL string) BrowserWorkspaceState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	targetID := strings.TrimSpace(tabID)
+	targetURL := normalizeBrowserURL(rawURL)
+	if targetID == "" {
+		b.openLocked(targetURL)
+	} else {
+		for index, item := range b.tabs {
+			if item.ID != targetID {
+				continue
+			}
+			item.URL = targetURL
+			item.Title = browserTabTitle(targetURL)
+			item.Status = "ready"
+			item.CanGoBack = false
+			item.CanGoForward = false
+			b.tabs[index] = item
+			b.activeTab = item.ID
+			break
+		}
+	}
+	return BrowserWorkspaceState{
+		IsOpen:      true,
+		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
+		ActiveTabID: b.activeTab,
+	}
+}
+
+func (b *browserWorkspace) Reload(tabID string) BrowserWorkspaceState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	targetID := strings.TrimSpace(tabID)
+	if targetID == "" {
+		targetID = b.activeTab
+	}
+	for index, item := range b.tabs {
+		if item.ID != targetID {
+			continue
+		}
+		item.Status = "ready"
+		b.tabs[index] = item
+		b.activeTab = item.ID
+		break
+	}
+	return BrowserWorkspaceState{
+		IsOpen:      b.isOpen,
+		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
+		ActiveTabID: b.activeTab,
+	}
+}
+
+func (b *browserWorkspace) Back(tabID string) BrowserWorkspaceState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	targetID := strings.TrimSpace(tabID)
+	if targetID == "" {
+		targetID = b.activeTab
+	}
+	for index, item := range b.tabs {
+		if item.ID != targetID {
+			continue
+		}
+		item.CanGoBack = false
+		b.tabs[index] = item
+		b.activeTab = item.ID
+		break
+	}
+	return BrowserWorkspaceState{
+		IsOpen:      b.isOpen,
+		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
+		ActiveTabID: b.activeTab,
+	}
+}
+
+func (b *browserWorkspace) Forward(tabID string) BrowserWorkspaceState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	targetID := strings.TrimSpace(tabID)
+	if targetID == "" {
+		targetID = b.activeTab
+	}
+	for index, item := range b.tabs {
+		if item.ID != targetID {
+			continue
+		}
+		item.CanGoForward = false
+		b.tabs[index] = item
+		b.activeTab = item.ID
+		break
+	}
+	return BrowserWorkspaceState{
+		IsOpen:      b.isOpen,
+		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
+		ActiveTabID: b.activeTab,
+	}
+}
+
+func (b *browserWorkspace) CloseTab(tabID string) BrowserWorkspaceState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	targetID := strings.TrimSpace(tabID)
+	if targetID == "" {
+		targetID = b.activeTab
+	}
+	filtered := make([]BrowserTab, 0, len(b.tabs))
+	for _, item := range b.tabs {
+		if item.ID == targetID {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	b.tabs = filtered
+	if len(b.tabs) == 0 {
+		b.openLocked(defaultBrowserURL())
+	}
+	if !browserTabExists(b.tabs, b.activeTab) {
+		b.activeTab = b.tabs[len(b.tabs)-1].ID
+	}
+	return BrowserWorkspaceState{
+		IsOpen:      b.isOpen,
+		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
+		ActiveTabID: b.activeTab,
+	}
+}
+
+func (b *browserWorkspace) ActivateTab(tabID string) BrowserWorkspaceState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	targetID := strings.TrimSpace(tabID)
+	if browserTabExists(b.tabs, targetID) {
+		b.activeTab = targetID
+		b.isOpen = true
+	}
+	return BrowserWorkspaceState{
+		IsOpen:      b.isOpen,
+		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
+		ActiveTabID: b.activeTab,
+	}
+}
+
+func (b *browserWorkspace) openLocked(rawURL string) {
+	targetURL := normalizeBrowserURL(rawURL)
+	tabID := fmt.Sprintf("browser-tab-%d", b.nextTabNum)
+	b.nextTabNum++
+	tab := BrowserTab{
+		ID:           tabID,
+		Title:        browserTabTitle(targetURL),
+		URL:          targetURL,
+		Status:       "ready",
+		IsActive:     true,
+		CanGoBack:    false,
+		CanGoForward: false,
+	}
+	b.tabs = append(b.tabs, tab)
+	b.activeTab = tabID
+}
+
+func browserTabExists(items []BrowserTab, targetID string) bool {
+	for _, item := range items {
+		if item.ID == targetID {
+			return true
+		}
+	}
+	return false
 }
 
 func runtimeBaseURL() string {
