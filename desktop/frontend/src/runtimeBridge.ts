@@ -212,6 +212,7 @@ export type RuntimeStatus = {
     createdAt: string;
     updatedAt: string;
   }>;
+  executableKinds: string[];
   approvals: ApprovalDescriptor[];
   messages: MessageDescriptor[];
   toolCalls: ToolCallDescriptor[];
@@ -408,6 +409,10 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
       createdAt: item.createdAt,
       updatedAt: item.updatedAt || item.createdAt,
     })),
+    executableKinds: toolPayload.items
+      .filter((item) => item.executable && item.kind)
+      .map((item) => item.kind as string)
+      .sort((left, right) => left.localeCompare(right)),
     approvals: approvals.items,
     messages: messages.items,
     toolCalls: toolCalls.items,

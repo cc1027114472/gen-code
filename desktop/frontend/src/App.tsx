@@ -49,14 +49,6 @@ const defaultPreviewURL = "http://127.0.0.1:5174/";
 const embeddedPreviewParam = "gcPreview";
 const showPreviewDebug = import.meta.env.DEV;
 
-const executableKinds = [
-  "model.response.create",
-  "workspace.read_file",
-  "workspace.list_files",
-  "workspace.search_text",
-  "thread.message.append",
-];
-
 export default function App() {
   const embeddedPreview = useMemo(() => getEmbeddedPreviewState(), []);
   if (embeddedPreview) {
@@ -167,6 +159,9 @@ export default function App() {
   );
 
   const tasks = runtimeStatus?.tasks ?? [];
+  const executableKinds = runtimeStatus?.executableKinds?.length
+    ? runtimeStatus.executableKinds
+    : ["model.response.create", "thread.message.append", "workspace.list_files", "workspace.read_file", "workspace.search_text"];
   const approvals = runtimeStatus?.approvals ?? [];
   const messages = runtimeStatus?.messages ?? [];
   const toolCalls = runtimeStatus?.toolCalls ?? [];
