@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -225,6 +226,7 @@ func (s *Service) Tasks(_ context.Context, threadID string) ([]runtimecontract.T
 
 // CreateTask registers a task under the given thread.
 func (s *Service) CreateTask(_ context.Context, threadID string, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	request = normalizeCreateTaskRequest(request)
 	item, ok := s.session.CreateTask(threadID, session.CreateTaskInput{
 		Title: request.Title,
 		Kind:  request.Kind,
@@ -245,6 +247,44 @@ func (s *Service) CreateTask(_ context.Context, threadID string, request runtime
 		CreatedAt:     item.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
 	}, nil
+}
+
+func normalizeCreateTaskRequest(request runtimecontract.CreateTaskRequest) runtimecontract.CreateTaskRequest {
+	request.Title = strings.TrimSpace(request.Title)
+	request.Kind = strings.TrimSpace(request.Kind)
+	request.Input = strings.TrimSpace(request.Input)
+	if request.Kind != runner.KindModelResponse {
+		return request
+	}
+	if request.Input == "" {
+		request.Input = `{"input":""}`
+		return request
+	}
+	if strings.HasPrefix(request.Input, "{") && strings.HasSuffix(request.Input, "}") {
+		var payload struct {
+			Provider        string `json:"provider"`
+			Model           string `json:"model"`
+			Input           string `json:"input"`
+			MaxOutputTokens int    `json:"maxOutputTokens"`
+		}
+		if err := json.Unmarshal([]byte(request.Input), &payload); err == nil {
+			if strings.TrimSpace(payload.Input) == "" {
+				payload.Input = request.Input
+			}
+			normalized, marshalErr := json.Marshal(payload)
+			if marshalErr == nil {
+				request.Input = string(normalized)
+				return request
+			}
+		}
+	}
+	normalized, err := json.Marshal(map[string]string{
+		"input": request.Input,
+	})
+	if err == nil {
+		request.Input = string(normalized)
+	}
+	return request
 }
 
 // RunTask executes a queued task under the given thread.

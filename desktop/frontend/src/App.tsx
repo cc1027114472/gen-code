@@ -297,10 +297,28 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
+      const previousIDs = new Set((runtimeStatus?.threads ?? []).map((thread) => thread.id));
       const next = (await CreateThread("")) as RuntimeStatus;
-      setRuntimeStatus(next);
+      const createdThread =
+        next.threads.find((thread) => !previousIDs.has(thread.id)) ??
+        next.threads[next.threads.length - 1] ??
+        null;
+
+      if (createdThread && !createdThread.isActive) {
+        const activated = (await ActivateThread(createdThread.id)) as RuntimeStatus;
+        setRuntimeStatus(activated);
+        const targetThread = activated.threads.find((thread) => thread.id === createdThread.id) ?? createdThread;
+        await navigatePreviewForThread(targetThread);
+        setLastCheckedAt(formatTime(activated.updatedAt));
+      } else {
+        setRuntimeStatus(next);
+        if (createdThread) {
+          await navigatePreviewForThread(createdThread);
+        }
+        setLastCheckedAt(formatTime(next.updatedAt));
+      }
+
       setStatusMessage("已创建新 thread");
-      setLastCheckedAt(formatTime(next.updatedAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "创建 thread 失败");
     } finally {
@@ -530,6 +548,7 @@ export default function App() {
                   <label className="field">
                     <span className="field__label">标题</span>
                     <input
+                      data-testid="task-title-input"
                       value={draft.title}
                       onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
                       placeholder="例如：让模型总结 README"
@@ -538,7 +557,11 @@ export default function App() {
 
                   <label className="field field--compact">
                     <span className="field__label">kind</span>
-                    <select value={draft.kind} onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value }))}>
+                    <select
+                      data-testid="task-kind-select"
+                      value={draft.kind}
+                      onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value }))}
+                    >
                       {executableKinds.map((kind) => (
                         <option key={kind} value={kind}>
                           {kind}
@@ -551,15 +574,16 @@ export default function App() {
                 <label className="field">
                   <span className="field__label">input</span>
                   <textarea
+                    data-testid="task-input-textarea"
                     value={draft.input}
                     onChange={(event) => setDraft((current) => ({ ...current, input: event.target.value }))}
-                    placeholder='模型任务可直接输入提示词，或使用 JSON，例如 {"provider":"anthropic","model":"gpt-5.4-A","input":"请总结 README"}'
+                    placeholder='模型任务可直接输入 prompt，也可使用 JSON，例如 {"provider":"anthropic","model":"gpt-5.4-A","input":"请总结 README"}'
                     rows={4}
                   />
                 </label>
 
                 <div className="composer-actions">
-                  <button className="primary-action" onClick={handleCreateTask} disabled={loading || !runtimeStatus?.activeThreadId}>
+                  <button className="primary-action" data-testid="create-task-button" onClick={handleCreateTask} disabled={loading || !runtimeStatus?.activeThreadId}>
                     创建 task
                   </button>
                   <span className="composer-actions__hint">{statusMessage}</span>
@@ -598,7 +622,7 @@ export default function App() {
                 <div className="section-header">
                   <div>
                     <p className="section-title">结果抽屉</p>
-                    <h3>当前线程的关键结果与运行摘要</h3>
+                    <h3>当前线程的关键信息与运行摘要</h3>
                   </div>
                   <span className="mini-chip">{activeThread?.id || "no-thread"}</span>
                 </div>
@@ -622,16 +646,16 @@ export default function App() {
               <section className="browser-shell">
                 <div className="browser-tabs">
                   {(browserState?.tabs ?? []).map((tab) => (
-                    <button
+                    <div
                       key={tab.id}
                       className={`browser-tab ${tab.isActive ? "browser-tab--active" : ""}`}
                       data-testid={`browser-tab-${tab.id}`}
                       data-tab-id={tab.id}
                       data-active={tab.isActive ? "true" : "false"}
-                      onClick={() => void BrowserActivateTab(tab.id).then(setBrowserState)}
-                      type="button"
                     >
-                      <span>{tab.title}</span>
+                      <button className="browser-tab__label" onClick={() => void BrowserActivateTab(tab.id).then(setBrowserState)} type="button">
+                        <span>{tab.title}</span>
+                      </button>
                       <button
                         className="browser-tab__close"
                         onClick={(event) => {
@@ -642,7 +666,7 @@ export default function App() {
                       >
                         ×
                       </button>
-                    </button>
+                    </div>
                   ))}
                   <button className="browser-add-tab" onClick={() => void handleOpenPreview()} type="button">
                     +
@@ -658,7 +682,7 @@ export default function App() {
                       →
                     </button>
                     <button className="browser-nav" onClick={() => activeBrowserTab && void BrowserReload(activeBrowserTab.id).then(setBrowserState)} type="button">
-                      ↻
+                      刷新
                     </button>
                   </div>
 

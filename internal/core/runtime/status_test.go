@@ -10,6 +10,7 @@ import (
 	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/provider"
+	"llmtrace/internal/core/runner"
 	"llmtrace/internal/core/session"
 	"llmtrace/internal/core/skill"
 	"llmtrace/internal/core/state"
@@ -186,4 +187,41 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	}
 	require.NotEmpty(t, streamed)
 	require.Equal(t, created.ID, streamed[0].ThreadID)
+}
+
+func TestServiceCreateTaskNormalizesPlainModelInput(t *testing.T) {
+	projectRoot := t.TempDir()
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	sessions, err := session.NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+
+	service := NewService(
+		"0.1.0",
+		skill.Codex,
+		policy.DefaultMode(),
+		projectRoot,
+		tool.NewRegistry(),
+		skill.NewManager(nil),
+		mcp.NewManager(nil),
+		provider.NewRegistry(""),
+		sessions,
+	)
+
+	thread, err := service.CreateThread(context.Background(), runtimecontract.CreateThreadRequest{
+		Name:           "Model Plain Input",
+		PermissionMode: "workspace-write",
+	})
+	require.NoError(t, err)
+
+	task, err := service.CreateTask(context.Background(), thread.ID, runtimecontract.CreateTaskRequest{
+		Title: "Plain model input",
+		Kind:  runner.KindModelResponse,
+		Input: "Reply with exactly: plain text works.",
+	})
+	require.NoError(t, err)
+	require.Equal(t, runner.KindModelResponse, task.Kind)
+	require.JSONEq(t, `{"input":"Reply with exactly: plain text works."}`, task.InputSummary)
 }
