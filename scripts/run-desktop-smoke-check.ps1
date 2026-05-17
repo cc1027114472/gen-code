@@ -13,6 +13,8 @@ Write-Host "  lane         : $baselineLane"
 Write-Host "  script       : $scriptPath"
 Write-Host "  UI base URL  : $env:GEN_CODE_UI_BASE_URL"
 Write-Host "  API base URL : $env:GEN_CODE_API_BASE_URL"
+Write-Host "  mode         : $env:GEN_CODE_ACCEPTANCE_MODE"
+Write-Host "  fallback     : not part of the smoke gate"
 
 if (-not (Test-Path $scriptPath)) {
   Write-Error "Setup failure: verify-desktop-live-refresh.py not found at $scriptPath"

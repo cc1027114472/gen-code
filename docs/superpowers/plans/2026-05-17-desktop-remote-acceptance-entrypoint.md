@@ -81,6 +81,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
   - 包含 smoke 全覆盖
   - direct tool task 可见性
   - `agent.run` 父子任务可见性
+  - `agent.run` failure-state matrix
+  - success resume baseline
+  - approval rejected
+  - child task failed
+  - recovered_as_failed evidence
   - approval / write execution / rollback 可见性
 
 职责边界固定为：
@@ -91,6 +96,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 - `full`
   - 手动 / 发布前检查
   - 用于完整任务流、审批、写执行、rollback、MCP、agent 和 direct tool 链路
+  - `remote-app-server`: canonical browser gate
+  - `desktop local-fallback`: browser-visible evidence lane only
+  - failure-state coverage会同时出现在 summary 中，但默认 browser pass/fail 只由 remote canonical lane 决定
   - 当前不进入默认 GitHub workflow
 
 ## 非覆盖范围
@@ -102,6 +110,19 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 - full lane 的稳定 CI 托管执行
 
 其中 fallback lane 继续以手工验收和 Go 测试证据为主，不伪装成同级 browser 自动化通过项。
+
+当前 full summary 约定：
+
+- `remote.agentFailureMatrix`
+  - canonical browser live scenarios
+  - success resume baseline
+  - approval rejected
+  - child task failed
+  - recovered_as_failed evidence reference
+- `fallback.agentFailureEvidence`
+  - evidence-only
+  - browserAutomation=`not attempted`
+  - 当前显式记录 `recovered_as_failed` 的持久化证据测试
 
 ## CI Gate
 

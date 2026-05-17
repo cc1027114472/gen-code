@@ -114,6 +114,12 @@ type TaskGroup = {
   tasks: ExtendedRuntimeTask[];
 };
 
+type TaskStateSignal = {
+  tone: FlowItem["tone"];
+  summary: string;
+  consumesResultSummary?: boolean;
+};
+
 type PatchStats = {
   added: number;
   removed: number;
@@ -462,6 +468,7 @@ export default function App() {
       const agentMeta = task.kind === "agent.run" ? formatAgentMeta(task) : "";
       const roleLabel = formatTaskRoleLabel(task);
       const waitingLabel = formatTaskWaitingStatusLabel(task);
+      const taskTone = getTaskTone(task);
       const toneClass = isAgentParentTask(task)
         ? "flow-item--agent-parent"
         : task.parentTaskId
@@ -470,12 +477,7 @@ export default function App() {
       items.push({
         id: `task-${task.id}`,
         className: toneClass,
-        tone:
-          task.status === "completed"
-            ? "good"
-            : task.status === "failed" || task.status === "needs_approval" || task.status === "waiting_for_approval"
-              ? "warning"
-              : "neutral",
+        tone: taskTone,
         badge: `${roleLabel} / ${taskStatusLabel}${waitingLabel ? ` / ${waitingLabel}` : ""}`,
         title: `${formatTaskHeadline(task, parentTask)}${agentMeta ? ` / ${agentMeta}` : ""}`,
         body: writeExecution ? (
@@ -935,7 +937,7 @@ export default function App() {
                     <h4>{activeThreadWorkflow?.name || activeThread?.name || "暂无活动线程"}</h4>
                     <p>{activeThreadWorkflow?.summary || "激活一个线程后，可以查看任务、审批和写执行关系。"}</p>
                   </article>
-                  <article className={`flow-item flow-item--neutral ${latestAgentTask ? "flow-item--agent-parent" : ""}`} data-testid="latest-agent-overview-card">
+                  <article className={`flow-item flow-item--${latestAgentTask ? getTaskTone(latestAgentTask) : "neutral"} ${latestAgentTask ? "flow-item--agent-parent" : ""}`} data-testid="latest-agent-overview-card">
                     <div className="flow-item__header">
                       <span className="mini-chip">Agent 闭环</span>
                       <span className="flow-item__meta">{latestAgentTask ? formatTaskStatus(latestAgentTask.status) : "就绪"}</span>
@@ -1029,7 +1031,7 @@ export default function App() {
                 {waitingTasks.length > 0 ? (
                   <div className="approval-panel" data-testid="waiting-task-panel">
                     {waitingTasks.slice(0, 4).map((task) => (
-                      <article className={`flow-item flow-item--warning ${isAgentParentTask(task) ? "flow-item--agent-parent" : task.parentTaskId ? "flow-item--agent-child" : ""}`} key={task.id}>
+                      <article className={`flow-item flow-item--${getTaskTone(task)} ${isAgentParentTask(task) ? "flow-item--agent-parent" : task.parentTaskId ? "flow-item--agent-child" : ""}`} key={task.id}>
                         <div className="flow-item__header">
                           <span className="mini-chip">{formatTaskWaitingStatusLabel(task)}</span>
                           <span className="flow-item__meta">{formatTime(task.updatedAt || task.createdAt)}</span>
@@ -1047,7 +1049,7 @@ export default function App() {
                 {childTasks.length > 0 ? (
                   <div className="approval-panel" data-testid="child-task-panel">
                     {childTasks.slice(0, 4).map((task) => (
-                      <article className="flow-item flow-item--neutral flow-item--agent-child" key={task.id}>
+                      <article className={`flow-item flow-item--${getTaskTone(task)} flow-item--agent-child`} key={task.id}>
                         <div className="flow-item__header">
                           <span className="mini-chip">{formatTaskRoleLabel(task)}</span>
                           <span className="flow-item__meta">{formatTaskStatus(task.status)}</span>
@@ -1487,6 +1489,121 @@ function isAgentParentTask(task: ExtendedRuntimeTask) {
   return task.kind === "agent.run" && !task.parentTaskId;
 }
 
+function summarizeStateDetail(value: string, fallback: string, maxLength = 160) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) {
+    return fallback;
+  }
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, maxLength)}...`;
+}
+
+function getTaskStateSignal(task: ExtendedRuntimeTask): TaskStateSignal | null {
+  const resultSummary = (task.resultSummary || "").trim();
+  const waitingStatus = (task.waitingStatus || task.status || "").trim();
+  const isAgentParent = isAgentParentTask(task);
+  const isChildTask = Boolean(task.parentTaskId);
+
+  if (resultSummary.startsWith("agent recovery failed:") || resultSummary.includes("agent recovery failed")) {
+    const detail = resultSummary.startsWith("agent recovery failed:")
+      ? resultSummary.slice("agent recovery failed:".length).trim()
+      : resultSummary;
+    return {
+      tone: "warning",
+      summary: `状态：task.recovered_as_failed / ${summarizeStateDetail(detail, "子任务状态恢复失败")}`,
+      consumesResultSummary: true,
+    };
+  }
+  if (resultSummary.includes("interrupted by runtime restart")) {
+    return {
+      tone: "warning",
+      summary: "状态：task.recovered_as_failed / 运行时重启中断了当前 Agent",
+      consumesResultSummary: true,
+    };
+  }
+  if (resultSummary.startsWith("agent failed: child approval rejected:")) {
+    return {
+      tone: "warning",
+      summary: `状态：子任务审批已拒绝 / ${summarizeStateDetail(resultSummary.slice("agent failed: child approval rejected:".length).trim(), "某个子任务审批被拒绝")}`,
+      consumesResultSummary: true,
+    };
+  }
+  if (resultSummary.startsWith("agent child task failed:")) {
+    return {
+      tone: "warning",
+      summary: `状态：子任务失败 / ${summarizeStateDetail(resultSummary.slice("agent child task failed:".length).trim(), "最新子任务执行失败")}`,
+      consumesResultSummary: true,
+    };
+  }
+  if (waitingStatus === "waiting_for_approval") {
+    const detail =
+      task.approvalStatus === "pending"
+        ? "approvalStatus=pending，等待批准后自动续跑"
+        : task.approvalId
+          ? `审批 ${task.approvalId} 正在阻塞续跑`
+          : isAgentParent
+            ? "Agent 会在批准后自动续跑"
+            : isChildTask
+              ? "子任务会在批准后继续执行"
+              : "任务会在批准后继续执行";
+    return {
+      tone: "warning",
+      summary: `状态：waiting_for_approval / ${detail}`,
+    };
+  }
+  if (waitingStatus === "waiting_for_task") {
+    const detail = task.waitingTaskId
+      ? `等待子任务 ${task.waitingTaskId} 完成`
+      : task.latestChildTaskId
+        ? `等待最新子任务 ${task.latestChildTaskId} 完成`
+        : isAgentParent
+          ? "Agent 会在子任务完成后自动续跑"
+          : "任务会在关联子任务完成后继续";
+    return {
+      tone: "warning",
+      summary: `状态：waiting_for_task / ${detail}`,
+    };
+  }
+  if (isChildTask && task.approvalStatus === "rejected") {
+    return {
+      tone: "warning",
+      summary: `状态：子任务审批已拒绝 / ${summarizeStateDetail(resultSummary, "approvalStatus=rejected")}`,
+      consumesResultSummary: Boolean(resultSummary),
+    };
+  }
+  if (isChildTask && task.status === "failed") {
+    return {
+      tone: "warning",
+      summary: `状态：子任务失败 / ${summarizeStateDetail(resultSummary, "子任务执行失败")}`,
+      consumesResultSummary: Boolean(resultSummary),
+    };
+  }
+  if (task.status === "failed") {
+    return {
+      tone: "warning",
+      summary: `状态：failed / ${summarizeStateDetail(resultSummary, "任务执行失败")}`,
+      consumesResultSummary: Boolean(resultSummary),
+    };
+  }
+  return null;
+}
+
+function getTaskTone(task: ExtendedRuntimeTask): FlowItem["tone"] {
+  const signal = getTaskStateSignal(task);
+  if (signal) {
+    return signal.tone;
+  }
+  if (task.status === "completed") {
+    return "good";
+  }
+  if (task.status === "needs_approval") {
+    return "warning";
+  }
+  return "neutral";
+}
+
 function formatTaskRoleLabel(task: ExtendedRuntimeTask) {
   if (isAgentParentTask(task)) {
     return "Agent 父任务";
@@ -1585,6 +1702,10 @@ function formatAgentMeta(task: RuntimeTask) {
 }
 
 function formatAgentStateSummary(task: RuntimeTask) {
+  const signal = getTaskStateSignal(task as ExtendedRuntimeTask);
+  if (signal) {
+    return signal.summary;
+  }
   const waitingStatus = task.waitingStatus || task.status;
   if (waitingStatus === "waiting_for_approval") {
     return "状态：等待审批通过后自动续跑";
@@ -1635,7 +1756,8 @@ function formatAgentStateSummary(task: RuntimeTask) {
 
 function formatAgentDetails(task: RuntimeTask) {
   const parts: string[] = [];
-  const stateSummary = formatAgentStateSummary(task);
+  const signal = getTaskStateSignal(task as ExtendedRuntimeTask);
+  const stateSummary = signal?.summary || formatAgentStateSummary(task);
   if (stateSummary) {
     parts.push(stateSummary);
   }
@@ -1651,7 +1773,7 @@ function formatAgentDetails(task: RuntimeTask) {
   if (task.agentLastReasoning) {
     parts.push(`思路摘要：${task.agentLastReasoning}`);
   }
-  if (task.resultSummary) {
+  if (task.resultSummary && !signal?.consumesResultSummary) {
     parts.push(`结果：${task.resultSummary}`);
   }
   return parts.join("\n");
@@ -1735,7 +1857,14 @@ function formatTaskDisplaySummary(task: ExtendedRuntimeTask, parentTask?: Extend
     return formatAgentDetails(task) || task.waitingSummary || task.resultSummary || task.input || "等待 Agent 执行";
   }
 
-  const parts = [task.workflowLabel, formatTaskLinkSummary(task), task.waitingSummary, task.resultSummary].filter(Boolean) as string[];
+  const signal = getTaskStateSignal(task);
+  const parts = [
+    signal?.summary,
+    task.workflowLabel,
+    formatTaskLinkSummary(task),
+    task.waitingSummary,
+    signal?.consumesResultSummary ? "" : task.resultSummary,
+  ].filter(Boolean) as string[];
   if (parts.length > 0) {
     return parts.join("\n");
   }

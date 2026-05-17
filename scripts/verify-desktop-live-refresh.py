@@ -45,6 +45,16 @@ UNEXPECTED_REMOTE_COPY_TEXT = [
     "desktop local-fallback active; manual refresh mode",
 ]
 
+AGENT_FAILURE_MATRIX = {
+    "success_resume_baseline": {"lane": "remote-canonical", "required": True},
+    "approval_rejected": {"lane": "remote-canonical", "required": True},
+    "child_task_failed": {"lane": "remote-canonical", "required": True},
+}
+
+FALLBACK_EVIDENCE_MATRIX = {
+    "recovered_as_failed": {"lane": "fallback-evidence", "required": True},
+}
+
 
 def summarize_refresh_mode(page) -> dict:
     body_text = page.locator("body").inner_text(timeout=5000)
@@ -322,13 +332,13 @@ def ensure_canonical_runtime() -> dict:
     return status
 
 
-def create_thread(name: str) -> dict:
+def create_thread(name: str, permission_mode: str = "ask-user") -> dict:
     return api(
         "POST",
         "/api/threads",
         {
             "name": name,
-            "permissionMode": "ask-user",
+            "permissionMode": permission_mode,
         },
     )
 
@@ -351,6 +361,10 @@ def create_task(thread_id: str, title: str, kind: str, task_input) -> dict:
 
 def run_task(thread_id: str, task_id: str) -> dict:
     return api("POST", f"/api/threads/{thread_id}/tasks/{task_id}/run", {})
+
+
+def reject_task(thread_id: str, task_id: str) -> dict:
+    return api("POST", f"/api/threads/{thread_id}/tasks/{task_id}/reject", {})
 
 
 def wait_for_active_thread(page, thread_id: str):
@@ -394,6 +408,26 @@ def wait_for_task_terminal(thread_id: str, task_id: str, timeout_seconds: float 
                 return item
         time.sleep(0.5)
     raise RuntimeError("timed out waiting for matching task")
+
+
+def find_latest_child_task(thread_id: str, parent_task_id: str, status: str | None = None) -> dict:
+    items = api("GET", f"/api/threads/{thread_id}/tasks")["items"]
+    matches = [item for item in items if item.get("parentTaskId") == parent_task_id]
+    if status is not None:
+        matches = [item for item in matches if item.get("status") == status]
+    if not matches:
+        status_note = f" with status {status!r}" if status is not None else ""
+        raise AssertionError(f"expected at least one child task for parent {parent_task_id!r}{status_note}")
+    matches.sort(key=lambda item: item.get("updatedAt", "") or item.get("createdAt", ""))
+    return matches[-1]
+
+
+def find_child_tasks(thread_id: str, parent_task_id: str) -> list[dict]:
+    return [
+        item
+        for item in api("GET", f"/api/threads/{thread_id}/tasks")["items"]
+        if item.get("parentTaskId") == parent_task_id
+    ]
 
 
 def wait_for_write_execution(thread_id: str, predicate, timeout_seconds: float = 20.0):
@@ -463,6 +497,19 @@ def refresh_thread_view(page, thread_id: str):
     page.reload(wait_until="domcontentloaded", timeout=30000)
     page.wait_for_timeout(2000)
     wait_for_active_thread(page, thread_id)
+
+
+def assert_result_card_contains(page, test_id: str, *texts: str, timeout: int = 15000):
+    locator = page.get_by_test_id(test_id)
+    expect(locator).to_be_visible(timeout=timeout)
+    for text in texts:
+        expect(locator).to_contain_text(text, timeout=timeout)
+    return locator
+
+
+def activate_thread_in_ui(page, thread_id: str):
+    activate_thread(thread_id)
+    refresh_thread_view(page, thread_id)
 
 
 def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
@@ -770,7 +817,8 @@ def run_recovery_continuation_scenario(page, thread_id: str, run_id: str) -> dic
     pending_child_card = page.locator("article").filter(has_text=waiting_child["title"]).filter(has_text="approval required").first
     expect(pending_child_card).to_be_visible(timeout=15000)
 
-    approved_child = api("POST", f"/api/threads/{thread_id}/tasks/{waiting_child['id']}/approve", {})
+    api("POST", f"/api/threads/{thread_id}/tasks/{waiting_child['id']}/approve", {})
+    approved_child = wait_for_task_terminal(thread_id, waiting_child["id"], timeout_seconds=60.0)
     if approved_child.get("status") != "completed":
         raise AssertionError(f"expected approved child status completed, got {approved_child.get('status')!r}")
 
@@ -799,6 +847,153 @@ def run_recovery_continuation_scenario(page, thread_id: str, run_id: str) -> dic
         "latestAgentCardVisible": latestAgentCardVisible,
         "latestChildCardVisible": latestChildCardVisible,
         "messageId": latest_message["id"],
+    }
+
+
+def run_agent_approval_rejected_scenario(page, thread_id: str, run_id: str) -> dict:
+    title = f"Agent approval rejected {run_id}"
+    created_task = create_task(
+        thread_id,
+        title,
+        "agent.run",
+        {
+            "goal": (
+                "Apply a patch to approval-rejected-note.txt that adds one line saying approval rejected evidence, "
+                "then answer in one short sentence about what changed. Do not do any extra work."
+            ),
+            "maxSteps": 4,
+        },
+    )
+    task_id = created_task["id"]
+    run_task(thread_id, task_id)
+
+    waiting_parent = wait_for_task(
+        thread_id,
+        lambda item: item["id"] == task_id and item["status"] == "waiting_for_approval",
+    )
+    waiting_child = find_latest_child_task(thread_id, task_id, "needs_approval")
+
+    refresh_thread_view(page, thread_id)
+    assert_article_contains(page, title, timeout=10000)
+
+    latest_agent_card = page.get_by_test_id("latest-agent-card")
+    expect(latest_agent_card).to_contain_text(title, timeout=15000)
+    expect(latest_agent_card).to_contain_text("等待审批", timeout=15000)
+
+    latest_child_card = page.get_by_test_id("latest-child-task-card")
+    expect(latest_child_card).to_contain_text(waiting_child["title"], timeout=15000)
+    expect(latest_child_card).to_contain_text(waiting_child["id"], timeout=15000)
+
+    pending_child_card = page.locator("article").filter(has_text=waiting_child["title"]).filter(has_text="approval required").first
+    expect(pending_child_card).to_be_visible(timeout=15000)
+
+    rejected_child = reject_task(thread_id, waiting_child["id"])
+    if rejected_child.get("status") != "failed":
+        raise AssertionError(f"expected rejected child status failed, got {rejected_child.get('status')!r}")
+
+    failed_parent = wait_for_task_terminal(thread_id, task_id, timeout_seconds=60.0)
+    if failed_parent.get("status") != "failed":
+        raise AssertionError(f"expected approval rejected parent failed, got {failed_parent.get('status')!r}")
+    if not failed_parent.get("resultSummary", "").startswith("agent failed: child approval rejected:"):
+        raise AssertionError(
+            f"expected approval rejected summary prefix, got {failed_parent.get('resultSummary', '')!r}"
+        )
+
+    refresh_thread_view(page, thread_id)
+    assert_article_contains(page, title, timeout=10000)
+    expect(latest_agent_card).to_contain_text("状态：子任务审批已拒绝", timeout=15000)
+    expect(latest_child_card).to_contain_text("approval rejected:", timeout=15000)
+
+    return {
+        "parentTaskId": task_id,
+        "parentTitle": title,
+        "parentStatusBeforeReject": waiting_parent["status"],
+        "childTaskId": waiting_child["id"],
+        "childStatusBeforeReject": waiting_child["status"],
+        "childStatusAfterReject": rejected_child["status"],
+        "parentStatusAfterReject": failed_parent["status"],
+        "resultSummary": failed_parent.get("resultSummary", ""),
+        "latestAgentCardVisible": latest_agent_card.is_visible(),
+        "latestChildCardVisible": latest_child_card.is_visible(),
+    }
+
+
+def run_agent_child_task_failed_scenario(page, run_id: str) -> dict:
+    thread_name = f"Playwright Agent Child Failed {run_id}"
+    created_thread = create_thread(thread_name, permission_mode="read-only")
+    thread_id = created_thread["id"]
+    activate_thread_in_ui(page, thread_id)
+
+    title = f"Agent child failed {run_id}"
+    created_task = create_task(
+        thread_id,
+        title,
+        "agent.run",
+        {
+            "goal": (
+                "Apply a patch to child-task-failed-note.txt that adds one line saying child task failed evidence, "
+                "then answer in one short sentence about what changed. Do not do any extra work."
+            ),
+            "maxSteps": 4,
+        },
+    )
+    task_id = created_task["id"]
+    run_task(thread_id, task_id)
+
+    failed_parent = wait_for_task_terminal(thread_id, task_id, timeout_seconds=60.0)
+    if failed_parent.get("status") != "failed":
+        raise AssertionError(f"expected child task failed parent failed, got {failed_parent.get('status')!r}")
+    if not failed_parent.get("resultSummary", "").startswith("agent child task failed:"):
+        raise AssertionError(
+            f"expected child task failed summary prefix, got {failed_parent.get('resultSummary', '')!r}"
+        )
+
+    failed_child = find_latest_child_task(thread_id, task_id, "failed")
+    if failed_child.get("kind") != "workspace.apply_patch":
+        raise AssertionError(f"expected failed child kind workspace.apply_patch, got {failed_child.get('kind')!r}")
+
+    refresh_thread_view(page, thread_id)
+    assert_article_contains(page, title, timeout=10000)
+
+    latest_agent_card = page.get_by_test_id("latest-agent-card")
+    expect(latest_agent_card).to_contain_text(title, timeout=15000)
+    expect(latest_agent_card).to_contain_text("状态：子任务失败", timeout=15000)
+    expect(latest_agent_card).to_contain_text("permission denied", timeout=15000)
+
+    latest_child_card = page.get_by_test_id("latest-child-task-card")
+    expect(latest_child_card).to_contain_text(failed_child["title"], timeout=15000)
+    expect(latest_child_card).to_contain_text(failed_child["id"], timeout=15000)
+
+    return {
+        "threadId": thread_id,
+        "threadName": thread_name,
+        "parentTaskId": task_id,
+        "parentTitle": title,
+        "childTaskId": failed_child["id"],
+        "childKind": failed_child["kind"],
+        "parentStatus": failed_parent["status"],
+        "parentSummary": failed_parent.get("resultSummary", ""),
+        "childStatus": failed_child["status"],
+        "childSummary": failed_child.get("resultSummary", ""),
+        "latestAgentCardVisible": latest_agent_card.is_visible(),
+        "latestChildCardVisible": latest_child_card.is_visible(),
+    }
+
+
+def build_recovered_as_failed_evidence() -> dict:
+    return {
+        "lane": FALLBACK_EVIDENCE_MATRIX["recovered_as_failed"]["lane"],
+        "mode": "evidence-only",
+        "browserAutomation": "not attempted",
+        "reason": (
+            "recovered_as_failed is restart-dependent and remains backed by persisted desktop fallback evidence "
+            "instead of the canonical remote browser gate"
+        ),
+        "resultSummaryPrefix": "agent recovery failed:",
+        "workflowLabelContains": "recovered_as_failed",
+        "evidenceTests": [
+            "TestDesktopFallbackAgentRecoveredAsFailedPersistsAcrossRestart",
+        ],
     }
 
 
@@ -1093,6 +1288,7 @@ def main() -> int:
                 )
             )
             recovery_result = run_recovery_continuation_scenario(page, thread_id, run_id)
+            approval_rejected_result = run_agent_approval_rejected_scenario(page, thread_id, run_id)
             created_task = create_task(
                 thread_id,
                 task_title,
@@ -1113,7 +1309,8 @@ def main() -> int:
             expect(pending_card).to_be_visible(timeout=15000)
             approval_visible_before_approve = pending_card.is_visible()
 
-            approved_task = api("POST", f"/api/threads/{thread_id}/tasks/{created_task_id}/approve", {})
+            api("POST", f"/api/threads/{thread_id}/tasks/{created_task_id}/approve", {})
+            approved_task = wait_for_task_terminal(thread_id, created_task_id, timeout_seconds=60.0)
 
             apply_execution = wait_for_write_execution(
                 thread_id,
@@ -1143,7 +1340,8 @@ def main() -> int:
             )
             rollback_task_id = rollback_task["id"]
 
-            rollback_approved = api("POST", f"/api/threads/{thread_id}/tasks/{rollback_task_id}/approve", {})
+            api("POST", f"/api/threads/{thread_id}/tasks/{rollback_task_id}/approve", {})
+            rollback_approved = wait_for_task_terminal(thread_id, rollback_task_id, timeout_seconds=60.0)
 
             rollback_execution = wait_for_write_execution(
                 thread_id,
@@ -1157,6 +1355,8 @@ def main() -> int:
             expect(write_execution_panel).to_contain_text("rolled back patch", timeout=15000)
             expect(write_execution_panel).to_contain_text(patch_path, timeout=15000)
             write_execution_rollback_visible = True
+            child_failed_result = run_agent_child_task_failed_scenario(page, run_id)
+            recovered_as_failed_evidence = build_recovered_as_failed_evidence()
 
             acceptance_report = {
                 "remote": {
@@ -1185,6 +1385,12 @@ def main() -> int:
                             }
                             for item in agent_results
                         ],
+                    },
+                    "agentFailureMatrix": {
+                        "definition": AGENT_FAILURE_MATRIX,
+                        "successResumeBaseline": recovery_result,
+                        "approvalRejected": approval_rejected_result,
+                        "childTaskFailed": child_failed_result,
                     },
                     "recoveryContinuation": recovery_result,
                     "approvalVisibility": {
@@ -1216,14 +1422,22 @@ def main() -> int:
                     },
                 },
                 "fallback": {
-                    "mode": "go-test-evidence",
+                    "mode": "evidence-only",
                     "browserAutomation": "not attempted",
-                    "reason": "desktop local-fallback does not provide the same stable browser automation and SSE lane as the canonical remote app-server path",
+                    "reason": (
+                        "desktop local-fallback remains evidence-only because it does not provide the same stable "
+                        "browser automation and SSE lane as the canonical remote app-server path"
+                    ),
+                    "agentFailureEvidence": {
+                        "definition": FALLBACK_EVIDENCE_MATRIX,
+                        "recoveredAsFailed": recovered_as_failed_evidence,
+                    },
                     "evidenceTests": [
                         "TestDesktopFallbackPersistsAcrossAppRestart",
                         "TestDesktopFallbackTaskSummariesKeepParentAndWaitingFields",
                         "TestDesktopFallbackAgentWaitingForApprovalPersistsAcrossRestart",
                         "TestDesktopFallbackAgentWaitingForTaskPersistsAcrossRestart",
+                        "TestDesktopFallbackAgentRecoveredAsFailedPersistsAcrossRestart",
                         "TestDesktopFallbackWriteExecutionsPersistAcrossRestart",
                     ],
                 },
@@ -1292,6 +1506,7 @@ def main() -> int:
                     }
                     for item in agent_results
                 ],
+                "agentFailureMatrix": acceptance_report["remote"]["agentFailureMatrix"],
                 "recoveryContinuation": recovery_result,
                 "runtimeSource": runtime_status.get("runtimeSource", ""),
                 "runtimeTrust": runtime_status.get("runtimeTrust", ""),
@@ -1344,15 +1559,29 @@ def validate_release_baseline(result: dict) -> None:
         raise AssertionError(f"missing acceptance-report key(s): {', '.join(missing_acceptance)}")
 
     remote_report = acceptance_report.get("remote") or {}
-    for key in ("runtimeSource", "runtimeTrust", "uiBaseUrl", "apiBaseUrl", "refreshMode"):
+    for key in ("runtimeSource", "runtimeTrust", "uiBaseUrl", "apiBaseUrl", "refreshMode", "agentFailureMatrix"):
         if key not in remote_report:
             raise AssertionError(f"missing remote acceptance key: {key}")
 
+    agent_failure_matrix = remote_report.get("agentFailureMatrix") or {}
+    for key in (
+        "definition",
+        "successResumeBaseline",
+        "approvalRejected",
+        "childTaskFailed",
+    ):
+        if key not in agent_failure_matrix:
+            raise AssertionError(f"missing agent failure matrix key: {key}")
+
     fallback_report = acceptance_report.get("fallback") or {}
-    if fallback_report.get("mode") != "go-test-evidence":
-        raise AssertionError("fallback evidence must remain go-test-evidence")
+    if fallback_report.get("mode") != "evidence-only":
+        raise AssertionError("fallback evidence must remain evidence-only")
     if fallback_report.get("browserAutomation") != "not attempted":
         raise AssertionError("fallback lane must not be treated as browser automation acceptance")
+    fallback_agent_evidence = fallback_report.get("agentFailureEvidence") or {}
+    fallback_recovered = fallback_agent_evidence.get("recoveredAsFailed") or {}
+    if fallback_recovered.get("mode") != "evidence-only":
+        raise AssertionError("fallback recovered_as_failed evidence must remain evidence-only")
 
 
 def emit_release_baseline(result: dict) -> None:
