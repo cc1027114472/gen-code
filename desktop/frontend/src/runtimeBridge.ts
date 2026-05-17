@@ -29,6 +29,8 @@ type RuntimeApiStatus = {
   ready: boolean;
   message: string;
   runtimeSource: string;
+  runtimeSourceDetail?: string;
+  runtimeTrust?: string;
   stateStore: string;
   statePath: string;
   workspaceId: string;
@@ -264,6 +266,8 @@ export type RuntimeStatus = {
   runtimeReady: boolean;
   runtimeMessage: string;
   runtimeSource: string;
+  runtimeSourceDetail: string;
+  runtimeTrust: string;
   supportsSSE: boolean;
   sseEndpoint: string;
   lastSyncAt: string;
@@ -298,6 +302,8 @@ const defaultRuntimeBaseURL = "http://127.0.0.1:10008";
 let fallbackBrowserState: BrowserWorkspaceState | null = null;
 const defaultFetchRetries = 4;
 const defaultFetchRetryDelayMs = 250;
+
+type RuntimeStatusView = Pick<RuntimeStatus, "runtimeSource" | "runtimeSourceDetail" | "runtimeTrust" | "runtimeMessage" | "supportsSSE">;
 
 function hasWailsBridge() {
   return typeof window !== "undefined" && !!window.go?.main?.App;
@@ -429,6 +435,93 @@ function groupMCP(items: MCPDescriptor[]) {
   }, {});
 }
 
+function runtimeSourceOrDefault(status?: Partial<RuntimeStatusView>) {
+  return status?.runtimeSource || "remote-app-server";
+}
+
+function runtimeTrustOrDefault(status?: Partial<RuntimeStatusView>) {
+  const trust = status?.runtimeTrust?.trim();
+  if (trust) {
+    return trust;
+  }
+  return runtimeSourceOrDefault(status) === "local-fallback" ? "degraded" : "canonical";
+}
+
+function runtimeMessageOrDefault(status?: Partial<RuntimeStatusView>) {
+  const message = status?.runtimeMessage?.trim();
+  if (message) {
+    return message;
+  }
+  if (runtimeSourceOrDefault(status) === "local-fallback") {
+    return "desktop local-fallback active; manual refresh mode";
+  }
+  return "remote app-server runtime connected";
+}
+
+export function formatRuntimeLaneLabel(status?: Partial<RuntimeStatusView>) {
+  switch (runtimeSourceOrDefault(status)) {
+    case "remote-app-server":
+      return "远端运行时 / remote-app-server";
+    case "local-fallback":
+      return "本地回退 / local-fallback";
+    default:
+      return status?.runtimeSource || "未知运行时";
+  }
+}
+
+export function formatRuntimeLaneDetail(status?: Partial<RuntimeStatusView>) {
+  const source = runtimeSourceOrDefault(status);
+  const detail = status?.runtimeSourceDetail?.trim();
+  if (detail) {
+    return detail;
+  }
+  if (source === "local-fallback") {
+    return "canonical app-server 不可用，已切换到项目本地 SQLite fallback。";
+  }
+  return "当前结果来自 canonical app-server shared runtime。";
+}
+
+export function formatRuntimeTrustLabel(status?: Partial<RuntimeStatusView>) {
+  switch (runtimeTrustOrDefault(status)) {
+    case "canonical":
+      return "可信链路 / canonical";
+    case "degraded":
+      return "降级链路 / degraded";
+    default:
+      return `链路状态 / ${runtimeTrustOrDefault(status)}`;
+  }
+}
+
+export function formatRefreshMode(status?: Partial<RuntimeStatusView>, sseConnected?: boolean) {
+  if (!status?.supportsSSE) {
+    return "手动刷新模式";
+  }
+  if (sseConnected) {
+    return "SSE 实时刷新";
+  }
+  return "SSE 重连中";
+}
+
+export function formatRefreshModeDetail(status?: Partial<RuntimeStatusView>, sseConnected?: boolean) {
+  if (!status?.supportsSSE) {
+    if (runtimeSourceOrDefault(status) === "local-fallback") {
+      return "本地 fallback 不提供 SSE，请用刷新按钮同步审批、写执行和任务快照。";
+    }
+    return "当前运行链路暂未提供 SSE，请手动刷新查看最新状态。";
+  }
+  if (sseConnected) {
+    return "SSE 已接通，任务和审批更新会自动同步到工作台。";
+  }
+  return "当前运行时支持 SSE，但事件流正在重连，工作台可能会短暂滞后。";
+}
+
+export function formatFallbackNote(status?: Partial<RuntimeStatusView>) {
+  if (runtimeSourceOrDefault(status) !== "local-fallback") {
+    return "当前走远端运行时链路，实时同步应来自共享 app-server。";
+  }
+  return "当前走 desktop local-fallback。这个降级链路会保留本地审批、任务历史和写执行快照，但它不代表 canonical 远端运行时。";
+}
+
 async function buildRuntimeStatus(): Promise<RuntimeStatus> {
   const [
     status,
@@ -525,8 +618,10 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
     desktopReady: true,
     runtimeState: status.state,
     runtimeReady: status.ready,
-    runtimeMessage: status.message,
+    runtimeMessage: runtimeMessageOrDefault(status),
     runtimeSource: status.runtimeSource || "remote-app-server",
+    runtimeSourceDetail: status.runtimeSourceDetail || formatRuntimeLaneDetail(status),
+    runtimeTrust: status.runtimeTrust || runtimeTrustOrDefault(status),
     supportsSSE: activeThreadID !== "",
     sseEndpoint: activeThreadID ? `${runtimeBaseURL()}/api/threads/${encodeURIComponent(activeThreadID)}/events/stream?limit=200` : "",
     lastSyncAt: new Date().toISOString(),

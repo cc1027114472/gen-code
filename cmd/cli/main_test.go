@@ -96,6 +96,7 @@ func TestToolsListPrintsExecutionMetadata(t *testing.T) {
 	})
 
 	require.Contains(t, output, "source: remote-app-server")
+	require.Contains(t, output, "source trust: canonical")
 	require.Contains(t, output, "source detail: canonical shared runtime served by the app-server entry")
 	require.Contains(t, output, "permission=read-only")
 	require.Contains(t, output, "kind=workspace.read_file")
@@ -105,6 +106,54 @@ func TestToolsListPrintsExecutionMetadata(t *testing.T) {
 	require.Contains(t, output, "kind=workspace.search_text_detailed")
 	require.Contains(t, output, "executable=true")
 	require.Contains(t, output, "readOnly=true")
+}
+
+func TestSkillsListPrintsGovernanceBaseline(t *testing.T) {
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"skills", "list"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "skills list")
+	require.Contains(t, output, "source: local-fallback")
+	require.Contains(t, output, "source trust: degraded")
+	require.Contains(t, output, "governance fields: skill id, group, source, verification status, localization checked")
+	require.Contains(t, output, "common:")
+	require.Contains(t, output, "codex:")
+	require.Contains(t, output, "cc:")
+	require.Contains(t, output, "verification=implemented")
+	require.Contains(t, output, "localization=unchecked")
+}
+
+func TestMCPListPrintsHealthStatusAndTrust(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/mcp/servers":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"filesystem","source":"node_modules","enabled":true,"toolCount":2,"resourceCount":1,"status":"enabled"},{"id":"memory","source":"builtin","enabled":false,"toolCount":0,"resourceCount":0,"status":"disabled"},{"id":"remote-proxy","source":"node_modules","enabled":true,"toolCount":0,"resourceCount":0,"status":"degraded"},{"id":"stale-bridge","source":"node_modules","enabled":true,"toolCount":1,"resourceCount":0,"status":"unreachable"}]}}`))
+		case "/api/runtime/status":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":0,"eventCount":0}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"mcp", "list"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "mcp list")
+	require.Contains(t, output, "source: local-fallback")
+	require.Contains(t, output, "source trust: degraded")
+	require.Contains(t, output, "status=enabled")
+	require.Contains(t, output, "status=disabled")
+	require.Contains(t, output, "status=degraded")
+	require.Contains(t, output, "status=unreachable")
 }
 
 func TestTasksListPrintsAgentPlanMetadata(t *testing.T) {

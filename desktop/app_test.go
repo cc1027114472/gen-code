@@ -104,6 +104,28 @@ func TestDesktopFallbackThreadTaskFlow(t *testing.T) {
 	}
 }
 
+func TestDesktopFallbackRuntimeStatusShowsManualRefreshMode(t *testing.T) {
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
+	t.Setenv("GENCODE_DESKTOP_STATE_PATH", filepath.Join(t.TempDir(), "fallback-refresh.sqlite"))
+
+	app := NewApp()
+	defer app.shutdown(nil)
+
+	status := app.GetRuntimeStatus()
+	if status.RuntimeSource != "local-fallback" {
+		t.Fatalf("expected local-fallback runtime source, got %q", status.RuntimeSource)
+	}
+	if status.RuntimeTrust != "degraded" {
+		t.Fatalf("expected degraded runtime trust, got %q", status.RuntimeTrust)
+	}
+	if status.SupportsSSE {
+		t.Fatal("expected fallback runtime to disable SSE")
+	}
+	if !strings.Contains(status.RuntimeMessage, "manual refresh") {
+		t.Fatalf("expected manual refresh wording, got %q", status.RuntimeMessage)
+	}
+}
+
 func TestDesktopFallbackPersistsAcrossAppRestart(t *testing.T) {
 	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
 	statePath := filepath.Join(t.TempDir(), "restart-state.sqlite")
@@ -407,6 +429,12 @@ func TestDesktopFallbackApprovePatchTaskWritesFile(t *testing.T) {
 	if approved.ActiveThreadSummary.WriteExecutionCount != 1 {
 		t.Fatalf("expected active thread write execution count 1, got %d", approved.ActiveThreadSummary.WriteExecutionCount)
 	}
+	if approved.ActiveThreadSummary.LatestApprovalTaskID != task.ID {
+		t.Fatalf("expected latest approval task id %q, got %q", task.ID, approved.ActiveThreadSummary.LatestApprovalTaskID)
+	}
+	if approved.ActiveThreadSummary.LatestWriteTaskID != task.ID {
+		t.Fatalf("expected latest write task id %q, got %q", task.ID, approved.ActiveThreadSummary.LatestWriteTaskID)
+	}
 	if approved.WorkspaceSummary.WriteExecutionCount != 1 {
 		t.Fatalf("expected workspace write execution count 1, got %d", approved.WorkspaceSummary.WriteExecutionCount)
 	}
@@ -472,6 +500,19 @@ func TestDesktopFallbackRejectPatchTaskLeavesFileUntouched(t *testing.T) {
 	}
 	if len(rejected.WriteExecutions) != 0 {
 		t.Fatalf("expected no write execution after rejection, got %+v", rejected.WriteExecutions)
+	}
+	rejectedTask := findTaskByID(t, rejected, task.ID)
+	if rejectedTask.ApprovalID == "" {
+		t.Fatal("expected rejected task to retain latest approval id")
+	}
+	if !strings.Contains(rejectedTask.ApprovalSummary, "approval") {
+		t.Fatalf("expected rejected task approval summary, got %q", rejectedTask.ApprovalSummary)
+	}
+	if rejected.ActiveThreadSummary.LatestApprovalTaskID != task.ID {
+		t.Fatalf("expected latest approval task id %q after rejection, got %q", task.ID, rejected.ActiveThreadSummary.LatestApprovalTaskID)
+	}
+	if rejected.ActiveThreadSummary.LatestWriteTaskID != "" {
+		t.Fatalf("expected no latest write task after rejection, got %q", rejected.ActiveThreadSummary.LatestWriteTaskID)
 	}
 	if _, err := os.Stat(absolutePath); !os.IsNotExist(err) {
 		t.Fatalf("expected file to remain absent after rejection, stat err=%v", err)

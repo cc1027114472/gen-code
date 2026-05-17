@@ -13,6 +13,12 @@ import {
   CheckBridge,
   CreateTask,
   CreateThread,
+  formatFallbackNote,
+  formatRefreshMode,
+  formatRefreshModeDetail,
+  formatRuntimeLaneDetail,
+  formatRuntimeLaneLabel,
+  formatRuntimeTrustLabel,
   GetAppInfo,
   GetBrowserState,
   GetRuntimeStatus,
@@ -344,6 +350,7 @@ export default function App() {
       .map((approval) => createApprovalViewModel(approval, taskMap.get(approval.taskId)))
       .sort((left, right) => toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt));
   }, [approvals, tasks]);
+  const latestApproval = useMemo(() => newestBy(approvalViewModels, (item) => item.updatedAt), [approvalViewModels]);
 
   const writeExecutionViewModels = useMemo(() => {
     const taskMap = new Map(tasks.map((task) => [task.id, task]));
@@ -469,10 +476,12 @@ export default function App() {
     return items.sort((left, right) => right.timestamp - left.timestamp).slice(0, 16);
   }, [approvalByTaskID, events, loading, messages, tasks, toolCalls, writeExecutionByTaskID]);
 
-  const runtimeSourceLabel = formatRuntimeSourceLabel(runtimeStatus?.runtimeSource);
-  const runtimeSourceDetail = formatRuntimeSourceDetail(runtimeStatus?.runtimeSource);
-  const refreshModeLabel = formatRefreshModeLabel(runtimeStatus?.supportsSSE, sseEnabled);
-  const refreshModeDetail = formatRefreshModeDetail(runtimeStatus?.runtimeSource, runtimeStatus?.supportsSSE, sseEnabled);
+  const runtimeLaneLabel = formatRuntimeLaneLabel(runtimeStatus ?? undefined);
+  const runtimeLaneDetail = formatRuntimeLaneDetail(runtimeStatus ?? undefined);
+  const runtimeTrustLabel = formatRuntimeTrustLabel(runtimeStatus ?? undefined);
+  const refreshModeLabel = formatRefreshMode(runtimeStatus ?? undefined, sseEnabled);
+  const refreshModeDetail = formatRefreshModeDetail(runtimeStatus ?? undefined, sseEnabled);
+  const fallbackNote = formatFallbackNote(runtimeStatus ?? undefined);
   const statusTone = error ? "warning" : runtimeStatus?.runtimeReady || bridgeResult?.ok ? "good" : "muted";
   const projectName = runtimeStatus?.projectRoot?.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "gen-code";
   const contextSummary = `messages ${messages.length} / tool calls ${toolCalls.length} / write executions ${writeExecutions.length}`;
@@ -733,7 +742,7 @@ export default function App() {
 
           <div className="workspace-topbar__meta">
             <span className="chip chip--soft">Wails Shell</span>
-            <span className="chip chip--soft">{runtimeSourceLabel}</span>
+            <span className={`chip ${runtimeStatus?.runtimeSource === "local-fallback" ? "chip--warning" : "chip--soft"}`}>{runtimeLaneLabel}</span>
             <span className="chip chip--soft">{appInfo}</span>
             {lastCheckedAt ? <span className="chip chip--soft">{`更新于 ${lastCheckedAt}`}</span> : null}
             <button className="secondary-action browser-toggle" onClick={handleToggleBrowser} type="button">
@@ -797,6 +806,16 @@ export default function App() {
                     ))
                   )}
                 </div>
+                <div className="summary-list summary-list--runtime">
+                  <article className="summary-row">
+                    <p>最新审批快照</p>
+                    <strong>{approvalViewModels[0] ? summarizeApprovalViewModel(approvalViewModels[0]) : "当前还没有审批快照。"}</strong>
+                  </article>
+                  <article className="summary-row">
+                    <p>最新写执行快照</p>
+                    <strong>{latestWriteExecution ? summarizeWriteExecution(latestWriteExecution) : "当前还没有写执行快照。"}</strong>
+                  </article>
+                </div>
               </section>
 
               <section className="left-panel left-panel--muted">
@@ -818,7 +837,8 @@ export default function App() {
                 </div>
                 <div className="stage-header__meta">
                   <span className="chip chip--soft">{activeThread?.permissionMode || "ask-user"}</span>
-                  <span className="chip chip--soft">{streamState}</span>
+                  <span className={`chip ${runtimeStatus?.runtimeSource === "local-fallback" ? "chip--warning" : "chip--soft"}`}>{runtimeLaneLabel}</span>
+                  <span className={`chip ${runtimeStatus?.supportsSSE ? "chip--good" : "chip--warning"}`}>{refreshModeLabel}</span>
                   {activeThreadWorkflow?.latestTaskId ? <span className="chip chip--soft">{`latest task ${activeThreadWorkflow.latestTaskId}`}</span> : null}
                 </div>
               </section>
@@ -1048,6 +1068,11 @@ export default function App() {
                   <span className="mini-chip">{activeThread?.id || "no-thread"}</span>
                 </div>
 
+                <div className={`fallback-note ${runtimeStatus?.runtimeSource === "local-fallback" ? "fallback-note--warning" : ""}`}>
+                  <strong>{runtimeTrustLabel}</strong>
+                  <span>{fallbackNote}</span>
+                </div>
+
                 <div className="context-grid">
                   <ResultCard
                     label="最新任务"
@@ -1060,6 +1085,11 @@ export default function App() {
                     title={latestToolCall ? `${latestToolCall.toolId} / ${formatToolCallStatus(latestToolCall.status)}` : "暂无工具调用"}
                     body={latestToolCall?.summary || "暂无摘要"}
                   />
+                  <ResultCard
+                    label="最新审批"
+                    title={latestApproval ? `${latestApproval.toolKind} / ${latestApproval.approvalStatusLabel}` : "暂无审批"}
+                    body={latestApproval ? `${latestApproval.summary} / ${latestApproval.patchStatsLabel}` : "当前线程还没有最近审批摘要"}
+                  />
                   <ResultCard label="最新消息" title={latestMessage ? formatMessageRole(latestMessage.role) : "暂无消息"} body={latestMessage?.content || "暂无消息"} />
                   <ResultCard label="最新事件" title={latestEvent ? formatEventType(latestEvent.type) : "暂无事件"} body={latestEvent?.message || "暂无事件"} />
                   <ResultCard
@@ -1070,8 +1100,8 @@ export default function App() {
                   <InfoCard label="最新产物" value={latestArtifact ? latestArtifact.kind : "暂无产物"} detail={latestArtifact?.path || "暂无产物"} />
                   <InfoCard
                     label="运行链路"
-                    value={runtimeSourceLabel}
-                    detail={`${runtimeSourceDetail} / ${bridgeResult?.message || runtimeStatus?.runtimeMessage || "桥接状态待检查"}`}
+                    value={runtimeLaneLabel}
+                    detail={`${runtimeLaneDetail} / ${bridgeResult?.message || runtimeStatus?.runtimeMessage || "桥接状态待检查"}`}
                   />
                   <InfoCard label="刷新方式" value={refreshModeLabel} detail={`${refreshModeDetail} / ${streamState}`} />
                   <InfoCard
@@ -1576,51 +1606,6 @@ function getTaskCardClassName(task: ExtendedRuntimeTask) {
   return "";
 }
 
-function formatRuntimeSourceLabel(source?: string) {
-  switch (source) {
-    case "remote-app-server":
-      return "远端 App Server";
-    case "local-fallback":
-      return "桌面本地 fallback";
-    default:
-      return source || "未连接";
-  }
-}
-
-function formatRuntimeSourceDetail(source?: string) {
-  switch (source) {
-    case "remote-app-server":
-      return "当前结果来自远端 runtime，状态会尽量实时同步。";
-    case "local-fallback":
-      return "当前结果来自桌面本地 fallback，不会伪装成远端链路。";
-    default:
-      return "当前还没有可用的 runtime 来源。";
-  }
-}
-
-function formatRefreshModeLabel(supportsSSE?: boolean, sseEnabled?: boolean) {
-  if (supportsSSE && sseEnabled) {
-    return "SSE 实时刷新";
-  }
-  if (supportsSSE) {
-    return "SSE 重连中";
-  }
-  return "手动刷新模式";
-}
-
-function formatRefreshModeDetail(source?: string, supportsSSE?: boolean, sseEnabled?: boolean) {
-  if (supportsSSE && sseEnabled) {
-    return "远端事件流已接通，任务和审批会自动刷新。";
-  }
-  if (supportsSSE) {
-    return "运行时支持 SSE，但当前连接未建立，界面可能稍后回到自动刷新。";
-  }
-  if (source === "local-fallback") {
-    return "本地 fallback 目前按手动刷新工作，这个状态是预期行为。";
-  }
-  return "当前链路未提供 SSE，需要手动刷新查看最新状态。";
-}
-
 function formatAgentWorkflowOverview(task: ExtendedRuntimeTask | null) {
   if (!task) {
     return "默认入口是 agent.run：围绕目标自动派生读取、写入、审批和最终回复。";
@@ -1748,6 +1733,16 @@ function InfoCard({ label, value, detail }: { label: string; value: string; deta
 
 function summarizeWriteExecution(execution: RuntimeWriteExecution) {
   const parts = [execution.resultSummary, execution.afterSummary].filter(Boolean);
+  return summarizeText(parts.join(" / "), 180);
+}
+
+function summarizeApproval(approval: RuntimeApproval) {
+  const parts = [approval.summary, approval.targetPaths.join(", "), formatApprovalStatus(approval.status)].filter(Boolean);
+  return summarizeText(parts.join(" / "), 180);
+}
+
+function summarizeApprovalViewModel(approval: ApprovalViewModel) {
+  const parts = [approval.summary, approval.targetPaths.join(", "), approval.approvalStatusLabel, approval.patchStatsLabel].filter(Boolean);
   return summarizeText(parts.join(" / "), 180);
 }
 

@@ -200,6 +200,9 @@ func isRetryableProviderError(err error) bool {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "eof") {
+		return true
+	}
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errEmptyProviderOutput)
 }
 

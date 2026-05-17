@@ -755,7 +755,7 @@ func (a *App) collectRuntimeStatus() (RuntimeStatus, error) {
 	if err != nil {
 		return RuntimeStatus{}, err
 	}
-	localStatus.RuntimeMessage = "External runtime is unavailable, switched to project-local SQLite fallback."
+	localStatus.RuntimeMessage = fallbackRuntimeMessage(localStatus)
 	localStatus.RuntimeState = "fallback"
 	localStatus.RuntimeReady = true
 	localStatus.RuntimeSource = "local-fallback"
@@ -2410,12 +2410,12 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	status.Providers = localProviderCatalog()
 	status.RuntimeState = "fallback"
 	status.RuntimeReady = true
-	status.RuntimeMessage = "Using project-local SQLite runtime fallback because no external runtime is connected."
 	status.RuntimeSource = "local-fallback"
 	status.RuntimeSourceDetail = "project-local SQLite fallback because the canonical app-server runtime is unavailable"
 	status.RuntimeTrust = "degraded"
 	status.CanonicalRuntimeURL = ""
 	status.SupportsSSE = false
+	status.RuntimeMessage = fallbackRuntimeMessage(status)
 	status.SSEEndpoint = ""
 	status.LastSyncAt = ""
 	status.StateStore = "sqlite"
@@ -4379,6 +4379,13 @@ func defaultStateStorePath(workspaceRoot string) string {
 		return override
 	}
 	return filepath.Join(workspaceRoot, ".gen-code", "state.db")
+}
+
+func fallbackRuntimeMessage(status RuntimeStatus) string {
+	if status.RuntimeSource == "local-fallback" && !status.SupportsSSE {
+		return "desktop local-fallback active; manual refresh mode"
+	}
+	return strings.TrimSpace(status.RuntimeMessage)
 }
 
 func runtimeErrorStatus(err error) RuntimeStatus {

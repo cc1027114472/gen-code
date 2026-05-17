@@ -378,7 +378,7 @@ func run(ctx context.Context, args []string) error {
 				group = strings.TrimSpace(strings.TrimPrefix(arg, "--group="))
 			}
 		}
-		return printSkills(runtimeFacade.service, group)
+		return printSkills(runtimeFacade.service, group, runtimeFacade.runtimeSource())
 	case "tools":
 		if len(args) < 2 || args[1] != "list" {
 			return errors.New("usage: gen-code tools list")
@@ -1301,7 +1301,7 @@ func updateTaskStatus(ctx context.Context, facade *runtimeFacade, threadID strin
 	return nil
 }
 
-func printSkills(runtimeService *runtime.Service, requestedGroup string) error {
+func printSkills(runtimeService *runtime.Service, requestedGroup string, source string) error {
 	if requestedGroup != "" {
 		group, err := skill.ParseGroup(requestedGroup)
 		if err != nil {
@@ -1309,16 +1309,24 @@ func printSkills(runtimeService *runtime.Service, requestedGroup string) error {
 		}
 
 		fmt.Printf("skills group: %s\n", requestedGroup)
+		fmt.Printf("  source: %s\n", source)
+		fmt.Printf("  source trust: %s\n", runtimeSourceTrust(source))
+		fmt.Printf("  source detail: %s\n", runtimeSourceDetail(source))
+		fmt.Println("  governance fields: skill id, group, source, verification status, localization checked")
 		for _, item := range runtimeService.SkillDescriptors(group) {
 			if group != skill.Common && item.Group == skill.Common {
 				continue
 			}
-			fmt.Printf("  - %s (%s)\n", item.ID, item.Group)
+			fmt.Printf("  - %s (group=%s, source=%s, verification=implemented, localization=unchecked)\n", item.ID, item.Group, skillGroupSourceLabel(item.Group))
 		}
 		return nil
 	}
 
 	fmt.Println("skills list")
+	fmt.Printf("  source: %s\n", source)
+	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(source))
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(source))
+	fmt.Println("  governance fields: skill id, group, source, verification status, localization checked")
 	for _, groupName := range []string{"common", "codex", "cc"} {
 		group, err := skill.ParseGroup(groupName)
 		if err != nil {
@@ -1329,7 +1337,7 @@ func printSkills(runtimeService *runtime.Service, requestedGroup string) error {
 			if groupName != "common" && item.Group == skill.Common {
 				continue
 			}
-			fmt.Printf("  - %s (%s)\n", item.ID, item.Group)
+			fmt.Printf("  - %s (group=%s, source=%s, verification=implemented, localization=unchecked)\n", item.ID, item.Group, skillGroupSourceLabel(item.Group))
 		}
 	}
 	return nil
@@ -1342,6 +1350,7 @@ func printTools(ctx context.Context, facade *runtimeFacade) error {
 		return err
 	}
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(facade.runtimeSource()))
 	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	for _, item := range items {
 		fmt.Printf(
@@ -1360,13 +1369,14 @@ func printTools(ctx context.Context, facade *runtimeFacade) error {
 func printMCP(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Println("mcp list")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(facade.runtimeSource()))
 	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	items, err := facade.mcp(ctx)
 	if err != nil {
 		return err
 	}
 	for _, item := range items {
-		fmt.Printf("  - %s (%s, enabled=%t, tools=%d, resources=%d)\n", item.ID, fallbackText(item.Source, "unknown"), item.Enabled, item.ToolCount, item.ResourceCount)
+		fmt.Printf("  - %s (%s, status=%s, enabled=%t, tools=%d, resources=%d)\n", item.ID, fallbackText(item.Source, "unknown"), fallbackText(item.Status, "unknown"), item.Enabled, item.ToolCount, item.ResourceCount)
 	}
 	return nil
 }
@@ -1461,6 +1471,19 @@ func runtimeSourceTrust(source string) string {
 		return "canonical"
 	case "local-fallback":
 		return "degraded"
+	default:
+		return "unknown"
+	}
+}
+
+func skillGroupSourceLabel(group skill.Group) string {
+	switch group {
+	case skill.Common:
+		return "common"
+	case skill.Codex:
+		return "codex"
+	case skill.CC:
+		return "cc"
 	default:
 		return "unknown"
 	}

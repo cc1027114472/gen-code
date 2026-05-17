@@ -201,6 +201,52 @@ func TestClientCreateResponseRetriesTransientGatewayBodyError(t *testing.T) {
 	require.Equal(t, 2, attempts)
 }
 
+func TestClientCreateResponseRetriesEOFTransportFailure(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			hj, ok := w.(http.Hijacker)
+			require.True(t, ok)
+			conn, _, err := hj.Hijack()
+			require.NoError(t, err)
+			_ = conn.Close()
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_retry_eof",
+			"model":"gpt-5.4-A",
+			"output":[{"content":[{"type":"output_text","text":"hello after eof retry"}]}],
+			"usage":{"input_tokens":12,"output_tokens":8,"total_tokens":20}
+		}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(Anthropic)
+	registry.Register(Config{
+		Kind:      Anthropic,
+		Enabled:   true,
+		BaseURL:   server.URL,
+		AuthToken: "token-1",
+		Models: Models{
+			Default: "gpt-5.4-A",
+		},
+	})
+
+	originalSleep := providerSleep
+	providerSleep = func(time.Duration) {}
+	t.Cleanup(func() {
+		providerSleep = originalSleep
+	})
+
+	result, err := NewClient(registry).CreateResponse(context.Background(), ResponseRequest{
+		Input: "say hi",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "hello after eof retry", result.OutputText)
+	require.Equal(t, 2, attempts)
+}
+
 func TestClientCreateResponseDoesNotRetryNonTransientProviderError(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -240,5 +286,6 @@ func TestIsRetryableProviderErrorRecognizesTimeout(t *testing.T) {
 	timeoutErr := &net.DNSError{IsTimeout: true, Err: "timeout", Name: "provider.test"}
 	require.True(t, isRetryableProviderError(timeoutErr))
 	require.True(t, isRetryableProviderError(context.DeadlineExceeded))
+	require.True(t, isRetryableProviderError(fmt.Errorf("Post \"http://provider.test/v1/responses\": EOF")))
 	require.False(t, isRetryableProviderError(fmt.Errorf("permanent failure")))
 }

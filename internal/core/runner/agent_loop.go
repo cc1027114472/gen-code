@@ -799,6 +799,10 @@ func parseAgentActionWithState(raw string, state AgentRunState) (AgentAction, er
 	if action.Type == "response" {
 		action.Type = "respond"
 	}
+	if action.Type == "tool_call" {
+		action.Type = ""
+	}
+	action.Type = normalizeAgentActionType(action.Type)
 	if action.Type == "" {
 		inferred := inferAgentActionType(action, state)
 		if inferred == "" {
@@ -806,12 +810,49 @@ func parseAgentActionWithState(raw string, state AgentRunState) (AgentAction, er
 		}
 		action.Type = inferred
 	}
+	action = inheritAgentActionContext(action, state)
 	switch action.Type {
 	case "respond", "read_file", "list_files", "stat_file", "read_files_batch", "list_files_filtered", "search_text", "search_text_detailed", "apply_patch":
 		return action, nil
 	default:
 		return AgentAction{}, fmt.Errorf("agent action %q is not supported", action.Type)
 	}
+}
+
+func normalizeAgentActionType(value string) string {
+	switch strings.TrimSpace(value) {
+	case "workspace.read_file":
+		return "read_file"
+	case "workspace.list_files":
+		return "list_files"
+	case "workspace.stat_file":
+		return "stat_file"
+	case "workspace.read_files_batch":
+		return "read_files_batch"
+	case "workspace.list_files_filtered":
+		return "list_files_filtered"
+	case "workspace.search_text":
+		return "search_text"
+	case "workspace.search_text_detailed":
+		return "search_text_detailed"
+	case "workspace.apply_patch":
+		return "apply_patch"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func inheritAgentActionContext(action AgentAction, state AgentRunState) AgentAction {
+	switch action.Type {
+	case "search_text", "search_text_detailed":
+		if strings.TrimSpace(action.Query) == "" {
+			action.Query = strings.TrimSpace(state.LastAction.Query)
+		}
+		if strings.TrimSpace(action.Path) == "" {
+			action.Path = strings.TrimSpace(state.LastAction.Path)
+		}
+	}
+	return action
 }
 
 func inferAgentActionType(action AgentAction, state AgentRunState) string {

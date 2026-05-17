@@ -716,6 +716,36 @@ select {
   gap: 14px;
 }
 
+.summary-list--runtime {
+  margin-top: 12px;
+}
+
+.fallback-note {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(39, 52, 76, 0.08);
+  background: rgba(248, 249, 250, 0.98);
+}
+
+.fallback-note strong {
+  color: var(--text-main);
+  font-size: 14px;
+}
+
+.fallback-note span {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.fallback-note--warning {
+  border-color: rgba(189, 98, 53, 0.14);
+  background: var(--warning-soft);
+}
+
 .summary-row strong {
   flex: 1;
   margin-top: 0;

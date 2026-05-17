@@ -864,6 +864,30 @@ func TestParseAgentActionAcceptsResponseAlias(t *testing.T) {
 	require.Equal(t, "done", action.Response)
 }
 
+func TestParseAgentActionTreatsToolCallAsInferableAlias(t *testing.T) {
+	action, err := parseAgentActionWithState(
+		`{"type":"tool_call","path":"go.mod","reasoningSummary":"Inspect file metadata first"}`,
+		AgentRunState{
+			Plan: AgentExecutionPlan{
+				Steps: []AgentPlanStep{
+					{Title: "Check file status", ExpectedActionTypes: []string{"stat_file"}},
+				},
+			},
+			CurrentStepTitle: "Check file status",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "stat_file", action.Type)
+	require.Equal(t, "go.mod", action.Path)
+}
+
+func TestParseAgentActionNormalizesWorkspaceToolKind(t *testing.T) {
+	action, err := parseAgentAction(`{"type":"workspace.read_files_batch","paths":["go.mod"],"reasoningSummary":"Read file content next"}`)
+	require.NoError(t, err)
+	require.Equal(t, "read_files_batch", action.Type)
+	require.Equal(t, []string{"go.mod"}, action.Paths)
+}
+
 func TestParseAgentActionInfersDetailedSearchTypeFromCurrentStep(t *testing.T) {
 	action, err := parseAgentActionWithState(
 		`{"query":"KindWorkspaceStat","path":"internal/core/runner","limit":20,"reasoningSummary":"Inspect line hits"}`,
@@ -880,6 +904,31 @@ func TestParseAgentActionInfersDetailedSearchTypeFromCurrentStep(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, "search_text_detailed", action.Type)
+}
+
+func TestParseAgentActionDetailedSearchInheritsPreviousQueryAndPath(t *testing.T) {
+	action, err := parseAgentActionWithState(
+		`{"type":"search_text_detailed","limit":20,"reasoningSummary":"Inspect line hits"}`,
+		AgentRunState{
+			LastAction: AgentAction{
+				Type:  "search_text",
+				Query: "KindWorkspaceStat",
+				Path:  "internal/core/runner",
+			},
+			Plan: AgentExecutionPlan{
+				Steps: []AgentPlanStep{
+					{Title: "Search for broad matches", ExpectedActionTypes: []string{"search_text"}},
+					{Title: "Inspect detailed matches", ExpectedActionTypes: []string{"search_text_detailed"}},
+				},
+			},
+			CompletedActions: []string{"search_text"},
+			CurrentStepTitle: "Inspect detailed matches",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "search_text_detailed", action.Type)
+	require.Equal(t, "KindWorkspaceStat", action.Query)
+	require.Equal(t, "internal/core/runner", action.Path)
 }
 
 func TestParseAgentActionInfersStatFileTypeFromCurrentStep(t *testing.T) {

@@ -3,14 +3,10 @@
 ## Canonical Targets
 
 - UI: `http://127.0.0.1:5174/`
-- Canonical remote runtime: `http://127.0.0.1:10008`
-- Override rule: set `GEN_CODE_API_BASE_URL` only when the trusted current-code runtime is intentionally running on another clean port, and record that port in the acceptance notes
+- API: `http://127.0.0.1:10008`
+- Canonical lane: `remote-app-server` with `canonical` trust
 
 ## Release Gate
-
-This is the short release checklist for the currently real and runnable regression lane. A release-candidate pass requires all 3 commands below to pass without local edits between runs.
-
-This checklist is intentionally limited to the runtime and desktop acceptance gate. It does not by itself mark skill governance inventory or MCP capability expansion as release-verified.
 
 ### 1. Desktop Go regression
 
@@ -22,9 +18,8 @@ go test ./...
 
 Pass standard:
 
-- command exits with code `0`
-- no package in `desktop` fails
-- fallback persistence coverage remains green, including restart and waiting-state tests
+- exits `0`
+- fallback persistence, manual refresh, and restart coverage stay green
 
 ### 2. Desktop frontend build regression
 
@@ -35,9 +30,8 @@ npm run build
 
 Pass standard:
 
-- command exits with code `0`
-- TypeScript compilation succeeds
-- Vite production build completes
+- exits `0`
+- TypeScript and Vite build succeed
 
 ### 3. Canonical live acceptance regression
 
@@ -48,36 +42,30 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 
 Pass standard:
 
-- command exits with code `0`
-- wrapper resolves:
-  - UI base URL to `http://127.0.0.1:5174/` unless intentionally overridden
-  - API base URL to `http://127.0.0.1:10008` unless intentionally overridden
-- `/api/runtime/status` reports:
-  - `runtimeSource = remote-app-server`
-  - `runtimeTrust = canonical`
-- if `canonicalRuntimeUrl` is present, it matches the API base URL used for the run
-- Python verification completes the direct second-batch read tools
-- Python verification completes all 3 `agent.run` scenarios:
-  - `filter_then_read`
-  - `search_then_detailed`
-  - `stat_then_read`
-- `workspace.apply_patch` enters approval, executes after approval, and records a write execution
-- `workspace.apply_patch.rollback` enters approval, executes after approval, and records a rollback write execution
+- exits `0`
+- `runtimeSource = remote-app-server`
+- `runtimeTrust = canonical`
+- `refreshMode` and `fallbackEvidenceMode` are recorded in the verifier output
+- `fallback` is supporting evidence only, not a second browser gate
+- `canonicalRuntimeUrl`, when present, matches the API target used for the run
+- all direct read-tool, agent, apply, and rollback checks pass
 
 ## Fallback Interpretation Rules
 
-- `local-fallback` is valid supporting evidence for persistence and restart correctness
-- `local-fallback` is not a substitute for the canonical remote acceptance lane
-- if the default `10008` runtime is stale or intentionally replaced, use a clean port override and record the exact port in the acceptance report
+- `local-fallback` supports restart and degraded desktop evidence
+- `local-fallback` supports source/trust/manual-refresh evidence
+- `local-fallback` does not satisfy the canonical live acceptance gate
+- fallback evidence must stay explicitly labeled as non-browser acceptance
 
 ## Required Evidence To Record
 
-For the acceptance notes or closeout doc, record at least:
-
-- exact UI and API target URLs used
-- runtime source and runtime trust
-- thread ID from the live acceptance run
+- exact UI and API URLs
+- `runtimeSource`
+- `runtimeTrust`
+- `refreshMode`
+- `fallbackEvidenceMode`
+- thread ID
 - apply write execution ID
 - rollback write execution ID
-- any intentional port override or degraded-path exception
-- any skipped skill-governance or MCP-health assertion, with the reason recorded explicitly
+- any intentional port override
+- any skipped MCP or skill-governance assertion, with reason

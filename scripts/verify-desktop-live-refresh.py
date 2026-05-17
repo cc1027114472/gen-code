@@ -763,68 +763,106 @@ def main() -> int:
                 },
             }
 
-            print(
-                json.dumps(
+            result = {
+                "ok": True,
+                "threadId": thread_id,
+                "threadName": thread_name,
+                "taskId": created_task_id,
+                "taskTitle": task_title,
+                "createdStatus": created_task["status"],
+                "approvedStatus": approved_task["status"],
+                "writeExecutionId": apply_execution["id"],
+                "rollbackTaskId": rollback_task_id,
+                "rollbackTaskTitle": rollback_task_title,
+                "rollbackStatus": rollback_approved["status"],
+                "rollbackWriteExecutionId": rollback_execution["id"],
+                "directToolTasks": [
                     {
-                        "ok": True,
-                        "threadId": thread_id,
-                        "threadName": thread_name,
-                        "taskId": created_task_id,
-                        "taskTitle": task_title,
-                        "createdStatus": created_task["status"],
-                        "approvedStatus": approved_task["status"],
-                        "writeExecutionId": apply_execution["id"],
-                        "rollbackTaskId": rollback_task_id,
-                        "rollbackTaskTitle": rollback_task_title,
-                        "rollbackStatus": rollback_approved["status"],
-                        "rollbackWriteExecutionId": rollback_execution["id"],
-                        "directToolTasks": [
-                            {
-                                "id": item["task"]["id"],
-                                "title": item["task"]["title"],
-                                "kind": item["task"]["kind"],
-                                "resultSummary": item["task"]["resultSummary"],
-                                "visibility": item["visibility"],
-                            }
-                            for item in direct_results
-                        ],
-                        "threadMutationTasks": [
-                            {
-                                "taskId": item["task"]["id"],
-                                "title": item["task"]["title"],
-                                "kind": item["task"]["kind"],
-                                "resultSummary": item["task"]["resultSummary"],
-                                "record": item["record"],
-                                "visibility": item["visibility"],
-                            }
-                            for item in thread_mutation_results
-                        ],
-                        "agentScenarios": [
-                            {
-                                "taskId": item["task"]["id"],
-                                "title": item["task"]["title"],
-                                "planMode": item["task"].get("agentPlanMode", ""),
-                                "resultSummary": item["task"]["resultSummary"],
-                                "childTaskKinds": [child["kind"] for child in item["childTasks"]],
-                                "messageId": item["message"]["id"],
-                                "message": item["message"]["content"],
-                                "visibility": item["visibility"],
-                            }
-                            for item in agent_results
-                        ],
-                        "runtimeSource": runtime_status.get("runtimeSource", ""),
-                        "runtimeTrust": runtime_status.get("runtimeTrust", ""),
-                        "canonicalRuntimeUrl": runtime_status.get("canonicalRuntimeUrl", ""),
-                        "uiBaseUrl": UI_BASE_URL,
-                        "apiBaseUrl": API_BASE_URL,
-                        "acceptanceReport": acceptance_report,
-                    },
-                    ensure_ascii=False,
-                )
-            )
+                        "id": item["task"]["id"],
+                        "title": item["task"]["title"],
+                        "kind": item["task"]["kind"],
+                        "resultSummary": item["task"]["resultSummary"],
+                        "visibility": item["visibility"],
+                    }
+                    for item in direct_results
+                ],
+                "threadMutationTasks": [
+                    {
+                        "taskId": item["task"]["id"],
+                        "title": item["task"]["title"],
+                        "kind": item["task"]["kind"],
+                        "resultSummary": item["task"]["resultSummary"],
+                        "record": item["record"],
+                        "visibility": item["visibility"],
+                    }
+                    for item in thread_mutation_results
+                ],
+                "agentScenarios": [
+                    {
+                        "taskId": item["task"]["id"],
+                        "title": item["task"]["title"],
+                        "planMode": item["task"].get("agentPlanMode", ""),
+                        "resultSummary": item["task"]["resultSummary"],
+                        "childTaskKinds": [child["kind"] for child in item["childTasks"]],
+                        "messageId": item["message"]["id"],
+                        "message": item["message"]["content"],
+                        "visibility": item["visibility"],
+                    }
+                    for item in agent_results
+                ],
+                "runtimeSource": runtime_status.get("runtimeSource", ""),
+                "runtimeTrust": runtime_status.get("runtimeTrust", ""),
+                "canonicalRuntimeUrl": runtime_status.get("canonicalRuntimeUrl", ""),
+                "uiBaseUrl": UI_BASE_URL,
+                "apiBaseUrl": API_BASE_URL,
+                "refreshMode": refresh_mode,
+                "fallbackEvidenceMode": acceptance_report["fallback"]["mode"],
+                "acceptanceReport": acceptance_report,
+            }
+            emit_release_baseline(result)
+            print(json.dumps(result, ensure_ascii=False))
             return 0
         finally:
             browser.close()
+
+
+def validate_release_baseline(result: dict) -> None:
+    required_release_keys = [
+        "runtimeSource",
+        "runtimeTrust",
+        "uiBaseUrl",
+        "apiBaseUrl",
+        "refreshMode",
+        "fallbackEvidenceMode",
+        "acceptanceReport",
+    ]
+    missing = [key for key in required_release_keys if key not in result]
+    if missing:
+        raise AssertionError(f"missing release-baseline key(s): {', '.join(missing)}")
+
+    acceptance_report = result.get("acceptanceReport") or {}
+    required_acceptance_keys = [
+        "remote",
+        "fallback",
+    ]
+    missing_acceptance = [key for key in required_acceptance_keys if key not in acceptance_report]
+    if missing_acceptance:
+        raise AssertionError(f"missing acceptance-report key(s): {', '.join(missing_acceptance)}")
+
+    remote_report = acceptance_report.get("remote") or {}
+    for key in ("runtimeSource", "runtimeTrust", "uiBaseUrl", "apiBaseUrl", "refreshMode"):
+        if key not in remote_report:
+            raise AssertionError(f"missing remote acceptance key: {key}")
+
+    fallback_report = acceptance_report.get("fallback") or {}
+    if fallback_report.get("mode") != "go-test-evidence":
+        raise AssertionError("fallback evidence must remain go-test-evidence")
+    if fallback_report.get("browserAutomation") != "not attempted":
+        raise AssertionError("fallback lane must not be treated as browser automation acceptance")
+
+
+def emit_release_baseline(result: dict) -> None:
+    validate_release_baseline(result)
 
 
 if __name__ == "__main__":
