@@ -14,6 +14,39 @@ import (
 	"llmtrace/internal/core/tool"
 )
 
+var governedProjectLocalSkillIDs = map[string][]string{
+	"codex": {
+		"babysit-pr",
+		"code-review",
+		"code-review-breaking-changes",
+		"code-review-change-size",
+		"code-review-context",
+		"code-review-testing",
+		"codex-bug",
+		"codex-issue-digest",
+		"codex-pr-body",
+		"remote-tests",
+		"test-tui",
+	},
+	"cc": {
+		"andrej-karpathy-skills",
+		"brainstorming",
+		"dispatching-parallel-agents",
+		"executing-plans",
+		"finishing-a-development-branch",
+		"receiving-code-review",
+		"requesting-code-review",
+		"subagent-driven-development",
+		"systematic-debugging",
+		"test-driven-development",
+		"using-git-worktrees",
+		"using-superpowers",
+		"verification-before-completion",
+		"writing-plans",
+		"writing-skills",
+	},
+}
+
 func TestDiscoverSkills(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(root, "alpha-skill"), 0o755))
@@ -182,17 +215,16 @@ func TestMCPMetadataHealthSummaryUsesStableLabels(t *testing.T) {
 	}
 }
 
-func TestDiscoverSiblingRuntimeContentUsesExpectedSiblingPaths(t *testing.T) {
+func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T) {
 	parent := t.TempDir()
 	workspace := filepath.Join(parent, "gen-code")
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "internal", "core"), 0o755))
 
-	require.NoError(t, os.MkdirAll(filepath.Join(parent, "codex", ".codex", "skills", "code-review"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(parent, "CC ibwhale", "ibwhale", ".claude", "skills", "writing-plans"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "internal", "core", "skill", "catalog", "codex", "code-review"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "writing-plans"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "andrej-karpathy-skills.md"), []byte(""), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(parent, "CC ibwhale", "ibwhale", "tools", "deploy-helper"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(parent, "CC ibwhale", "node_modules", "@modelcontextprotocol", "server-filesystem"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(parent, "CC ibwhale", ".claude", "skills"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(parent, "CC ibwhale", ".claude", "skills", "andrej-karpathy-skills.md"), []byte(""), 0o644))
 
 	discovered := discoverSiblingRuntimeContent(workspace)
 
@@ -276,6 +308,26 @@ func TestDiscoverSiblingRuntimeContentUsesExpectedSiblingPaths(t *testing.T) {
 		Command:       mcpFixtureCommand(),
 		Tools:         []string{"echo", "fail", "sum"},
 	})
+}
+
+func TestProjectLocalGovernedSkillCatalogIsFullyLocalized(t *testing.T) {
+	workspace := workspaceRoot()
+	discovered := discoverSiblingRuntimeContent(workspace)
+
+	byGroupAndID := map[string]skill.Descriptor{}
+	for _, item := range discovered.skills {
+		byGroupAndID[string(item.Group)+":"+item.ID] = item
+	}
+
+	for group, ids := range governedProjectLocalSkillIDs {
+		for _, id := range ids {
+			key := group + ":" + id
+			item, ok := byGroupAndID[key]
+			require.Truef(t, ok, "expected discovered skill %s", key)
+			require.Truef(t, item.LocalizationChecked, "expected project-local copied skill %s to pass localization audit", key)
+			require.Equalf(t, group, item.Source, "expected source to remain stable for %s", key)
+		}
+	}
 }
 
 func TestNewSkillResolverPreservesGroupingSemantics(t *testing.T) {

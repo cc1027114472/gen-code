@@ -41,10 +41,9 @@ const (
 func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 	parentRoot := filepath.Dir(workspaceRoot)
 
-	codexSkillsRoot := filepath.Join(parentRoot, "codex", ".codex", "skills")
+	codexSkillsRoot := filepath.Join(workspaceRoot, "internal", "core", "skill", "catalog", "codex")
 	ccSkillsRoots := []string{
-		filepath.Join(parentRoot, "CC ibwhale", ".claude", "skills"),
-		filepath.Join(parentRoot, "CC ibwhale", "ibwhale", ".claude", "skills"),
+		filepath.Join(workspaceRoot, "internal", "core", "skill", "catalog", "cc"),
 	}
 	ccToolsRoot := filepath.Join(parentRoot, "CC ibwhale", "ibwhale", "tools")
 	ccNodeModulesRoot := filepath.Join(parentRoot, "CC ibwhale", "node_modules")

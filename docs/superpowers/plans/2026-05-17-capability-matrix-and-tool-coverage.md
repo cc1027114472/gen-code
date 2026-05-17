@@ -70,8 +70,8 @@
 | --- | --- | --- | --- |
 | `common`, `codex`, `cc` skill grouping model | verified | `internal/core/runtime/status.go`, `discovery.go`, CLI and desktop payloads | Group isolation baseline is surfaced consistently. |
 | Shared runtime exposure of skill groups | verified | runtime status, discovery, `/api/skills`, `skills list` output | Inventory fields and grouped governance summaries are visible for verification. |
-| Grouped skill import audit against `AGENTS.md` localization and isolation rules | verified | `internal/core/runtime/discovery.go`, `desktop/app.go`, `cmd/cli/main.go`, governance tests | Current baseline audits `localization checked` and `isolation status` without claiming per-skill capability acceptance. |
-| Full 1:1 Chinese localization audit for copied skills | verified | `internal/core/runtime/discovery.go`, `desktop/app.go`, governance tests, baseline docs | `localizationChecked` now reflects an explicit 1:1 Chinese-localization audit conclusion instead of a loose heuristic. |
+| Grouped skill import audit against `AGENTS.md` localization and isolation rules | verified | `internal/core/runtime/discovery.go`, `desktop/app.go`, `cmd/cli/main.go`, governance tests | Current baseline audits project-local copied skills under `internal/core/skill/catalog` for `localization checked` and `isolation status` without claiming per-skill capability acceptance. |
+| Full 1:1 Chinese localization audit for copied skills | verified | `internal/core/runtime/discovery.go`, `desktop/app.go`, governance tests, baseline docs | `localizationChecked` now reflects an explicit 1:1 Chinese-localization audit conclusion for copied skills in `gen-code/internal/core/skill/catalog` instead of a loose heuristic. |
 | Capability-level verification for each grouped skill | not implemented | no matrix before this doc | This document starts the inventory but does not verify each skill individually. |
 
 ### Skill Governance Boundary
@@ -79,6 +79,7 @@
 - `skill discovered` is not `skill accepted`.
 - Grouped inventory is separate from runtime release acceptance.
 - Localization status stays tracked, not assumed complete.
+- For copied `codex` / `cc` skills, the governance truth now comes from `gen-code/internal/core/skill/catalog`, not sibling source directories.
 
 ## 6. MCP Surface
 

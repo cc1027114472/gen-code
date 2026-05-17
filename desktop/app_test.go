@@ -212,6 +212,48 @@ func TestDesktopFallbackSkillGovernanceLocalizationPendingMatchesInventory(t *te
 			t.Fatalf("group %q localization-pending = %d, want %d", summary.Group, got, want)
 		}
 	}
+	if got := pendingByGroup["common"]; got != 0 {
+		t.Fatalf("expected common localization-pending 0, got %d", got)
+	}
+	if got := pendingByGroup["codex"]; got != 0 {
+		t.Fatalf("expected codex localization-pending 0, got %d", got)
+	}
+	if got := pendingByGroup["cc"]; got != 0 {
+		t.Fatalf("expected cc localization-pending 0, got %d", got)
+	}
+}
+
+func TestLocalSkillCatalogUsesProjectLocalCopiedSkills(t *testing.T) {
+	workspaceRoot, err := findWorkspaceRoot()
+	if err != nil {
+		t.Fatalf("findWorkspaceRoot: %v", err)
+	}
+
+	items := localSkillCatalog(workspaceRoot)
+	if len(items) == 0 {
+		t.Fatal("expected local skill catalog items")
+	}
+
+	found := map[string]SkillSummary{}
+	for _, item := range mapSkills(items) {
+		found[item.Group+":"+item.ID] = item
+	}
+
+	for _, key := range []string{
+		"common:common.browser",
+		"codex:code-review",
+		"codex:test-tui",
+		"cc:andrej-karpathy-skills",
+		"cc:writing-skills",
+	} {
+		item, ok := found[key]
+		if !ok {
+			t.Fatalf("expected project-local copied skill %q", key)
+		}
+		if !item.LocalizationChecked {
+			t.Fatalf("expected project-local copied skill %q to be localized", key)
+		}
+	}
 }
 
 func TestDesktopFallbackPersistsAcrossAppRestart(t *testing.T) {

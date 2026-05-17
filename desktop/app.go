@@ -1737,15 +1737,13 @@ func localToolCatalog() []apiTool {
 }
 
 func localSkillCatalog(workspaceRoot string) []apiSkill {
-	parentRoot := filepath.Dir(workspaceRoot)
 	roots := []struct {
 		root   string
 		group  string
 		source string
 	}{
-		{root: filepath.Join(parentRoot, "codex", ".codex", "skills"), group: "codex", source: "codex"},
-		{root: filepath.Join(parentRoot, "CC ibwhale", ".claude", "skills"), group: "cc", source: "cc"},
-		{root: filepath.Join(parentRoot, "CC ibwhale", "ibwhale", ".claude", "skills"), group: "cc", source: "cc"},
+		{root: filepath.Join(workspaceRoot, "internal", "core", "skill", "catalog", "codex"), group: "codex", source: "codex"},
+		{root: filepath.Join(workspaceRoot, "internal", "core", "skill", "catalog", "cc"), group: "cc", source: "cc"},
 	}
 	items := []apiSkill{
 		{
