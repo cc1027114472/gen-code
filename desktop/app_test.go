@@ -108,6 +108,9 @@ func TestDesktopFallbackThreadTaskFlow(t *testing.T) {
 	if afterAdvance.Skills[0].VerificationStatus == "" {
 		t.Fatal("expected fallback skills to include verification status")
 	}
+	if afterAdvance.Skills[0].IsolationStatus == "" {
+		t.Fatal("expected fallback skills to include isolation status")
+	}
 	if len(afterAdvance.SkillGovernance) == 0 {
 		t.Fatal("expected fallback skill governance summary")
 	}

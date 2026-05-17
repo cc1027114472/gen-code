@@ -1359,12 +1359,12 @@ func printSkills(ctx context.Context, facade *runtimeFacade, requestedGroup stri
 		fmt.Printf("  source: %s\n", source)
 		fmt.Printf("  source trust: %s\n", runtimeSourceTrust(source))
 		fmt.Printf("  source detail: %s\n", runtimeSourceDetail(source))
-		fmt.Println("  governance fields: skill id, group, source, verification status, localization checked")
+		fmt.Println("  governance fields: skill id, group, source, verification status, localization checked, isolation status")
 		for _, item := range items {
 			if item.Group != string(group) {
 				continue
 			}
-			fmt.Printf("  - %s (group=%s, source=%s, verification=%s, localization=%s)\n", item.ID, item.Group, fallbackText(item.Source, item.Group), fallbackText(item.VerificationStatus, "implemented"), localizationStatus(item.LocalizationChecked))
+			fmt.Printf("  - %s (group=%s, source=%s, verification=%s, localization=%s, isolation=%s)\n", item.ID, item.Group, fallbackText(item.Source, item.Group), fallbackText(item.VerificationStatus, "implemented"), localizationStatus(item.LocalizationChecked), isolationStatus(skillIsolationStatusForOutput(item)))
 		}
 		return nil
 	}
@@ -1373,7 +1373,7 @@ func printSkills(ctx context.Context, facade *runtimeFacade, requestedGroup stri
 	fmt.Printf("  source: %s\n", source)
 	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(source))
 	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(source))
-	fmt.Println("  governance fields: skill id, group, source, verification status, localization checked")
+	fmt.Println("  governance fields: skill id, group, source, verification status, localization checked, isolation status")
 	fmt.Println("  skill governance:")
 	for _, summary := range summaries {
 		fmt.Printf("  - %s: implemented=%d verified=%d localization-pending=%d\n", summary.Group, summary.ImplementedCount, summary.VerifiedCount, summary.LocalizationPending)
@@ -1384,7 +1384,7 @@ func printSkills(ctx context.Context, facade *runtimeFacade, requestedGroup stri
 			if item.Group != groupName {
 				continue
 			}
-			fmt.Printf("  - %s (group=%s, source=%s, verification=%s, localization=%s)\n", item.ID, item.Group, fallbackText(item.Source, item.Group), fallbackText(item.VerificationStatus, "implemented"), localizationStatus(item.LocalizationChecked))
+			fmt.Printf("  - %s (group=%s, source=%s, verification=%s, localization=%s, isolation=%s)\n", item.ID, item.Group, fallbackText(item.Source, item.Group), fallbackText(item.VerificationStatus, "implemented"), localizationStatus(item.LocalizationChecked), isolationStatus(skillIsolationStatusForOutput(item)))
 		}
 	}
 	return nil
@@ -1578,6 +1578,27 @@ func localizationStatus(checked bool) string {
 		return "checked"
 	}
 	return "unchecked"
+}
+
+func isolationStatus(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "unknown"
+	}
+	return strings.TrimSpace(value)
+}
+
+func skillIsolationStatusForOutput(item runtimecontract.Skill) string {
+	if trimmed := strings.TrimSpace(item.IsolationStatus); trimmed != "" {
+		return trimmed
+	}
+	switch strings.TrimSpace(item.Group) {
+	case "common":
+		return "shared-common"
+	case "codex", "cc":
+		return "isolated"
+	default:
+		return "unknown"
+	}
 }
 
 func summarizeMCPMetadata(item runtimecontract.MCPServer) string {

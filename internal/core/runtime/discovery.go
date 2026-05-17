@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -31,6 +32,12 @@ type SkillGovernanceSummary struct {
 	LocalizationPending int
 }
 
+const (
+	skillIsolationStatusIsolated = "isolated"
+	skillIsolationStatusShared   = "shared-common"
+	skillIsolationStatusBlocked  = "blocked"
+)
+
 func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 	parentRoot := filepath.Dir(workspaceRoot)
 
@@ -43,7 +50,16 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 	ccNodeModulesRoot := filepath.Join(parentRoot, "CC ibwhale", "node_modules")
 
 	discoveredSkills := []skill.Descriptor{
-		{ID: "common.browser", Group: skill.Common, Name: "Browser", Description: "Common browser automation skill"},
+		{
+			ID:                  "common.browser",
+			Group:               skill.Common,
+			Name:                "Browser",
+			Description:         "Common browser automation skill",
+			Source:              "common",
+			VerificationStatus:  "implemented",
+			LocalizationChecked: true,
+			IsolationStatus:     skillIsolationStatusShared,
+		},
 	}
 	discoveredSkills = append(discoveredSkills, discoverSkills(codexSkillsRoot, skill.Codex)...)
 	for _, root := range ccSkillsRoots {
@@ -244,14 +260,84 @@ func discoverSkills(root string, group skill.Group) []skill.Descriptor {
 
 	items := make([]skill.Descriptor, 0, len(ids))
 	for _, id := range ids {
+		source := groupSource(group)
+		localizationChecked := skillLocalizationChecked(root, id)
+		isolationStatus := skillIsolationStatus(group, source)
 		items = append(items, skill.Descriptor{
-			ID:          id,
-			Group:       group,
-			Name:        humanizeName(id),
-			Description: groupDescription(group),
+			ID:                  id,
+			Group:               group,
+			Name:                humanizeName(id),
+			Description:         groupDescription(group),
+			Source:              source,
+			VerificationStatus:  "implemented",
+			LocalizationChecked: localizationChecked,
+			IsolationStatus:     isolationStatus,
 		})
 	}
 	return items
+}
+
+func skillLocalizationChecked(root string, id string) bool {
+	markdownPath := filepath.Join(root, id+".md")
+	if fileLooksLocalized(markdownPath) {
+		return true
+	}
+	skillPath := filepath.Join(root, id, "SKILL.md")
+	if fileLooksLocalized(skillPath) {
+		return true
+	}
+	return false
+}
+
+func fileLooksLocalized(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineCount := 0
+	nonASCII := 0
+	for scanner.Scan() && lineCount < 80 {
+		lineCount++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if containsNonASCII(line) {
+			nonASCII++
+			if nonASCII >= 2 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsNonASCII(value string) bool {
+	for _, r := range value {
+		if r > unicode.MaxASCII {
+			return true
+		}
+	}
+	return false
+}
+
+func skillIsolationStatus(group skill.Group, source string) string {
+	switch group {
+	case skill.Common:
+		return skillIsolationStatusShared
+	case skill.Codex:
+		if source == "codex" {
+			return skillIsolationStatusIsolated
+		}
+	case skill.CC:
+		if source == "cc" {
+			return skillIsolationStatusIsolated
+		}
+	}
+	return skillIsolationStatusBlocked
 }
 
 func discoverTools(root string) []tool.Descriptor {

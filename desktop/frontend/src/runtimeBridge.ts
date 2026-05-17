@@ -156,6 +156,7 @@ type SkillDescriptor = {
   source?: string;
   verificationStatus?: string;
   localizationChecked?: boolean;
+  isolationStatus?: string;
 };
 
 export type SkillGovernanceGroup = {

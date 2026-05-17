@@ -214,6 +214,7 @@ type Skill struct {
 	Source              string `json:"source,omitempty"`
 	VerificationStatus  string `json:"verificationStatus,omitempty"`
 	LocalizationChecked bool   `json:"localizationChecked"`
+	IsolationStatus     string `json:"isolationStatus,omitempty"`
 }
 
 // Tool describes an available runtime tool.

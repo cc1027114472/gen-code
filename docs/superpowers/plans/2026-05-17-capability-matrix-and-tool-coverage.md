@@ -70,6 +70,7 @@
 | --- | --- | --- | --- |
 | `common`, `codex`, `cc` skill grouping model | verified | `internal/core/runtime/status.go`, `discovery.go`, CLI and desktop payloads | Group isolation baseline is surfaced consistently. |
 | Shared runtime exposure of skill groups | verified | runtime status, discovery, `/api/skills`, `skills list` output | Inventory fields and grouped governance summaries are visible for verification. |
+| Grouped skill import audit against `AGENTS.md` localization and isolation rules | verified | `internal/core/runtime/discovery.go`, `desktop/app.go`, `cmd/cli/main.go`, governance tests | Current baseline audits `localization checked` and `isolation status` without claiming per-skill capability acceptance. |
 | Full 1:1 Chinese localization audit for copied skills | not implemented | not yet documented as completed | Still a separate audit pass. |
 | Capability-level verification for each grouped skill | not implemented | no matrix before this doc | This document starts the inventory but does not verify each skill individually. |
 
@@ -105,7 +106,7 @@
 
 ## 9. Highest-Priority Remaining Gaps
 
-1. Audit grouped skill imports against the `AGENTS.md` localization and isolation rules.
-2. Expand explicit primary-lane verification to the remaining read tools that are still only indirectly covered.
-3. Continue desktop UX polish for parent/child task and interrupted-task recovery flows.
-4. Decide whether to extend MCP beyond the current metadata-health baseline to real external server execution.
+1. Expand explicit primary-lane verification to the remaining read tools that are still only indirectly covered.
+2. Continue desktop UX polish for parent/child task and interrupted-task recovery flows.
+3. Complete the remaining full 1:1 Chinese localization audit for copied grouped skills.
+4. Decide whether to extend the current verified MCP baseline beyond the fixture-backed external execution lane.

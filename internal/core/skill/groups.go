@@ -16,10 +16,14 @@ const (
 
 // Descriptor describes a discoverable skill.
 type Descriptor struct {
-	ID          string `json:"id"`
-	Group       Group  `json:"group"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID                  string `json:"id"`
+	Group               Group  `json:"group"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	Source              string `json:"source"`
+	VerificationStatus  string `json:"verificationStatus"`
+	LocalizationChecked bool   `json:"localizationChecked"`
+	IsolationStatus     string `json:"isolationStatus"`
 }
 
 // ParseGroup resolves a textual group identifier. Empty values default to Common.

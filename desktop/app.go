@@ -249,6 +249,7 @@ type SkillSummary struct {
 	Source              string `json:"source"`
 	VerificationStatus  string `json:"verificationStatus"`
 	LocalizationChecked bool   `json:"localizationChecked"`
+	IsolationStatus     string `json:"isolationStatus"`
 }
 
 type SkillGovernanceGroup struct {
@@ -408,6 +409,7 @@ type apiSkill struct {
 	Source              string `json:"source"`
 	VerificationStatus  string `json:"verificationStatus"`
 	LocalizationChecked bool   `json:"localizationChecked"`
+	IsolationStatus     string `json:"isolationStatus"`
 }
 
 type apiTool struct {
@@ -1583,6 +1585,7 @@ func mapSkills(items []apiSkill) []SkillSummary {
 			Source:              fallbackText(strings.TrimSpace(item.Source), fallbackText(strings.TrimSpace(item.Group), "common")),
 			VerificationStatus:  fallbackText(strings.TrimSpace(item.VerificationStatus), "implemented"),
 			LocalizationChecked: item.LocalizationChecked,
+			IsolationStatus:     fallbackText(strings.TrimSpace(item.IsolationStatus), localSkillIsolationStatus(fallbackText(strings.TrimSpace(item.Group), "common"))),
 		})
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -1750,7 +1753,8 @@ func localSkillCatalog(workspaceRoot string) []apiSkill {
 			Description:         "Common browser automation skill",
 			Source:              "common",
 			VerificationStatus:  "implemented",
-			LocalizationChecked: false,
+			LocalizationChecked: true,
+			IsolationStatus:     localSkillIsolationStatus("common"),
 		},
 	}
 	seen := map[string]struct{}{
@@ -1781,7 +1785,8 @@ func localSkillCatalog(workspaceRoot string) []apiSkill {
 				Description:         localSkillGroupDescription(candidate.group),
 				Source:              candidate.source,
 				VerificationStatus:  "implemented",
-				LocalizationChecked: false,
+				LocalizationChecked: localSkillLocalizationChecked(candidate.root, id),
+				IsolationStatus:     localSkillIsolationStatus(candidate.group),
 			})
 		}
 	}
@@ -1813,6 +1818,64 @@ func localSkillGroupDescription(group string) string {
 		return "Discovered from cc skills"
 	default:
 		return "Shared runtime skill"
+	}
+}
+
+func localSkillLocalizationChecked(root string, id string) bool {
+	markdownPath := filepath.Join(root, id+".md")
+	if localFileLooksLocalized(markdownPath) {
+		return true
+	}
+	skillPath := filepath.Join(root, id, "SKILL.md")
+	if localFileLooksLocalized(skillPath) {
+		return true
+	}
+	return false
+}
+
+func localFileLooksLocalized(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineCount := 0
+	nonASCII := 0
+	for scanner.Scan() && lineCount < 80 {
+		lineCount++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if localContainsNonASCII(line) {
+			nonASCII++
+			if nonASCII >= 2 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func localContainsNonASCII(value string) bool {
+	for _, r := range value {
+		if r > unicode.MaxASCII {
+			return true
+		}
+	}
+	return false
+}
+
+func localSkillIsolationStatus(group string) string {
+	switch strings.ToLower(strings.TrimSpace(group)) {
+	case "common":
+		return "shared-common"
+	case "codex", "cc":
+		return "isolated"
+	default:
+		return "blocked"
 	}
 }
 

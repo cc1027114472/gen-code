@@ -227,7 +227,7 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			method:         http.MethodGet,
 			path:           "/api/skills",
 			wantStatusCode: http.StatusOK,
-			wantBody:       []string{`"items":[{"id":"skill-1","group":"codex","name":"Skill One","description":"Skill description","source":"codex","verificationStatus":"implemented","localizationChecked":false}`},
+			wantBody:       []string{`"items":[{"id":"skill-1","group":"codex","name":"Skill One","description":"Skill description","source":"codex","verificationStatus":"implemented","localizationChecked":false,"isolationStatus":"isolated"}`},
 		},
 		{
 			name:           "tools",
@@ -787,6 +787,7 @@ func (stubRuntimeService) Skills(context.Context) ([]runtimecontract.Skill, erro
 		Source:              "codex",
 		VerificationStatus:  "implemented",
 		LocalizationChecked: false,
+		IsolationStatus:     "isolated",
 	}}, nil
 }
 

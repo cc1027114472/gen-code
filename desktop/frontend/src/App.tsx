@@ -162,6 +162,7 @@ type SkillGovernanceViewModel = {
   verifiedCount: number;
   localizationPending: number;
   skillIDs: string[];
+  isolationSummary: string;
   summary: string;
 };
 
@@ -397,13 +398,19 @@ export default function App() {
     }
     return skillGovernance.map((item) => {
       const skillIDs = skillIDsByGroup.get(item.group) ?? [];
+      const isolationStates = skills
+        .filter((skill) => ((skill.group || "common").trim() || "common") === item.group)
+        .map((skill) => (skill.isolationStatus || "unknown").trim() || "unknown");
+      const uniqueIsolationStates = [...new Set(isolationStates)].sort((left, right) => left.localeCompare(right));
+      const isolationSummary = uniqueIsolationStates.length > 0 ? uniqueIsolationStates.join(", ") : "unknown";
       return {
         group: item.group,
         implementedCount: item.implementedCount,
         verifiedCount: item.verifiedCount,
         localizationPending: item.localizationPending,
         skillIDs,
-        summary: `${item.group}: implemented=${item.implementedCount} verified=${item.verifiedCount} localization-pending=${item.localizationPending}`,
+        isolationSummary,
+        summary: `${item.group}: implemented=${item.implementedCount} verified=${item.verifiedCount} localization-pending=${item.localizationPending} isolation=${isolationSummary}`,
       };
     });
   }, [skillGovernance, skills]);

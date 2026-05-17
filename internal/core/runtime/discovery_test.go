@@ -24,7 +24,21 @@ func TestDiscoverSkills(t *testing.T) {
 	require.Len(t, items, 3)
 	require.Equal(t, "alpha-skill", items[0].ID)
 	require.Equal(t, skill.Codex, items[0].Group)
+	require.Equal(t, "codex", items[0].Source)
+	require.Equal(t, "implemented", items[0].VerificationStatus)
+	require.Equal(t, "isolated", items[0].IsolationStatus)
+	require.False(t, items[0].LocalizationChecked)
 	require.Equal(t, "gamma-skill", items[2].ID)
+}
+
+func TestDiscoverSkillsMarksLocalizedMarkdownAsChecked(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "localized-skill.md"), []byte("# 技能说明\n- 这是中文内容\n"), 0o644))
+
+	items := discoverSkills(root, skill.CC)
+	require.Len(t, items, 1)
+	require.True(t, items[0].LocalizationChecked)
+	require.Equal(t, "isolated", items[0].IsolationStatus)
 }
 
 func TestDiscoverTools(t *testing.T) {
@@ -128,28 +142,44 @@ func TestDiscoverSiblingRuntimeContentUsesExpectedSiblingPaths(t *testing.T) {
 	discovered := discoverSiblingRuntimeContent(workspace)
 
 	require.Contains(t, discovered.skills, skill.Descriptor{
-		ID:          "common.browser",
-		Group:       skill.Common,
-		Name:        "Browser",
-		Description: "Common browser automation skill",
+		ID:                  "common.browser",
+		Group:               skill.Common,
+		Name:                "Browser",
+		Description:         "Common browser automation skill",
+		Source:              "common",
+		VerificationStatus:  "implemented",
+		LocalizationChecked: true,
+		IsolationStatus:     "shared-common",
 	})
 	require.Contains(t, discovered.skills, skill.Descriptor{
-		ID:          "code-review",
-		Group:       skill.Codex,
-		Name:        "Code Review",
-		Description: "Discovered from codex skills",
+		ID:                  "code-review",
+		Group:               skill.Codex,
+		Name:                "Code Review",
+		Description:         "Discovered from codex skills",
+		Source:              "codex",
+		VerificationStatus:  "implemented",
+		LocalizationChecked: false,
+		IsolationStatus:     "isolated",
 	})
 	require.Contains(t, discovered.skills, skill.Descriptor{
-		ID:          "andrej-karpathy-skills",
-		Group:       skill.CC,
-		Name:        "Andrej Karpathy Skills",
-		Description: "Discovered from cc skills",
+		ID:                  "andrej-karpathy-skills",
+		Group:               skill.CC,
+		Name:                "Andrej Karpathy Skills",
+		Description:         "Discovered from cc skills",
+		Source:              "cc",
+		VerificationStatus:  "implemented",
+		LocalizationChecked: false,
+		IsolationStatus:     "isolated",
 	})
 	require.Contains(t, discovered.skills, skill.Descriptor{
-		ID:          "writing-plans",
-		Group:       skill.CC,
-		Name:        "Writing Plans",
-		Description: "Discovered from cc skills",
+		ID:                  "writing-plans",
+		Group:               skill.CC,
+		Name:                "Writing Plans",
+		Description:         "Discovered from cc skills",
+		Source:              "cc",
+		VerificationStatus:  "implemented",
+		LocalizationChecked: false,
+		IsolationStatus:     "isolated",
 	})
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "deploy-helper",

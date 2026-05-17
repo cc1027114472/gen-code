@@ -635,9 +635,10 @@ func (s *Service) Skills(_ context.Context) ([]runtimecontract.Skill, error) {
 			Group:               string(item.Group),
 			Name:                item.Name,
 			Description:         item.Description,
-			Source:              groupSource(item.Group),
-			VerificationStatus:  "implemented",
-			LocalizationChecked: false,
+			Source:              fallbackText(item.Source, groupSource(item.Group)),
+			VerificationStatus:  fallbackText(item.VerificationStatus, "implemented"),
+			LocalizationChecked: item.LocalizationChecked,
+			IsolationStatus:     fallbackText(item.IsolationStatus, defaultSkillIsolationStatus(item.Group)),
 		})
 	}
 	return result, nil
@@ -957,6 +958,24 @@ func groupSource(group skill.Group) string {
 	default:
 		return "common"
 	}
+}
+
+func defaultSkillIsolationStatus(group skill.Group) string {
+	switch group {
+	case skill.Common:
+		return "shared-common"
+	case skill.Codex, skill.CC:
+		return "isolated"
+	default:
+		return "blocked"
+	}
+}
+
+func fallbackText(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func normalizeMCPServerStatus(item mcp.ServerDescriptor) string {

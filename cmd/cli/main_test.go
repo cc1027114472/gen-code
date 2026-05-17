@@ -130,7 +130,7 @@ func TestSkillsListPrintsGovernanceBaseline(t *testing.T) {
 	require.Contains(t, output, "skills list")
 	require.Contains(t, output, "source: local-fallback")
 	require.Contains(t, output, "source trust: degraded")
-	require.Contains(t, output, "governance fields: skill id, group, source, verification status, localization checked")
+	require.Contains(t, output, "governance fields: skill id, group, source, verification status, localization checked, isolation status")
 	require.Contains(t, output, "skill governance:")
 	require.Contains(t, output, "common: implemented=")
 	require.Contains(t, output, "codex: implemented=")
@@ -139,14 +139,15 @@ func TestSkillsListPrintsGovernanceBaseline(t *testing.T) {
 	require.Contains(t, output, "codex:")
 	require.Contains(t, output, "cc:")
 	require.Contains(t, output, "verification=implemented")
-	require.Contains(t, output, "localization=unchecked")
+	require.Contains(t, output, "localization=checked")
+	require.Contains(t, output, "isolation=shared-common")
 }
 
 func TestSkillsListUsesRemoteRuntimeSourceWhenServerIsAvailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/skills":
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"common.browser","group":"common","name":"Browser","description":"Shared browser skill","source":"common","verificationStatus":"implemented","localizationChecked":false},{"id":"codex.review","group":"codex","name":"Review","description":"Codex review skill","source":"codex","verificationStatus":"verified","localizationChecked":true}]}}`))
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"common.browser","group":"common","name":"Browser","description":"Shared browser skill","source":"common","verificationStatus":"implemented","localizationChecked":false,"isolationStatus":"shared-common"},{"id":"codex.review","group":"codex","name":"Review","description":"Codex review skill","source":"codex","verificationStatus":"verified","localizationChecked":true,"isolationStatus":"isolated"}]}}`))
 		case "/api/runtime/status":
 			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":0,"eventCount":0}}`))
 		default:
@@ -169,6 +170,8 @@ func TestSkillsListUsesRemoteRuntimeSourceWhenServerIsAvailable(t *testing.T) {
 	require.Contains(t, output, "cc: implemented=0 verified=0 localization-pending=0")
 	require.Contains(t, output, "verification=verified")
 	require.Contains(t, output, "localization=checked")
+	require.Contains(t, output, "isolation=shared-common")
+	require.Contains(t, output, "isolation=isolated")
 }
 
 func TestMCPListPrintsHealthStatusAndTrust(t *testing.T) {

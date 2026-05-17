@@ -133,6 +133,7 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.ElementsMatch(t, []string{"implemented", "implemented"}, []string{skills[0].VerificationStatus, skills[1].VerificationStatus})
 	require.False(t, skills[0].LocalizationChecked)
 	require.False(t, skills[1].LocalizationChecked)
+	require.ElementsMatch(t, []string{"shared-common", "isolated"}, []string{skills[0].IsolationStatus, skills[1].IsolationStatus})
 
 	tools, err := service.Tools(context.Background())
 	require.NoError(t, err)
