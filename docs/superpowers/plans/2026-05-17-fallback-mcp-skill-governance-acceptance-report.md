@@ -3,7 +3,12 @@
 ## Remote Canonical Lane
 - source: `remote-app-server`
 - trust: `canonical`
-- refresh mode: recorded by `scripts/verify-desktop-live-refresh.py`
+- refresh mode: `SSE 实时刷新`
+- thread id: `thread-186`
+- apply write execution id: `writeexec-66`
+- rollback write execution id: `writeexec-67`
+- ui base url: `http://127.0.0.1:5174/`
+- api base url: `http://127.0.0.1:10008`
 
 ## Local Fallback Lane
 - source: `local-fallback`
@@ -23,3 +28,4 @@
 - fallback is not a second browser acceptance gate
 - end-to-end MCP execution is still out of scope
 - per-skill governance acceptance remains separate from grouped inventory
+- `canonicalRuntimeUrl` was empty in the current acceptance payload and was therefore not used as a pass condition
