@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -67,6 +69,7 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "thread-1", created.ID)
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("old\n"), 0o644))
 
 	task, err := service.CreateTask(context.Background(), created.ID, runtimecontract.CreateTaskRequest{
 		Title: "Draft spec",
@@ -144,12 +147,22 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 
 	status, err := service.Status(context.Background())
 	require.NoError(t, err)
+	require.Equal(t, "remote-app-server", status.RuntimeSource)
+	require.Equal(t, "canonical", status.RuntimeTrust)
+	require.Equal(t, "canonical shared runtime served by the app-server entry", status.RuntimeSourceDetail)
+	require.Equal(t, "http://127.0.0.1:10008", status.CanonicalRuntimeURL)
 	require.Equal(t, sessions.Workspace().ID, status.WorkspaceID)
 	require.Equal(t, projectRoot, status.ProjectRoot)
 	require.Equal(t, 1, status.ThreadCount)
 	require.Equal(t, "thread-1", status.ActiveThreadID)
 	require.Equal(t, state.StoreName, status.StateStore)
 	require.Equal(t, state.PathForProject(projectRoot), status.StatePath)
+
+	fullStatus := service.FullStatus()
+	require.Equal(t, status.RuntimeSource, fullStatus.RuntimeSource)
+	require.Equal(t, status.RuntimeTrust, fullStatus.RuntimeTrust)
+	require.Equal(t, status.RuntimeSourceDetail, fullStatus.RuntimeSourceDetail)
+	require.Equal(t, status.CanonicalRuntimeURL, fullStatus.CanonicalRuntimeURL)
 
 	tasks, err := service.Tasks(context.Background(), created.ID)
 	require.NoError(t, err)
@@ -177,6 +190,25 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, flags, 1)
 	require.Equal(t, "preview", flags[0].Key)
+
+	patchTask, err := service.CreateTask(context.Background(), created.ID, runtimecontract.CreateTaskRequest{
+		Title: "Patch README",
+		Kind:  runner.KindWorkspaceApplyPatch,
+		Input: `{"path":"README.md","patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch"}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "direct", patchTask.ApprovalStatus)
+	_, err = service.RunTask(context.Background(), created.ID, patchTask.ID, runtimecontract.RunTaskRequest{})
+	require.NoError(t, err)
+
+	writeExecutions, err := service.WriteExecutions(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.Len(t, writeExecutions, 1)
+	require.Equal(t, "workspace.apply_patch", writeExecutions[0].ToolKind)
+	require.Equal(t, "apply", writeExecutions[0].Operation)
+	require.Equal(t, []string{"README.md"}, writeExecutions[0].TargetPaths)
+	require.Equal(t, "completed", writeExecutions[0].Status)
+	require.Contains(t, writeExecutions[0].ResultSummary, "applied patch to README.md")
 
 	stream, err := service.StreamEvents(context.Background(), created.ID, runtimecontract.StreamEventsRequest{})
 	require.NoError(t, err)
@@ -224,4 +256,194 @@ func TestServiceCreateTaskNormalizesPlainModelInput(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, runner.KindModelResponse, task.Kind)
 	require.JSONEq(t, `{"input":"Reply with exactly: plain text works."}`, task.InputSummary)
+}
+
+func TestServiceSetCanonicalRuntimeURLOverridesSnapshot(t *testing.T) {
+	projectRoot := t.TempDir()
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	sessions, err := session.NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+
+	service := NewService(
+		"0.1.0",
+		skill.Codex,
+		policy.DefaultMode(),
+		projectRoot,
+		tool.NewRegistry(),
+		skill.NewManager(nil),
+		mcp.NewManager(nil),
+		provider.NewRegistry(""),
+		sessions,
+	)
+
+	service.SetCanonicalRuntimeURL("http://127.0.0.1:10018/")
+
+	status, err := service.Status(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:10018", status.CanonicalRuntimeURL)
+
+	fullStatus := service.FullStatus()
+	require.Equal(t, "http://127.0.0.1:10018", fullStatus.CanonicalRuntimeURL)
+}
+
+func TestServiceCreateRollbackTaskRequiresApprovalForAskUser(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	sessions, err := session.NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+
+	service := NewService(
+		"0.1.0",
+		skill.Codex,
+		policy.DefaultMode(),
+		projectRoot,
+		tool.NewRegistry(),
+		skill.NewManager(nil),
+		mcp.NewManager(nil),
+		provider.NewRegistry(""),
+		sessions,
+	)
+
+	thread, err := service.CreateThread(context.Background(), runtimecontract.CreateThreadRequest{
+		Name:           "Rollback Approval",
+		PermissionMode: "ask-user",
+	})
+	require.NoError(t, err)
+
+	applyTask, ok := sessions.CreateTask(thread.ID, session.CreateTaskInput{
+		Title:          "Patch README",
+		Kind:           runner.KindWorkspaceApplyPatch,
+		Input:          `{"path":"README.md","patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch"}`,
+		Status:         "completed",
+		ResultSummary:  "applied patch to README.md: updated 2 line(s)",
+		ApprovalStatus: "direct",
+	})
+	require.True(t, ok)
+	_, err = sessions.CreateWriteExecution(thread.ID, session.CreateWriteExecutionInput{
+		TaskID:                applyTask.ID,
+		ToolKind:              runner.KindWorkspaceApplyPatch,
+		Operation:             "apply",
+		Status:                "completed",
+		TargetPaths:           []string{"README.md"},
+		PatchHash:             "abc123",
+		PatchSummary:          "2 patch line(s)",
+		BeforeSnapshotSummary: "exists, 1 line(s), 4 byte(s), sha256:oldhash123456",
+		AfterSnapshotSummary:  "exists, 1 line(s), 4 byte(s), sha256:newhash123456",
+		RollbackPayload: []session.WriteExecutionFileSnapshot{{
+			Path:          "README.md",
+			BeforeExists:  true,
+			BeforeContent: "old\n",
+			BeforeHash:    "oldhash123456",
+			AfterExists:   true,
+			AfterHash:     "newhash123456",
+		}},
+		ResultSummary: "applied patch to README.md: updated 2 line(s)",
+	})
+	require.NoError(t, err)
+
+	writeExecutions, err := service.WriteExecutions(context.Background(), thread.ID)
+	require.NoError(t, err)
+	require.Len(t, writeExecutions, 1)
+
+	rollbackTask, err := service.CreateTask(context.Background(), thread.ID, runtimecontract.CreateTaskRequest{
+		Title: "Rollback latest",
+		Kind:  runner.KindWorkspaceApplyPatchRollback,
+		Input: `{"writeExecutionId":"` + writeExecutions[0].ID + `"}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "needs_approval", rollbackTask.Status)
+	require.Equal(t, "pending", rollbackTask.ApprovalStatus)
+	require.Contains(t, rollbackTask.ResultSummary, "approval required for rollback of README.md")
+}
+
+func TestServiceTaskDescriptorExposesAgentPlanMetadata(t *testing.T) {
+	projectRoot := t.TempDir()
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	sessions, err := session.NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+
+	service := NewService(
+		"0.1.0",
+		skill.Codex,
+		policy.DefaultMode(),
+		projectRoot,
+		tool.NewRegistry(),
+		skill.NewManager(nil),
+		mcp.NewManager(nil),
+		provider.NewRegistry(""),
+		sessions,
+	)
+
+	thread, err := service.CreateThread(context.Background(), runtimecontract.CreateThreadRequest{
+		Name:           "Agent Descriptor",
+		PermissionMode: "workspace-write",
+	})
+	require.NoError(t, err)
+
+	agentState := `{"taskId":"task-1","threadId":"thread-1","stepIndex":2,"maxSteps":4,"waitingChildTaskId":"task-2","lastAction":{"type":"read_files_batch","reasoningSummary":"Read selected files"},"status":"running","goal":"Inspect files","plan":{"summary":"Filter matching files first, then read the selected files, then answer.","mode":"filter_then_read","steps":[{"title":"Filter matching files","expectedActionTypes":["list_files_filtered"]},{"title":"Read the selected files","expectedActionTypes":["read_files_batch","read_file"]},{"title":"Answer with the findings","expectedActionTypes":["respond"]}],"requiredSequence":["list_files_filtered","read_files_batch|read_file","respond"]},"currentStepTitle":"Answer with the findings","lastReasoning":"Read selected files","completedActions":["list_files_filtered","read_files_batch"]}`
+		_, ok := sessions.CreateTask(thread.ID, session.CreateTaskInput{
+		Title:      "Agent run",
+		Kind:       runner.KindAgentRun,
+		Input:      `{"goal":"Inspect files","maxSteps":4}`,
+		Status:     "running",
+		AgentState: agentState,
+	})
+	require.True(t, ok)
+
+	tasks, err := service.Tasks(context.Background(), thread.ID)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Equal(t, "Filter matching files first, then read the selected files, then answer.", tasks[0].AgentPlanSummary)
+	require.Equal(t, "filter_then_read", tasks[0].AgentPlanMode)
+	require.Equal(t, "Answer with the findings", tasks[0].AgentCurrentStepTitle)
+	require.Equal(t, "Read selected files", tasks[0].AgentLastReasoning)
+	require.Equal(t, "task-2", tasks[0].LatestChildTaskID)
+}
+
+func TestServiceCreateAgentTaskSeedsPlanMode(t *testing.T) {
+	projectRoot := t.TempDir()
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	sessions, err := session.NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+
+	service := NewService(
+		"0.1.0",
+		skill.Codex,
+		policy.DefaultMode(),
+		projectRoot,
+		tool.NewRegistry(),
+		skill.NewManager(nil),
+		mcp.NewManager(nil),
+		provider.NewRegistry(""),
+		sessions,
+	)
+
+	thread, err := service.CreateThread(context.Background(), runtimecontract.CreateThreadRequest{
+		Name:           "Agent Seeded Plan",
+		PermissionMode: "workspace-write",
+	})
+	require.NoError(t, err)
+
+	task, err := service.CreateTask(context.Background(), thread.ID, runtimecontract.CreateTaskRequest{
+		Title: "Agent run",
+		Kind:  runner.KindAgentRun,
+		Input: `{"goal":"先确认 README.md 是否存在和 metadata，再读取内容并回答","maxSteps":5}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "stat_then_read", task.AgentPlanMode)
+	require.Equal(t, "Check file status first, then read content if needed, then answer.", task.AgentPlanSummary)
+	require.Equal(t, "Check file status", task.AgentCurrentStepTitle)
 }

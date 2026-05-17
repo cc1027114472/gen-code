@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -26,6 +27,9 @@ type Status struct {
 	AppServerStatus        string      `json:"app_server_status"`
 	GoBridgeStatus         string      `json:"go_bridge_status"`
 	RuntimeSource          string      `json:"runtime_source"`
+	RuntimeSourceDetail    string      `json:"runtime_source_detail"`
+	RuntimeTrust           string      `json:"runtime_trust"`
+	CanonicalRuntimeURL    string      `json:"canonical_runtime_url"`
 	StateStore             string      `json:"state_store"`
 	StatePath              string      `json:"state_path"`
 	WorkspaceID            string      `json:"workspace_id"`
@@ -47,25 +51,35 @@ type BridgeCheckResult struct {
 
 // Service exposes the read-only runtime surface for app-server, CLI, and desktop use.
 type Service struct {
-	version       string
-	skillGroup    skill.Group
-	permission    policy.Mode
-	desktopStatus string
-	appServer     string
-	goBridge      string
-	projectRoot   string
-	tools         *tool.Registry
-	skills        *skill.Manager
-	mcp           *mcp.Manager
-	providers     *provider.Registry
+	version        string
+	skillGroup     skill.Group
+	permission     policy.Mode
+	desktopStatus  string
+	appServer      string
+	goBridge       string
+	canonicalURL   string
+	projectRoot    string
+	tools          *tool.Registry
+	skills         *skill.Manager
+	mcp            *mcp.Manager
+	providers      *provider.Registry
 	providerClient *provider.Client
-	prober        *provider.Prober
-	session       *session.Registry
-	runner        *runner.Runner
+	prober         *provider.Prober
+	session        *session.Registry
+	runner         *runner.Runner
 }
 
 // NewService constructs a Service with static runtime metadata.
 func NewService(version string, group skill.Group, permission policy.Mode, projectRoot string, tools *tool.Registry, skills *skill.Manager, mcpManager *mcp.Manager, providers *provider.Registry, sessions *session.Registry) *Service {
+	return newService(version, group, permission, projectRoot, tools, skills, mcpManager, providers, sessions, true)
+}
+
+// NewServiceWithoutRecovery constructs a Service without startup task recovery.
+func NewServiceWithoutRecovery(version string, group skill.Group, permission policy.Mode, projectRoot string, tools *tool.Registry, skills *skill.Manager, mcpManager *mcp.Manager, providers *provider.Registry, sessions *session.Registry) *Service {
+	return newService(version, group, permission, projectRoot, tools, skills, mcpManager, providers, sessions, false)
+}
+
+func newService(version string, group skill.Group, permission policy.Mode, projectRoot string, tools *tool.Registry, skills *skill.Manager, mcpManager *mcp.Manager, providers *provider.Registry, sessions *session.Registry, recoverInterrupted bool) *Service {
 	if sessions == nil {
 		sessions = session.NewRegistry(projectRoot)
 	}
@@ -74,23 +88,26 @@ func NewService(version string, group skill.Group, permission policy.Mode, proje
 	}
 	providerClient := provider.NewClient(providers)
 	taskRunner := runner.New(sessions, providerClient)
-	_ = taskRunner.RecoverInterruptedTasks()
+	if recoverInterrupted {
+		_ = taskRunner.RecoverInterruptedTasks()
+	}
 	return &Service{
-		version:       version,
-		skillGroup:    group,
-		permission:    permission,
-		desktopStatus: "ready",
-		appServer:     "running",
-		goBridge:      "ready for verification",
-		projectRoot:   projectRoot,
-		tools:         tools,
-		skills:        skills,
-		mcp:           mcpManager,
-		providers:     providers,
+		version:        version,
+		skillGroup:     group,
+		permission:     permission,
+		desktopStatus:  "ready",
+		appServer:      "running",
+		goBridge:       "ready for verification",
+		canonicalURL:   canonicalRuntimeURL(""),
+		projectRoot:    projectRoot,
+		tools:          tools,
+		skills:         skills,
+		mcp:            mcpManager,
+		providers:      providers,
 		providerClient: providerClient,
-		prober:        provider.NewProber(),
-		session:       sessions,
-		runner:        taskRunner,
+		prober:         provider.NewProber(),
+		session:        sessions,
+		runner:         taskRunner,
 	}
 }
 
@@ -112,7 +129,10 @@ func (s *Service) Snapshot() Status {
 		DesktopShellStatus:     s.desktopStatus,
 		AppServerStatus:        s.appServer,
 		GoBridgeStatus:         s.goBridge,
-		RuntimeSource:          "local",
+		RuntimeSource:          "remote-app-server",
+		RuntimeSourceDetail:    "canonical shared runtime served by the app-server entry",
+		RuntimeTrust:           "canonical",
+		CanonicalRuntimeURL:    s.canonicalURL,
 		StateStore:             s.session.StateStoreName(),
 		StatePath:              s.session.StatePath(),
 		WorkspaceID:            workspace.ID,
@@ -127,22 +147,40 @@ func (s *Service) Snapshot() Status {
 	}
 }
 
+// SetCanonicalRuntimeURL pins the runtime status to the app-server's canonical base URL.
+func (s *Service) SetCanonicalRuntimeURL(raw string) {
+	s.canonicalURL = canonicalRuntimeURL(raw)
+}
+
+func canonicalRuntimeURL(raw string) string {
+	if value := strings.TrimSpace(raw); value != "" {
+		return strings.TrimRight(value, "/")
+	}
+	if value := strings.TrimSpace(os.Getenv("GENCODE_RUNTIME_BASE_URL")); value != "" {
+		return strings.TrimRight(value, "/")
+	}
+	return "http://127.0.0.1:10008"
+}
+
 // Status returns the app-server contract view of the current runtime summary.
 func (s *Service) Status(context.Context) (runtimecontract.Status, error) {
 	snapshot := s.Snapshot()
 	return runtimecontract.Status{
-		State:          snapshot.AppServerStatus,
-		Ready:          snapshot.AppServerStatus == "running",
-		Message:        snapshot.GoBridgeStatus,
-		RuntimeSource:  snapshot.RuntimeSource,
-		StateStore:     snapshot.StateStore,
-		StatePath:      snapshot.StatePath,
-		WorkspaceID:    snapshot.WorkspaceID,
-		ProjectRoot:    snapshot.ProjectRoot,
-		ThreadCount:    snapshot.ThreadCount,
-		ActiveThreadID: snapshot.ActiveThreadID,
-		TaskCount:      snapshot.ActiveThreadTaskCount,
-		EventCount:     snapshot.ActiveThreadEventCount,
+		State:               snapshot.AppServerStatus,
+		Ready:               snapshot.AppServerStatus == "running",
+		Message:             snapshot.GoBridgeStatus,
+		RuntimeSource:       snapshot.RuntimeSource,
+		RuntimeSourceDetail: snapshot.RuntimeSourceDetail,
+		RuntimeTrust:        snapshot.RuntimeTrust,
+		CanonicalRuntimeURL: snapshot.CanonicalRuntimeURL,
+		StateStore:          snapshot.StateStore,
+		StatePath:           snapshot.StatePath,
+		WorkspaceID:         snapshot.WorkspaceID,
+		ProjectRoot:         snapshot.ProjectRoot,
+		ThreadCount:         snapshot.ThreadCount,
+		ActiveThreadID:      snapshot.ActiveThreadID,
+		TaskCount:           snapshot.ActiveThreadTaskCount,
+		EventCount:          snapshot.ActiveThreadEventCount,
 	}, nil
 }
 
@@ -226,6 +264,12 @@ func (s *Service) CreateTask(_ context.Context, threadID string, request runtime
 	if request.Kind == runner.KindWorkspaceApplyPatch {
 		return s.createPatchTask(thread, request)
 	}
+	if request.Kind == runner.KindWorkspaceApplyPatchRollback {
+		return s.createRollbackTask(thread, request)
+	}
+	if request.Kind == runner.KindAgentRun {
+		return s.createAgentTask(thread, request)
+	}
 
 	item, ok := s.session.CreateTask(threadID, session.CreateTaskInput{
 		Title: request.Title,
@@ -243,6 +287,38 @@ func normalizeCreateTaskRequest(request runtimecontract.CreateTaskRequest) runti
 	request.Kind = strings.TrimSpace(request.Kind)
 	request.Input = strings.TrimSpace(request.Input)
 	if request.Kind != runner.KindModelResponse {
+		if request.Kind != runner.KindAgentRun {
+			return request
+		}
+		if request.Input == "" {
+			request.Input = `{"goal":""}`
+			return request
+		}
+		if strings.HasPrefix(request.Input, "{") && strings.HasSuffix(request.Input, "}") {
+			var payload struct {
+				Goal            string `json:"goal"`
+				Provider        string `json:"provider"`
+				Model           string `json:"model"`
+				MaxSteps        int    `json:"maxSteps"`
+				MaxOutputTokens int    `json:"maxOutputTokens"`
+			}
+			if err := json.Unmarshal([]byte(request.Input), &payload); err == nil {
+				if strings.TrimSpace(payload.Goal) == "" {
+					payload.Goal = request.Input
+				}
+				normalized, marshalErr := json.Marshal(payload)
+				if marshalErr == nil {
+					request.Input = string(normalized)
+					return request
+				}
+			}
+		}
+		normalized, err := json.Marshal(map[string]string{
+			"goal": request.Input,
+		})
+		if err == nil {
+			request.Input = string(normalized)
+		}
 		return request
 	}
 	if request.Input == "" {
@@ -319,6 +395,35 @@ func (s *Service) Approvals(_ context.Context, threadID string) ([]runtimecontra
 	return result, nil
 }
 
+// WriteExecutions returns the persisted write execution audit records under the given thread.
+func (s *Service) WriteExecutions(_ context.Context, threadID string) ([]runtimecontract.WriteExecutionDescriptor, error) {
+	items, ok := s.session.WriteExecutions(threadID)
+	if !ok {
+		return nil, xerror.NotFound(1004, "thread not found")
+	}
+	result := make([]runtimecontract.WriteExecutionDescriptor, 0, len(items))
+	for _, item := range items {
+		result = append(result, runtimecontract.WriteExecutionDescriptor{
+			ID:                 item.ID,
+			ThreadID:           item.ThreadID,
+			TaskID:             item.TaskID,
+			ApprovalID:         item.ApprovalID,
+			ToolKind:           item.ToolKind,
+			Operation:          item.Operation,
+			RelatedExecutionID: item.RelatedExecutionID,
+			Status:             item.Status,
+			TargetPaths:        append([]string(nil), item.TargetPaths...),
+			PatchSummary:       item.PatchSummary,
+			BeforeSummary:      item.BeforeSnapshotSummary,
+			AfterSummary:       item.AfterSnapshotSummary,
+			ResultSummary:      item.ResultSummary,
+			CreatedAt:          item.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:          item.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	return result, nil
+}
+
 // ApproveTask approves and executes a pending task.
 func (s *Service) ApproveTask(ctx context.Context, threadID string, taskID string, _ runtimecontract.ApproveTaskRequest) (runtimecontract.TaskDescriptor, error) {
 	item, err := s.runner.ApproveTask(ctx, threadID, taskID)
@@ -372,16 +477,16 @@ func (s *Service) UpdateTaskStatus(_ context.Context, threadID string, taskID st
 	}
 
 	return runtimecontract.TaskDescriptor{
-		ID:            item.ID,
-		ThreadID:      item.ThreadID,
-		Title:         item.Title,
-		Status:        item.Status,
-		Kind:          item.Kind,
-		InputSummary:  item.Input,
-		ResultSummary: item.ResultSummary,
+		ID:             item.ID,
+		ThreadID:       item.ThreadID,
+		Title:          item.Title,
+		Status:         item.Status,
+		Kind:           item.Kind,
+		InputSummary:   item.Input,
+		ResultSummary:  item.ResultSummary,
 		ApprovalStatus: item.ApprovalStatus,
-		CreatedAt:     item.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:     item.UpdatedAt.Format(time.RFC3339),
+		CreatedAt:      item.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:      item.UpdatedAt.Format(time.RFC3339),
 	}, nil
 }
 
@@ -605,7 +710,7 @@ func toThreadDescriptor(item session.Thread) runtimecontract.ThreadDescriptor {
 }
 
 func toTaskDescriptor(item session.Task) runtimecontract.TaskDescriptor {
-	return runtimecontract.TaskDescriptor{
+	descriptor := runtimecontract.TaskDescriptor{
 		ID:             item.ID,
 		ThreadID:       item.ThreadID,
 		Title:          item.Title,
@@ -614,9 +719,23 @@ func toTaskDescriptor(item session.Task) runtimecontract.TaskDescriptor {
 		InputSummary:   item.Input,
 		ResultSummary:  item.ResultSummary,
 		ApprovalStatus: item.ApprovalStatus,
+		ParentTaskID:   item.ParentTaskID,
+		WaitingStatus:  item.WaitingStatus,
 		CreatedAt:      item.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:      item.UpdatedAt.Format(time.RFC3339),
 	}
+	if item.Kind == runner.KindAgentRun {
+		if state, err := runner.ParseAgentRunStateForRuntime(item.AgentState); err == nil {
+			descriptor.AgentStep = state.StepIndex
+			descriptor.AgentMaxSteps = state.MaxSteps
+			descriptor.LatestChildTaskID = state.WaitingChildTaskID
+			descriptor.AgentPlanSummary = state.Plan.Summary
+			descriptor.AgentPlanMode = state.Plan.Mode
+			descriptor.AgentCurrentStepTitle = state.CurrentStepTitle
+			descriptor.AgentLastReasoning = state.LastReasoning
+		}
+	}
+	return descriptor
 }
 
 // Messages returns the message descriptors under the given thread.
@@ -869,7 +988,7 @@ func recommendedAPIStyle(item provider.Descriptor) (string, string) {
 }
 
 func (s *Service) createPatchTask(thread session.Thread, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
-	path, patch, err := runner.ParsePatchInput(request.Input)
+	_, patch, err := runner.ParsePatchInput(request.Input)
 	if err != nil {
 		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, err.Error())
 	}
@@ -911,7 +1030,7 @@ func (s *Service) createPatchTask(thread session.Thread, request runtimecontract
 			ToolKind:    request.Kind,
 			Status:      "pending",
 			Summary:     summary,
-			TargetPaths: []string{path},
+			TargetPaths: append([]string(nil), targets...),
 		}); err != nil {
 			return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, err.Error())
 		}
@@ -931,4 +1050,114 @@ func (s *Service) createPatchTask(thread session.Thread, request runtimecontract
 		}
 		return toTaskDescriptor(item), nil
 	}
+}
+
+func (s *Service) createRollbackTask(thread session.Thread, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	writeExecutionID, err := runner.ParseRollbackInput(request.Input)
+	if err != nil {
+		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, err.Error())
+	}
+	executions, ok := s.session.WriteExecutions(thread.ID)
+	if !ok {
+		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+	}
+	var source *session.WriteExecutionRecord
+	for index := range executions {
+		if executions[index].ID == writeExecutionID {
+			source = &executions[index]
+			break
+		}
+	}
+	if source == nil {
+		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, "write execution not found")
+	}
+	summary := runner.RollbackApprovalSummary(source.TargetPaths)
+
+	switch thread.PermissionMode {
+	case policy.ReadOnly:
+		item, ok := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+			Title:          request.Title,
+			Kind:           request.Kind,
+			Input:          request.Input,
+			Status:         "failed",
+			ResultSummary:  "rollback failed: permission denied: read-only mode does not allow workspace writes",
+			ApprovalStatus: "rejected",
+		})
+		if !ok {
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		_ = s.session.AppendRuntimeEvent(thread.ID, "task.failed", item.ResultSummary)
+		return toTaskDescriptor(item), nil
+	case "", policy.AskUser:
+		item, ok := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+			Title:          request.Title,
+			Kind:           request.Kind,
+			Input:          request.Input,
+			Status:         "needs_approval",
+			ResultSummary:  summary,
+			ApprovalStatus: "pending",
+		})
+		if !ok {
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		if _, err := s.session.CreateApproval(thread.ID, session.CreateApprovalInput{
+			TaskID:      item.ID,
+			ToolKind:    request.Kind,
+			Status:      "pending",
+			Summary:     summary,
+			TargetPaths: append([]string(nil), source.TargetPaths...),
+		}); err != nil {
+			return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, err.Error())
+		}
+		_ = s.session.AppendRuntimeEvent(thread.ID, "task.rollback_required", summary)
+		return toTaskDescriptor(item), nil
+	default:
+		item, ok := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+			Title:          request.Title,
+			Kind:           request.Kind,
+			Input:          request.Input,
+			Status:         "queued",
+			ResultSummary:  "",
+			ApprovalStatus: "direct",
+		})
+		if !ok {
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		return toTaskDescriptor(item), nil
+	}
+}
+
+func (s *Service) createAgentTask(thread session.Thread, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	if strings.TrimSpace(request.Title) == "" {
+		request.Title = "Agent run"
+	}
+	input, err := runner.ParseAgentRunInputForRuntime(request.Input)
+	if err != nil {
+		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, err.Error())
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, err.Error())
+	}
+	item, ok := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: request.Title,
+		Kind:  request.Kind,
+		Input: string(raw),
+		AgentState: runner.MarshalAgentRunStateForRuntime(runner.AgentRunState{
+			ThreadID:         thread.ID,
+			StepIndex:        0,
+			MaxSteps:         input.MaxSteps,
+			Status:           "queued",
+			Goal:             input.Goal,
+			Provider:         input.Provider,
+			Model:            input.Model,
+			MaxOutputTokens:  input.MaxOutputTokens,
+			Plan:             runner.DeriveAgentExecutionPlanForRuntime(input.Goal),
+			CurrentStepTitle: runner.CurrentAgentStepTitleForRuntime(runner.DeriveAgentExecutionPlanForRuntime(input.Goal), nil),
+		}),
+	})
+	if !ok {
+		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+	}
+	return toTaskDescriptor(item), nil
 }

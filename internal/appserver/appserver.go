@@ -1,6 +1,8 @@
 package appserver
 
 import (
+	"fmt"
+
 	"github.com/gin-gonic/gin"
 
 	"llmtrace/internal/appserver/runtimecontract"
@@ -37,5 +39,7 @@ func NewRuntimeService() RuntimeService {
 	if err != nil {
 		return runtime.NewDefaultService()
 	}
-	return runtime.NewDefaultServiceWithProviders(cfg.Providers)
+	service := runtime.NewDefaultServiceWithProviders(cfg.Providers)
+	service.SetCanonicalRuntimeURL(fmt.Sprintf("http://127.0.0.1:%d", cfg.App.Port))
+	return service
 }
