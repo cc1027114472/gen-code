@@ -14,6 +14,7 @@ UI_BASE_URL = os.environ.get("GEN_CODE_UI_BASE_URL", "http://127.0.0.1:5174/")
 API_BASE_URL = os.environ.get("GEN_CODE_API_BASE_URL", "http://127.0.0.1:10008")
 API_RETRIES = int(os.environ.get("GEN_CODE_API_RETRIES", "5"))
 API_RETRY_DELAY = float(os.environ.get("GEN_CODE_API_RETRY_DELAY", "0.5"))
+ACCEPTANCE_MODE = os.environ.get("GEN_CODE_ACCEPTANCE_MODE", "full").strip().lower() or "full"
 
 SECOND_BATCH_TOOL_KINDS = {
     "workspace.stat_file",
@@ -21,6 +22,26 @@ SECOND_BATCH_TOOL_KINDS = {
     "workspace.list_files_filtered",
     "workspace.search_text_detailed",
 }
+
+EXPECTED_REMOTE_COPY_TEXT = [
+    "线程工作台",
+    "工作区线程",
+    "运行链路",
+    "刷新方式",
+    "结果抽屉",
+]
+
+EXPECTED_REMOTE_COPY_GROUPS = [
+    ["本地预览", "收起预览", "展开预览"],
+]
+
+UNEXPECTED_REMOTE_COPY_TEXT = [
+    "Thread 工作台",
+    "latest task ",
+    "workspace loading",
+    "threads 0",
+    "desktop local-fallback active; manual refresh mode",
+]
 
 
 def summarize_refresh_mode(page) -> dict:
@@ -55,6 +76,70 @@ def summarize_refresh_mode(page) -> dict:
         "supportsSSE": None,
         "sseConnected": None,
         "evidence": "",
+    }
+
+
+def assert_desktop_copy_and_runtime_lane(page, runtime_status: dict, refresh_mode: dict) -> dict:
+    body = page.locator("body")
+    body_text = ""
+    for _ in range(10):
+        body_text = body.inner_text(timeout=5000)
+        if "共享运行时 / remote-app-server" in body_text and "可信链路 / canonical" in body_text:
+            break
+        page.wait_for_timeout(500)
+
+    for expected in EXPECTED_REMOTE_COPY_TEXT:
+        if expected not in body_text:
+            fail(
+                f"expected desktop copy text {expected!r} to be visible in remote acceptance lane",
+                category="desktop-copy",
+                details={"missingText": expected},
+            )
+
+    for unexpected in UNEXPECTED_REMOTE_COPY_TEXT:
+        if unexpected in body_text:
+            fail(
+                f"unexpected stale desktop copy text {unexpected!r} was visible in remote acceptance lane",
+                category="desktop-copy",
+                details={"unexpectedText": unexpected},
+            )
+
+    for group in EXPECTED_REMOTE_COPY_GROUPS:
+        if not any(item in body_text for item in group):
+            fail(
+                f"expected at least one desktop copy variant from {group!r} to be visible in remote acceptance lane",
+                category="desktop-copy",
+                details={"missingGroup": group},
+            )
+
+    expected_lane = "remote-app-server"
+    expected_trust = "canonical"
+    if expected_lane not in body_text:
+        fail(
+            f"expected runtime lane token {expected_lane!r} to be visible",
+            category="runtime-copy",
+            details={"runtimeSource": runtime_status.get('runtimeSource', '')},
+        )
+    if expected_trust not in body_text:
+        fail(
+            f"expected runtime trust token {expected_trust!r} to be visible",
+            category="runtime-copy",
+            details={"runtimeTrust": runtime_status.get('runtimeTrust', '')},
+        )
+    if refresh_mode.get("evidence") and refresh_mode["evidence"] not in body_text:
+        fail(
+            f"expected refresh mode evidence {refresh_mode['evidence']!r} to be visible",
+            category="runtime-copy",
+            details=refresh_mode,
+        )
+
+    return {
+        "checkedTexts": EXPECTED_REMOTE_COPY_TEXT,
+        "checkedGroups": EXPECTED_REMOTE_COPY_GROUPS,
+        "unexpectedTexts": UNEXPECTED_REMOTE_COPY_TEXT,
+        "runtimeLaneLabel": expected_lane,
+        "runtimeTrustLabel": expected_trust,
+        "refreshEvidence": refresh_mode.get("evidence", ""),
     }
 
 
@@ -480,6 +565,22 @@ def run_agent_scenario(page, thread_id: str, scenario: dict) -> dict:
     }
 
 
+def run_smoke_acceptance(page, runtime_status: dict, thread_id: str) -> dict:
+    refresh_mode = summarize_refresh_mode(page)
+    desktop_copy_runtime = assert_desktop_copy_and_runtime_lane(page, runtime_status, refresh_mode)
+    return {
+        "mode": "smoke",
+        "runtimeSource": runtime_status.get("runtimeSource", ""),
+        "runtimeTrust": runtime_status.get("runtimeTrust", ""),
+        "canonicalRuntimeUrl": runtime_status.get("canonicalRuntimeUrl", ""),
+        "uiBaseUrl": UI_BASE_URL,
+        "apiBaseUrl": API_BASE_URL,
+        "threadId": thread_id,
+        "refreshMode": refresh_mode,
+        "copyAndRuntimeConsistency": desktop_copy_runtime,
+    }
+
+
 def main() -> int:
     run_id = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
     thread_name = f"Playwright Acceptance {run_id}"
@@ -504,7 +605,19 @@ def main() -> int:
             page.goto(UI_BASE_URL, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(3000)
             wait_for_active_thread(page, thread_id)
+            if ACCEPTANCE_MODE == "smoke":
+                result = {
+                    "ok": True,
+                    "acceptanceMode": "smoke",
+                    "threadName": thread_name,
+                    **run_smoke_acceptance(page, runtime_status, thread_id),
+                }
+                emit_release_baseline(result)
+                print(json.dumps(result, ensure_ascii=False))
+                return 0
+
             refresh_mode = summarize_refresh_mode(page)
+            desktop_copy_runtime = assert_desktop_copy_and_runtime_lane(page, runtime_status, refresh_mode)
 
             direct_results = []
             direct_results.append(
@@ -744,6 +857,7 @@ def main() -> int:
                     "uiBaseUrl": UI_BASE_URL,
                     "apiBaseUrl": API_BASE_URL,
                     "refreshMode": refresh_mode,
+                    "copyAndRuntimeConsistency": desktop_copy_runtime,
                     "parentChildVisibility": {
                         "agentScenarioCount": len(agent_results),
                         "allParentsVisible": all(item["visibility"]["parentVisible"] for item in agent_results),
@@ -870,6 +984,7 @@ def main() -> int:
                 "canonicalRuntimeUrl": runtime_status.get("canonicalRuntimeUrl", ""),
                 "uiBaseUrl": UI_BASE_URL,
                 "apiBaseUrl": API_BASE_URL,
+                "acceptanceMode": "full",
                 "refreshMode": refresh_mode,
                 "fallbackEvidenceMode": acceptance_report["fallback"]["mode"],
                 "acceptanceReport": acceptance_report,
@@ -887,13 +1002,22 @@ def validate_release_baseline(result: dict) -> None:
         "runtimeTrust",
         "uiBaseUrl",
         "apiBaseUrl",
+        "acceptanceMode",
         "refreshMode",
-        "fallbackEvidenceMode",
-        "acceptanceReport",
     ]
     missing = [key for key in required_release_keys if key not in result]
     if missing:
         raise AssertionError(f"missing release-baseline key(s): {', '.join(missing)}")
+
+    if result.get("acceptanceMode") == "smoke":
+        for key in ("copyAndRuntimeConsistency", "threadId"):
+            if key not in result:
+                raise AssertionError(f"missing smoke acceptance key: {key}")
+        return
+
+    for key in ("fallbackEvidenceMode", "acceptanceReport"):
+        if key not in result:
+            raise AssertionError(f"missing full acceptance key: {key}")
 
     acceptance_report = result.get("acceptanceReport") or {}
     required_acceptance_keys = [
