@@ -150,6 +150,8 @@ func (r *Runner) resumeAgentRun(ctx context.Context, threadID string, parent ses
 	if err != nil {
 		return session.Task{}, err
 	}
+	state.Status = "running"
+	state.FailureReason = ""
 	updated, err := r.registry.UpdateTaskStatus(threadID, parent.ID, session.UpdateTaskStatusInput{
 		Status:        "running",
 		ResultSummary: parent.ResultSummary,
@@ -169,6 +171,13 @@ func (r *Runner) resumeAgentRun(ctx context.Context, threadID string, parent ses
 	summary, execErr := r.runAgentLoop(ctx, thread, parent, state)
 	if execErr != nil {
 		return r.failAgentParent(threadID, parent, execErr)
+	}
+	parent, err = r.registry.Task(threadID, parent.ID)
+	if err != nil {
+		return session.Task{}, err
+	}
+	if parent.Status == "waiting_for_approval" || parent.Status == "waiting_for_task" {
+		return parent, nil
 	}
 	return r.completeAgentParent(threadID, parent, summary)
 }
@@ -225,9 +234,13 @@ func (r *Runner) runAgentLoop(ctx context.Context, thread session.Thread, parent
 			}
 			state.CompletedActions = append(state.CompletedActions, action.Type)
 			state.CurrentStepTitle = currentAgentStepTitle(state.Plan, state.CompletedActions)
+			state.Status = "completed"
+			state.WaitingChildTaskID = ""
+			state.FailureReason = ""
 			_, _ = r.registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
 				Status:        "running",
 				ResultSummary: fmt.Sprintf("agent step %d/%d: %s", state.StepIndex, state.MaxSteps, fallbackAgentText(action.ReasoningSummary, action.Type)),
+				WaitingStatus: strPtr(""),
 				AgentState:    strPtr(marshalAgentRunState(state)),
 			})
 			return fmt.Sprintf("agent completed: %s", compactSummary(action.Response, 240)), nil
@@ -327,10 +340,13 @@ func (r *Runner) runAgentLoop(ctx context.Context, thread session.Thread, parent
 
 		state.CompletedActions = append(state.CompletedActions, action.Type)
 		state.CurrentStepTitle = currentAgentStepTitle(state.Plan, state.CompletedActions)
+		state.Status = "running"
+		state.FailureReason = ""
 
 		updatedParent, err := r.registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
 			Status:        "running",
 			ResultSummary: fmt.Sprintf("agent step %d/%d: %s", state.StepIndex, state.MaxSteps, fallbackAgentText(action.ReasoningSummary, action.Type)),
+			WaitingStatus: strPtr(""),
 			AgentState:    strPtr(marshalAgentRunState(state)),
 		})
 		if err != nil {
@@ -539,6 +555,7 @@ func (r *Runner) failAgentParent(threadID string, parent session.Task, execErr e
 	if stateErr == nil {
 		state.Status = "failed"
 		state.FailureReason = execErr.Error()
+		state.WaitingChildTaskID = strings.TrimSpace(state.WaitingChildTaskID)
 		parent.AgentState = marshalAgentRunState(state)
 	}
 	failed, err := r.registry.UpdateTaskStatus(threadID, parent.ID, session.UpdateTaskStatusInput{
@@ -564,6 +581,13 @@ func (r *Runner) failAgentParent(threadID string, parent session.Task, execErr e
 }
 
 func (r *Runner) completeAgentParent(threadID string, parent session.Task, summary string) (session.Task, error) {
+	agentState := parent.AgentState
+	if state, err := parseAgentRunState(parent.AgentState); err == nil {
+		state.Status = "completed"
+		state.WaitingChildTaskID = ""
+		state.FailureReason = ""
+		agentState = marshalAgentRunState(state)
+	}
 	_, _ = r.registry.AppendToolCall(threadID, session.AppendToolCallInput{
 		ToolID:  parent.Kind,
 		Status:  "completed",
@@ -573,6 +597,7 @@ func (r *Runner) completeAgentParent(threadID string, parent session.Task, summa
 		Status:        "completed",
 		ResultSummary: summary,
 		WaitingStatus: strPtr(""),
+		AgentState:    strPtr(agentState),
 	})
 	if err != nil {
 		return session.Task{}, err

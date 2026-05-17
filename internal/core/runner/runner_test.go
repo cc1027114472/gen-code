@@ -730,6 +730,11 @@ func TestRunnerAgentRunWaitsForApprovalAndResumesAfterApprove(t *testing.T) {
 	reloadedParent, err := registry.Task(thread.ID, task.ID)
 	require.NoError(t, err)
 	require.Equal(t, "completed", reloadedParent.Status)
+	reloadedState, err := parseAgentRunState(reloadedParent.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, "completed", reloadedState.Status)
+	require.Empty(t, reloadedState.WaitingChildTaskID)
+	require.Empty(t, reloadedState.FailureReason)
 
 	content, err := os.ReadFile(filepath.Join(projectRoot, "README.md"))
 	require.NoError(t, err)
@@ -778,6 +783,10 @@ func TestRunnerRecoverInterruptedAgentRunResumesWaitingChildCompletion(t *testin
 	require.NoError(t, err)
 	require.Equal(t, "completed", reloadedParent.Status)
 	require.Contains(t, reloadedParent.ResultSummary, "agent completed")
+	reloadedState, err := parseAgentRunState(reloadedParent.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, "completed", reloadedState.Status)
+	require.Empty(t, reloadedState.WaitingChildTaskID)
 
 	reloadedChild, err := registry.Task(thread.ID, child.ID)
 	require.NoError(t, err)
@@ -826,6 +835,10 @@ func TestRunnerRecoverInterruptedAgentRunKeepsWaitingApprovalWhenChildStillPendi
 	require.NoError(t, err)
 	require.Equal(t, "waiting_for_approval", reloadedParent.Status)
 	require.Equal(t, waitingStatusApproval, reloadedParent.WaitingStatus)
+	reloadedState, err := parseAgentRunState(reloadedParent.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, waitingStatusApproval, reloadedState.Status)
+	require.Equal(t, child.ID, reloadedState.WaitingChildTaskID)
 
 	reloadedChild, err := registry.Task(thread.ID, child.ID)
 	require.NoError(t, err)
@@ -880,6 +893,10 @@ func TestRunnerRecoverInterruptedAgentRunResumesAfterApprovedChildCompleted(t *t
 	require.NoError(t, err)
 	require.Equal(t, "completed", reloadedParent.Status)
 	require.Contains(t, reloadedParent.ResultSummary, "agent completed")
+	reloadedState, err := parseAgentRunState(reloadedParent.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, "completed", reloadedState.Status)
+	require.Empty(t, reloadedState.WaitingChildTaskID)
 
 	reloadedChild, err := registry.Task(thread.ID, child.ID)
 	require.NoError(t, err)
@@ -915,6 +932,74 @@ func TestRunnerRecoverInterruptedAgentRunFailsWhenApprovalChildMissing(t *testin
 	require.NoError(t, err)
 	require.Equal(t, "failed", reloadedParent.Status)
 	require.Contains(t, reloadedParent.ResultSummary, "approval child task not found")
+	reloadedState, err := parseAgentRunState(reloadedParent.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, "failed", reloadedState.Status)
+	require.Contains(t, reloadedState.FailureReason, "approval child task not found")
+}
+
+func TestRunnerResumeAgentRunKeepsWaitingStateWhenFollowupPatchNeedsApproval(t *testing.T) {
+	projectRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("old\n"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Resume Approval Again",
+		PermissionMode: policy.AskUser,
+	})
+	parent, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Agent resume approval",
+		Kind:  KindAgentRun,
+		Input: `{"goal":"Patch README and confirm","maxSteps":4}`,
+		Status: "waiting_for_approval",
+		WaitingStatus: waitingStatusApproval,
+		AgentState: `{"taskId":"task-agent","threadId":"thread-1","stepIndex":1,"maxSteps":4,"waitingChildTaskId":"task-child","lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm","completedActions":["apply_patch"]}`,
+	})
+	require.True(t, ok)
+	child, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title:          "Apply patch README.md",
+		Kind:           KindWorkspaceApplyPatch,
+		Input:          `{"path":"README.md","patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch"}`,
+		Status:         "completed",
+		ResultSummary:  "applied patch to README.md: updated 2 line(s)",
+		ApprovalStatus: "executed",
+		ParentTaskID:   parent.ID,
+	})
+	require.True(t, ok)
+	parentState := fmt.Sprintf(`{"taskId":%q,"threadId":%q,"stepIndex":1,"maxSteps":4,"waitingChildTaskId":%q,"lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm"}`, parent.ID, thread.ID, child.ID)
+	_, err := registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
+		Status:        "waiting_for_approval",
+		ResultSummary: child.ResultSummary,
+		WaitingStatus: strPtr(waitingStatusApproval),
+		AgentState:    strPtr(parentState),
+	})
+	require.NoError(t, err)
+
+	models := &scriptedModelExecutor{
+		results: []provider.ResponseResult{
+			{OutputText: `{"type":"apply_patch","path":"README.md","patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-new\n+final\n*** End Patch","reasoningSummary":"Apply followup patch"}`},
+		},
+	}
+
+	runner := New(registry, models)
+	resumed, err := runner.resumeAgentRun(context.Background(), thread.ID, parent)
+	require.NoError(t, err)
+	require.Equal(t, "waiting_for_approval", resumed.Status)
+	require.Equal(t, waitingStatusApproval, resumed.WaitingStatus)
+
+	reloadedParent, err := registry.Task(thread.ID, parent.ID)
+	require.NoError(t, err)
+	require.Equal(t, "waiting_for_approval", reloadedParent.Status)
+	reloadedState, err := parseAgentRunState(reloadedParent.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, waitingStatusApproval, reloadedState.Status)
+	require.NotEmpty(t, reloadedState.WaitingChildTaskID)
+
+	tasks, ok := registry.Tasks(thread.ID)
+	require.True(t, ok)
+	require.Len(t, tasks, 3)
+	require.Equal(t, "needs_approval", tasks[2].Status)
+	require.Equal(t, parent.ID, tasks[2].ParentTaskID)
 }
 
 func TestShouldRecoverRunningTask(t *testing.T) {

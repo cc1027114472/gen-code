@@ -189,10 +189,19 @@ func shouldRecoverRunningTask(task session.Task) bool {
 }
 
 func (r *Runner) markRecoveredAsFailed(threadID string, task session.Task, summary string) error {
+	agentState := task.AgentState
+	if task.Kind == KindAgentRun {
+		if state, err := parseAgentRunState(task.AgentState); err == nil {
+			state.Status = "failed"
+			state.FailureReason = summary
+			agentState = marshalAgentRunState(state)
+		}
+	}
 	if _, err := r.registry.UpdateTaskStatus(threadID, task.ID, session.UpdateTaskStatusInput{
 		Status:        "failed",
 		ResultSummary: summary,
 		WaitingStatus: strPtr(""),
+		AgentState:    strPtr(agentState),
 	}); err != nil {
 		return err
 	}
