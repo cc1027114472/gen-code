@@ -1,6 +1,9 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,6 +118,53 @@ func TestLoadReturnsErrorWhenDurationEnvNotPositive(t *testing.T) {
 	require.EqualError(t, err, "APP_SHUTDOWN_TIMEOUT must be greater than zero")
 }
 
+func TestLoadReadsDotEnvFromParentDirectory(t *testing.T) {
+	originalValues := captureEnv(
+		"MODEL_PROVIDER",
+		"ANTHROPIC_ENABLED",
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_AUTH_TOKEN",
+		"ANTHROPIC_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+	)
+	for key := range originalValues {
+		_ = os.Unsetenv(key)
+	}
+	defer restoreEnv(originalValues)
+
+	root := t.TempDir()
+	err := os.WriteFile(filepath.Join(root, ".env"), []byte(strings.Join([]string{
+		"MODEL_PROVIDER=anthropic",
+		"ANTHROPIC_BASE_URL=http://localhost:1314",
+		"ANTHROPIC_AUTH_TOKEN=test-token",
+		"ANTHROPIC_MODEL=gpt-5.4-A",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.4-A",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.4-A",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-5.4-A",
+	}, "\n")), 0o600)
+	require.NoError(t, err)
+
+	nested := filepath.Join(root, "cmd", "cli")
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+
+	originalWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(nested))
+	defer func() {
+		_ = os.Chdir(originalWD)
+	}()
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "anthropic", cfg.Providers.DefaultProvider)
+	require.True(t, cfg.Providers.Anthropic.Enabled)
+	require.Equal(t, "http://localhost:1314", cfg.Providers.Anthropic.BaseURL)
+	require.Equal(t, "test-token", cfg.Providers.Anthropic.AuthToken)
+	require.Equal(t, "gpt-5.4-A", cfg.Providers.Anthropic.Models.Default)
+}
+
 func clearAllConfigEnv(t *testing.T) {
 	t.Helper()
 
@@ -158,5 +208,28 @@ func clearAllConfigEnv(t *testing.T) {
 
 	for _, key := range keys {
 		t.Setenv(key, "")
+	}
+}
+
+func captureEnv(keys ...string) map[string]*string {
+	values := make(map[string]*string, len(keys))
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			copied := value
+			values[key] = &copied
+			continue
+		}
+		values[key] = nil
+	}
+	return values
+}
+
+func restoreEnv(values map[string]*string) {
+	for key, value := range values {
+		if value == nil {
+			_ = os.Unsetenv(key)
+			continue
+		}
+		_ = os.Setenv(key, *value)
 	}
 }

@@ -347,7 +347,11 @@ func optionalCSV(defaultValue string, keys ...string) []string {
 
 // loadDotEnv supplements env vars from a local .env file when present.
 func loadDotEnv() {
-	path := filepath.Join(".", ".env")
+	path, ok := findDotEnvPath()
+	if !ok {
+		return
+	}
+
 	file, err := os.Open(path)
 	if err != nil {
 		return
@@ -377,5 +381,26 @@ func loadDotEnv() {
 		}
 
 		_ = os.Setenv(key, value)
+	}
+}
+
+func findDotEnvPath() (string, bool) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+
+	current := wd
+	for {
+		candidate := filepath.Join(current, ".env")
+		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+			return candidate, true
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+		current = parent
 	}
 }

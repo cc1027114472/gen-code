@@ -3,15 +3,25 @@ package provider
 import (
 	"bytes"
 	"context"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 )
 
 const APIStyleOpenAIResponses = "openai-responses"
+
+const (
+	defaultResponseAttempts = 3
+	responseRetryDelay      = 750 * time.Millisecond
+)
+
+var providerSleep = time.Sleep
+var errEmptyProviderOutput = errors.New("empty output")
 
 // ResponseRequest is the minimum provider execution request for OpenAI Responses.
 type ResponseRequest struct {
@@ -106,7 +116,32 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (R
 	httpRequest.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
 	httpRequest.Header.Set("Content-Type", "application/json")
 
-	response, err := c.http.Do(httpRequest)
+	var lastErr error
+	for attempt := 1; attempt <= defaultResponseAttempts; attempt++ {
+		result, err := c.createResponseAttempt(ctx, httpRequest, model)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if attempt == defaultResponseAttempts || !isRetryableProviderError(err) {
+			return ResponseResult{}, err
+		}
+		providerSleep(responseRetryDelay)
+	}
+	return ResponseResult{}, lastErr
+}
+
+func (c *Client) createResponseAttempt(ctx context.Context, template *http.Request, model string) (ResponseResult, error) {
+	request := template.Clone(ctx)
+	if template.GetBody != nil {
+		body, err := template.GetBody()
+		if err != nil {
+			return ResponseResult{}, err
+		}
+		request.Body = body
+	}
+
+	response, err := c.http.Do(request)
 	if err != nil {
 		return ResponseResult{}, err
 	}
@@ -121,7 +156,7 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (R
 		if detail == "" {
 			detail = response.Status
 		}
-		return ResponseResult{}, fmt.Errorf("%s", detail)
+		return ResponseResult{}, &providerHTTPError{statusCode: response.StatusCode, detail: detail}
 	}
 
 	result, err := parseResponsesResult(responseBody)
@@ -129,13 +164,43 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (R
 		return ResponseResult{}, err
 	}
 	if strings.TrimSpace(result.OutputText) == "" {
-		return ResponseResult{}, fmt.Errorf("empty output")
+		return ResponseResult{}, errEmptyProviderOutput
 	}
 	if strings.TrimSpace(result.Model) == "" {
 		result.Model = model
 	}
 	result.APIStyle = APIStyleOpenAIResponses
 	return result, nil
+}
+
+type providerHTTPError struct {
+	statusCode int
+	detail     string
+}
+
+func (e *providerHTTPError) Error() string {
+	return e.detail
+}
+
+func isRetryableProviderError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var httpErr *providerHTTPError
+	if errors.As(err, &httpErr) {
+		if httpErr.statusCode == http.StatusBadGateway || httpErr.statusCode == http.StatusServiceUnavailable || httpErr.statusCode == http.StatusGatewayTimeout {
+			return true
+		}
+		detail := strings.ToLower(strings.TrimSpace(httpErr.detail))
+		return strings.Contains(detail, `"code":"bad_response_body"`) || strings.Contains(detail, `"type":"bad_response_body"`) || strings.Contains(detail, `bad_response_body`)
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errEmptyProviderOutput)
 }
 
 func parseResponsesResult(body []byte) (ResponseResult, error) {
