@@ -4,18 +4,21 @@ import "context"
 
 // Status describes the current runtime availability exposed by the app server.
 type Status struct {
-	State          string `json:"state"`
-	Ready          bool   `json:"ready"`
-	Message        string `json:"message,omitempty"`
-	RuntimeSource  string `json:"runtimeSource,omitempty"`
-	StateStore     string `json:"stateStore,omitempty"`
-	StatePath      string `json:"statePath,omitempty"`
-	WorkspaceID    string `json:"workspaceId,omitempty"`
-	ProjectRoot    string `json:"projectRoot,omitempty"`
-	ThreadCount    int    `json:"threadCount,omitempty"`
-	ActiveThreadID string `json:"activeThreadId,omitempty"`
-	TaskCount      int    `json:"taskCount,omitempty"`
-	EventCount     int    `json:"eventCount,omitempty"`
+	State               string `json:"state"`
+	Ready               bool   `json:"ready"`
+	Message             string `json:"message,omitempty"`
+	RuntimeSource       string `json:"runtimeSource,omitempty"`
+	RuntimeSourceDetail string `json:"runtimeSourceDetail,omitempty"`
+	RuntimeTrust        string `json:"runtimeTrust,omitempty"`
+	CanonicalRuntimeURL string `json:"canonicalRuntimeUrl,omitempty"`
+	StateStore          string `json:"stateStore,omitempty"`
+	StatePath           string `json:"statePath,omitempty"`
+	WorkspaceID         string `json:"workspaceId,omitempty"`
+	ProjectRoot         string `json:"projectRoot,omitempty"`
+	ThreadCount         int    `json:"threadCount,omitempty"`
+	ActiveThreadID      string `json:"activeThreadId,omitempty"`
+	TaskCount           int    `json:"taskCount,omitempty"`
+	EventCount          int    `json:"eventCount,omitempty"`
 }
 
 // WorkspaceDescriptor describes the current workspace container.
@@ -51,16 +54,25 @@ type CreateThreadRequest struct {
 
 // TaskDescriptor describes a single thread-local task.
 type TaskDescriptor struct {
-	ID            string `json:"id"`
-	ThreadID      string `json:"threadId"`
-	Title         string `json:"title"`
-	Status        string `json:"status"`
-	Kind          string `json:"kind,omitempty"`
-	InputSummary  string `json:"inputSummary,omitempty"`
-	ResultSummary string `json:"resultSummary,omitempty"`
-	ApprovalStatus string `json:"approvalStatus,omitempty"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt,omitempty"`
+	ID                    string `json:"id"`
+	ThreadID              string `json:"threadId"`
+	Title                 string `json:"title"`
+	Status                string `json:"status"`
+	Kind                  string `json:"kind,omitempty"`
+	InputSummary          string `json:"inputSummary,omitempty"`
+	ResultSummary         string `json:"resultSummary,omitempty"`
+	ApprovalStatus        string `json:"approvalStatus,omitempty"`
+	ParentTaskID          string `json:"parentTaskId,omitempty"`
+	WaitingStatus         string `json:"waitingStatus,omitempty"`
+	AgentStep             int    `json:"agentStep,omitempty"`
+	AgentMaxSteps         int    `json:"agentMaxSteps,omitempty"`
+	LatestChildTaskID     string `json:"latestChildTaskId,omitempty"`
+	AgentPlanSummary      string `json:"agentPlanSummary,omitempty"`
+	AgentPlanMode         string `json:"agentPlanMode,omitempty"`
+	AgentCurrentStepTitle string `json:"agentCurrentStepTitle,omitempty"`
+	AgentLastReasoning    string `json:"agentLastReasoning,omitempty"`
+	CreatedAt             string `json:"createdAt"`
+	UpdatedAt             string `json:"updatedAt,omitempty"`
 }
 
 // ApprovalDescriptor describes a single thread-local approval item.
@@ -74,6 +86,25 @@ type ApprovalDescriptor struct {
 	TargetPaths []string `json:"targetPaths"`
 	CreatedAt   string   `json:"createdAt"`
 	UpdatedAt   string   `json:"updatedAt"`
+}
+
+// WriteExecutionDescriptor describes a single persisted write execution audit record.
+type WriteExecutionDescriptor struct {
+	ID                 string   `json:"id"`
+	ThreadID           string   `json:"threadId"`
+	TaskID             string   `json:"taskId"`
+	ApprovalID         string   `json:"approvalId,omitempty"`
+	ToolKind           string   `json:"toolKind"`
+	Operation          string   `json:"operation"`
+	RelatedExecutionID string   `json:"relatedExecutionId,omitempty"`
+	Status             string   `json:"status"`
+	TargetPaths        []string `json:"targetPaths"`
+	PatchSummary       string   `json:"patchSummary"`
+	BeforeSummary      string   `json:"beforeSummary,omitempty"`
+	AfterSummary       string   `json:"afterSummary,omitempty"`
+	ResultSummary      string   `json:"resultSummary,omitempty"`
+	CreatedAt          string   `json:"createdAt"`
+	UpdatedAt          string   `json:"updatedAt"`
 }
 
 // MessageDescriptor describes a single thread-local message.
@@ -247,6 +278,7 @@ type Service interface {
 	CreateTask(ctx context.Context, threadID string, request CreateTaskRequest) (TaskDescriptor, error)
 	RunTask(ctx context.Context, threadID string, taskID string, request RunTaskRequest) (TaskDescriptor, error)
 	Approvals(ctx context.Context, threadID string) ([]ApprovalDescriptor, error)
+	WriteExecutions(ctx context.Context, threadID string) ([]WriteExecutionDescriptor, error)
 	ApproveTask(ctx context.Context, threadID string, taskID string, request ApproveTaskRequest) (TaskDescriptor, error)
 	RejectTask(ctx context.Context, threadID string, taskID string, request RejectTaskRequest) (TaskDescriptor, error)
 	Messages(ctx context.Context, threadID string) ([]MessageDescriptor, error)
@@ -321,6 +353,10 @@ func (noopService) RunTask(context.Context, string, string, RunTaskRequest) (Tas
 
 func (noopService) Approvals(context.Context, string) ([]ApprovalDescriptor, error) {
 	return []ApprovalDescriptor{}, nil
+}
+
+func (noopService) WriteExecutions(context.Context, string) ([]WriteExecutionDescriptor, error) {
+	return []WriteExecutionDescriptor{}, nil
 }
 
 func (noopService) ApproveTask(context.Context, string, string, ApproveTaskRequest) (TaskDescriptor, error) {

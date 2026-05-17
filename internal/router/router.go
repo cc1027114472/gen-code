@@ -48,6 +48,7 @@ func New(base logger.Logger, appName string, trustedProxies []string, httpAccess
 		api.POST("/threads/:id/tasks", handlers.Runtime.CreateTask)
 		api.POST("/threads/:id/tasks/:taskId/run", handlers.Runtime.RunTask)
 		api.GET("/threads/:id/approvals", handlers.Runtime.Approvals)
+		api.GET("/threads/:id/write-executions", handlers.Runtime.WriteExecutions)
 		api.POST("/threads/:id/tasks/:taskId/approve", handlers.Runtime.ApproveTask)
 		api.POST("/threads/:id/tasks/:taskId/reject", handlers.Runtime.RejectTask)
 		api.GET("/threads/:id/messages", handlers.Runtime.Messages)

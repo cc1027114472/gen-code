@@ -19,16 +19,37 @@ func NewDefaultService() *Service {
 	return newServiceFromDiscoveryWithStore(discovered, nil, nil)
 }
 
+// NewDefaultServiceWithoutRecovery creates the shared runtime without startup task recovery.
+func NewDefaultServiceWithoutRecovery() *Service {
+	if cfg, err := config.Load(); err == nil {
+		return NewDefaultServiceWithProvidersWithoutRecovery(cfg.Providers)
+	}
+	discovered := discoverSiblingRuntimeContent(workspaceRoot())
+	return newServiceFromDiscoveryWithStoreWithoutRecovery(discovered, nil, nil)
+}
+
 // NewDefaultServiceWithStateStore creates the shared runtime with an explicit state store.
 func NewDefaultServiceWithStateStore(store *state.Store) *Service {
 	discovered := discoverSiblingRuntimeContent(workspaceRoot())
 	return newServiceFromDiscoveryWithStore(discovered, store, nil)
 }
 
+// NewDefaultServiceWithStateStoreWithoutRecovery creates the shared runtime without startup task recovery.
+func NewDefaultServiceWithStateStoreWithoutRecovery(store *state.Store) *Service {
+	discovered := discoverSiblingRuntimeContent(workspaceRoot())
+	return newServiceFromDiscoveryWithStoreWithoutRecovery(discovered, store, nil)
+}
+
 // NewDefaultServiceWithProviders creates the shared runtime with provider configuration.
 func NewDefaultServiceWithProviders(providers config.ProvidersConfig) *Service {
 	discovered := discoverSiblingRuntimeContent(workspaceRoot())
 	return newServiceFromDiscoveryWithStore(discovered, nil, newProviderRegistry(providers))
+}
+
+// NewDefaultServiceWithProvidersWithoutRecovery creates the shared runtime without startup task recovery.
+func NewDefaultServiceWithProvidersWithoutRecovery(providers config.ProvidersConfig) *Service {
+	discovered := discoverSiblingRuntimeContent(workspaceRoot())
+	return newServiceFromDiscoveryWithStoreWithoutRecovery(discovered, nil, newProviderRegistry(providers))
 }
 
 func newProviderRegistry(cfg config.ProvidersConfig) *provider.Registry {

@@ -207,6 +207,27 @@ func TestRegistryRestoresAndPersistsViaSQLiteStore(t *testing.T) {
 	require.NoError(t, err)
 	_, err = registry.SetRuntimeFlag(thread.ID, SetRuntimeFlagInput{Key: "draft", Value: "saved"})
 	require.NoError(t, err)
+	_, err = registry.CreateWriteExecution(thread.ID, CreateWriteExecutionInput{
+		TaskID:                task.ID,
+		ApprovalID:            "approval-1",
+		ToolKind:              "workspace.apply_patch",
+		Operation:             "apply",
+		Status:                "completed",
+		TargetPaths:           []string{"README.md"},
+		PatchHash:             "abc123",
+		PatchSummary:          "2 patch line(s)",
+		BeforeSnapshotSummary: "missing file",
+		AfterSnapshotSummary:  "exists, 1 line(s), 4 byte(s), sha256:def456789012",
+		RollbackPayload: []WriteExecutionFileSnapshot{{
+			Path:         "README.md",
+			BeforeExists: false,
+			BeforeHash:   "",
+			AfterExists:  true,
+			AfterHash:    "def456789012",
+		}},
+		ResultSummary: "applied patch to README.md: created 1 line(s)",
+	})
+	require.NoError(t, err)
 
 	require.NoError(t, store.Close())
 	store, err = state.Open(projectRoot)
@@ -244,6 +265,17 @@ func TestRegistryRestoresAndPersistsViaSQLiteStore(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, flags, 1)
 	require.Equal(t, "saved", flags[0].Value)
+
+	writeExecutions, ok := reloaded.WriteExecutions(thread.ID)
+	require.True(t, ok)
+	require.Len(t, writeExecutions, 1)
+	require.Equal(t, "approval-1", writeExecutions[0].ApprovalID)
+	require.Equal(t, "workspace.apply_patch", writeExecutions[0].ToolKind)
+	require.Equal(t, "apply", writeExecutions[0].Operation)
+	require.Equal(t, []string{"README.md"}, writeExecutions[0].TargetPaths)
+	require.Len(t, writeExecutions[0].RollbackPayload, 1)
+	require.Equal(t, "README.md", writeExecutions[0].RollbackPayload[0].Path)
+	require.Equal(t, "applied patch to README.md: created 1 line(s)", writeExecutions[0].ResultSummary)
 
 	events, ok := reloaded.Events(thread.ID)
 	require.True(t, ok)

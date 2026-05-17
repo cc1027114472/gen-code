@@ -44,16 +44,19 @@ type Thread struct {
 
 // Task describes a minimal task tracked under a thread.
 type Task struct {
-	ID            string    `json:"id"`
-	ThreadID      string    `json:"thread_id"`
-	Title         string    `json:"title"`
-	Status        string    `json:"status"`
-	Kind          string    `json:"kind"`
-	Input         string    `json:"input"`
-	ResultSummary string    `json:"result_summary"`
-	ApprovalStatus string   `json:"approval_status"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	ThreadID       string    `json:"thread_id"`
+	Title          string    `json:"title"`
+	Status         string    `json:"status"`
+	Kind           string    `json:"kind"`
+	Input          string    `json:"input"`
+	ResultSummary  string    `json:"result_summary"`
+	ApprovalStatus string    `json:"approval_status"`
+	ParentTaskID   string    `json:"parent_task_id"`
+	WaitingStatus  string    `json:"waiting_status"`
+	AgentState     string    `json:"agent_state"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // MessageRecord describes a persisted thread-local message.
@@ -114,6 +117,37 @@ type ApprovalRecord struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// WriteExecutionRecord describes a persisted audit trail for a thread-local write execution.
+type WriteExecutionRecord struct {
+	ID                    string                       `json:"id"`
+	ThreadID              string                       `json:"thread_id"`
+	TaskID                string                       `json:"task_id"`
+	ApprovalID            string                       `json:"approval_id"`
+	ToolKind              string                       `json:"tool_kind"`
+	Operation             string                       `json:"operation"`
+	RelatedExecutionID    string                       `json:"related_execution_id"`
+	Status                string                       `json:"status"`
+	TargetPaths           []string                     `json:"target_paths"`
+	PatchHash             string                       `json:"patch_hash"`
+	PatchSummary          string                       `json:"patch_summary"`
+	BeforeSnapshotSummary string                       `json:"before_snapshot_summary"`
+	AfterSnapshotSummary  string                       `json:"after_snapshot_summary"`
+	RollbackPayload       []WriteExecutionFileSnapshot `json:"rollback_payload"`
+	ResultSummary         string                       `json:"result_summary"`
+	CreatedAt             time.Time                    `json:"created_at"`
+	UpdatedAt             time.Time                    `json:"updated_at"`
+}
+
+// WriteExecutionFileSnapshot stores the minimum file state required for a controlled rollback.
+type WriteExecutionFileSnapshot struct {
+	Path          string `json:"path"`
+	BeforeExists  bool   `json:"beforeExists"`
+	BeforeContent string `json:"beforeContent"`
+	BeforeHash    string `json:"beforeHash"`
+	AfterExists   bool   `json:"afterExists"`
+	AfterHash     string `json:"afterHash"`
+}
+
 // CreateThreadInput collects optional fields for creating a thread.
 type CreateThreadInput struct {
 	Name           string
@@ -129,6 +163,9 @@ type CreateTaskInput struct {
 	Status         string
 	ResultSummary  string
 	ApprovalStatus string
+	ParentTaskID   string
+	WaitingStatus  string
+	AgentState     string
 }
 
 // AppendMessageInput collects the minimum message fields for a thread-local message.
@@ -158,9 +195,11 @@ type SetRuntimeFlagInput struct {
 
 // UpdateTaskStatusInput collects the minimum fields required to update a task status.
 type UpdateTaskStatusInput struct {
-	Status        string
-	ResultSummary string
+	Status         string
+	ResultSummary  string
 	ApprovalStatus *string
+	WaitingStatus  *string
+	AgentState     *string
 }
 
 // CreateApprovalInput collects the minimum fields for a thread-local approval.
@@ -177,6 +216,23 @@ type UpdateApprovalInput struct {
 	Status      string
 	Summary     string
 	TargetPaths []string
+}
+
+// CreateWriteExecutionInput collects the minimum fields required to append a write execution audit record.
+type CreateWriteExecutionInput struct {
+	TaskID                string
+	ApprovalID            string
+	ToolKind              string
+	Operation             string
+	RelatedExecutionID    string
+	Status                string
+	TargetPaths           []string
+	PatchHash             string
+	PatchSummary          string
+	BeforeSnapshotSummary string
+	AfterSnapshotSummary  string
+	RollbackPayload       []WriteExecutionFileSnapshot
+	ResultSummary         string
 }
 
 var (
@@ -202,6 +258,7 @@ type Registry struct {
 	tasks            map[string][]Task
 	events           map[string][]Event
 	approvals        map[string][]ApprovalRecord
+	writeExecutions  map[string][]WriteExecutionRecord
 	order            []string
 	activeThreadID   string
 	nextThreadNumber int
@@ -211,6 +268,7 @@ type Registry struct {
 	nextToolCallNum  int
 	nextArtifactNum  int
 	nextApprovalNum  int
+	nextWriteExecNum int
 }
 
 // NewRegistry creates the default single-workspace registry for the given project root.
@@ -247,6 +305,7 @@ func NewRegistryWithStore(projectRoot string, store *state.Store) (*Registry, er
 		tasks:            map[string][]Task{},
 		events:           map[string][]Event{},
 		approvals:        map[string][]ApprovalRecord{},
+		writeExecutions:  map[string][]WriteExecutionRecord{},
 		order:            []string{},
 		nextThreadNumber: 1,
 		nextTaskNumber:   1,
@@ -255,6 +314,7 @@ func NewRegistryWithStore(projectRoot string, store *state.Store) (*Registry, er
 		nextToolCallNum:  1,
 		nextArtifactNum:  1,
 		nextApprovalNum:  1,
+		nextWriteExecNum: 1,
 	}
 
 	if store != nil {
@@ -352,6 +412,7 @@ func (r *Registry) CreateThread(input CreateThreadInput) Thread {
 	r.tasks[threadID] = []Task{}
 	r.events[threadID] = []Event{}
 	r.approvals[threadID] = []ApprovalRecord{}
+	r.writeExecutions[threadID] = []WriteExecutionRecord{}
 	r.order = append(r.order, threadID)
 	if r.activeThreadID == "" {
 		r.activeThreadID = threadID
@@ -413,6 +474,22 @@ func (r *Registry) Approvals(threadID string) ([]ApprovalRecord, bool) {
 	items := append([]ApprovalRecord(nil), r.approvals[threadID]...)
 	for index := range items {
 		items[index].TargetPaths = append([]string(nil), items[index].TargetPaths...)
+	}
+	return items, true
+}
+
+// WriteExecutions returns the persisted write execution audit records under the given thread.
+func (r *Registry) WriteExecutions(threadID string) ([]WriteExecutionRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if _, ok := r.threads[threadID]; !ok {
+		return nil, false
+	}
+	items := append([]WriteExecutionRecord(nil), r.writeExecutions[threadID]...)
+	for index := range items {
+		items[index].TargetPaths = append([]string(nil), items[index].TargetPaths...)
+		items[index].RollbackPayload = append([]WriteExecutionFileSnapshot(nil), items[index].RollbackPayload...)
 	}
 	return items, true
 }
@@ -533,16 +610,19 @@ func (r *Registry) CreateTask(threadID string, input CreateTaskInput) (Task, boo
 		status = "queued"
 	}
 	task := Task{
-		ID:            fmt.Sprintf("task-%d", taskNumber),
-		ThreadID:      threadID,
-		Title:         title,
-		Status:        status,
-		Kind:          input.Kind,
-		Input:         input.Input,
-		ResultSummary: input.ResultSummary,
+		ID:             fmt.Sprintf("task-%d", taskNumber),
+		ThreadID:       threadID,
+		Title:          title,
+		Status:         status,
+		Kind:           input.Kind,
+		Input:          input.Input,
+		ResultSummary:  input.ResultSummary,
 		ApprovalStatus: input.ApprovalStatus,
-		CreatedAt:     time.Now().UTC(),
-		UpdatedAt:     time.Now().UTC(),
+		ParentTaskID:   input.ParentTaskID,
+		WaitingStatus:  input.WaitingStatus,
+		AgentState:     input.AgentState,
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
 	}
 
 	r.tasks[threadID] = append(r.tasks[threadID], task)
@@ -639,6 +719,53 @@ func (r *Registry) UpdateApproval(threadID string, taskID string, input UpdateAp
 	}
 
 	return ApprovalRecord{}, ErrApprovalNotFound
+}
+
+// CreateWriteExecution appends a write execution audit record under the given thread.
+func (r *Registry) CreateWriteExecution(threadID string, input CreateWriteExecutionInput) (WriteExecutionRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	thread, ok := r.threads[threadID]
+	if !ok {
+		return WriteExecutionRecord{}, ErrThreadNotFound
+	}
+	if _, err := r.taskLocked(threadID, input.TaskID); err != nil {
+		return WriteExecutionRecord{}, err
+	}
+
+	now := time.Now().UTC()
+	record := WriteExecutionRecord{
+		ID:                    fmt.Sprintf("writeexec-%d", r.nextWriteExecNum),
+		ThreadID:              threadID,
+		TaskID:                input.TaskID,
+		ApprovalID:            input.ApprovalID,
+		ToolKind:              input.ToolKind,
+		Operation:             input.Operation,
+		RelatedExecutionID:    input.RelatedExecutionID,
+		Status:                input.Status,
+		TargetPaths:           append([]string(nil), input.TargetPaths...),
+		PatchHash:             input.PatchHash,
+		PatchSummary:          input.PatchSummary,
+		BeforeSnapshotSummary: input.BeforeSnapshotSummary,
+		AfterSnapshotSummary:  input.AfterSnapshotSummary,
+		RollbackPayload:       append([]WriteExecutionFileSnapshot(nil), input.RollbackPayload...),
+		ResultSummary:         input.ResultSummary,
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}
+	if record.Operation == "" {
+		record.Operation = "apply"
+	}
+	if record.Status == "" {
+		record.Status = "completed"
+	}
+
+	r.nextWriteExecNum++
+	r.writeExecutions[threadID] = append(r.writeExecutions[threadID], record)
+	_ = r.persistWriteExecutionLocked(record)
+	_ = r.persistThreadLocked(thread)
+	return record, nil
 }
 
 // AppendMessage appends a thread-local message and persists it.
@@ -787,6 +914,12 @@ func (r *Registry) UpdateTaskStatus(threadID string, taskID string, input Update
 		if input.ApprovalStatus != nil {
 			task.ApprovalStatus = *input.ApprovalStatus
 		}
+		if input.WaitingStatus != nil {
+			task.WaitingStatus = *input.WaitingStatus
+		}
+		if input.AgentState != nil {
+			task.AgentState = *input.AgentState
+		}
 		task.UpdatedAt = time.Now().UTC()
 		tasks[index] = task
 		r.tasks[threadID] = tasks
@@ -840,7 +973,7 @@ func (r *Registry) appendEventLocked(threadID string, eventType string, message 
 
 func isSupportedTaskStatus(status string) bool {
 	switch status {
-	case "queued", "running", "completed", "failed", "needs_approval":
+	case "queued", "running", "completed", "failed", "needs_approval", "waiting_for_approval", "waiting_for_task":
 		return true
 	default:
 		return false
@@ -936,16 +1069,19 @@ func (r *Registry) restoreFromStore() error {
 
 	for _, item := range snapshot.Tasks {
 		task := Task{
-			ID:            item.ID,
-			ThreadID:      item.ThreadID,
-			Title:         item.Title,
-			Status:        item.Status,
-			Kind:          item.Kind,
-			Input:         item.Input,
-			ResultSummary: item.ResultSummary,
+			ID:             item.ID,
+			ThreadID:       item.ThreadID,
+			Title:          item.Title,
+			Status:         item.Status,
+			Kind:           item.Kind,
+			Input:          item.Input,
+			ResultSummary:  item.ResultSummary,
 			ApprovalStatus: item.ApprovalStatus,
-			CreatedAt:     item.CreatedAt,
-			UpdatedAt:     item.UpdatedAt,
+			ParentTaskID:   item.ParentTaskID,
+			WaitingStatus:  item.WaitingStatus,
+			AgentState:     item.AgentState,
+			CreatedAt:      item.CreatedAt,
+			UpdatedAt:      item.UpdatedAt,
 		}
 		r.tasks[item.ThreadID] = append(r.tasks[item.ThreadID], task)
 		thread := r.threads[item.ThreadID]
@@ -1025,6 +1161,28 @@ func (r *Registry) restoreFromStore() error {
 		})
 	}
 
+	for _, item := range snapshot.WriteExecutions {
+		r.writeExecutions[item.ThreadID] = append(r.writeExecutions[item.ThreadID], WriteExecutionRecord{
+			ID:                    item.ID,
+			ThreadID:              item.ThreadID,
+			TaskID:                item.TaskID,
+			ApprovalID:            item.ApprovalID,
+			ToolKind:              item.ToolKind,
+			Operation:             item.Operation,
+			RelatedExecutionID:    item.RelatedExecutionID,
+			Status:                item.Status,
+			TargetPaths:           decodeTargetPaths(item.TargetPaths),
+			PatchHash:             item.PatchHash,
+			PatchSummary:          item.PatchSummary,
+			BeforeSnapshotSummary: item.BeforeSnapshotSummary,
+			AfterSnapshotSummary:  item.AfterSnapshotSummary,
+			RollbackPayload:       decodeRollbackPayload(item.RollbackPayload),
+			ResultSummary:         item.ResultSummary,
+			CreatedAt:             item.CreatedAt,
+			UpdatedAt:             item.UpdatedAt,
+		})
+	}
+
 	r.nextThreadNumber = state.MaxSuffix(r.order, "thread-") + 1
 	if r.nextThreadNumber == 1 && len(r.order) == 0 {
 		r.nextThreadNumber = 1
@@ -1090,6 +1248,17 @@ func (r *Registry) restoreFromStore() error {
 		r.nextApprovalNum = 1
 	}
 
+	writeExecIDs := make([]string, 0)
+	for _, items := range r.writeExecutions {
+		for _, item := range items {
+			writeExecIDs = append(writeExecIDs, item.ID)
+		}
+	}
+	r.nextWriteExecNum = state.MaxSuffix(writeExecIDs, "writeexec-") + 1
+	if r.nextWriteExecNum == 1 && len(writeExecIDs) == 0 {
+		r.nextWriteExecNum = 1
+	}
+
 	return nil
 }
 
@@ -1126,16 +1295,19 @@ func (r *Registry) persistTaskLocked(task Task) error {
 		return nil
 	}
 	return r.store.SaveTask(state.TaskRecord{
-		ID:            task.ID,
-		ThreadID:      task.ThreadID,
-		Title:         task.Title,
-		Status:        task.Status,
-		Kind:          task.Kind,
-		Input:         task.Input,
-		ResultSummary: task.ResultSummary,
+		ID:             task.ID,
+		ThreadID:       task.ThreadID,
+		Title:          task.Title,
+		Status:         task.Status,
+		Kind:           task.Kind,
+		Input:          task.Input,
+		ResultSummary:  task.ResultSummary,
 		ApprovalStatus: task.ApprovalStatus,
-		CreatedAt:     task.CreatedAt,
-		UpdatedAt:     task.UpdatedAt,
+		ParentTaskID:   task.ParentTaskID,
+		WaitingStatus:  task.WaitingStatus,
+		AgentState:     task.AgentState,
+		CreatedAt:      task.CreatedAt,
+		UpdatedAt:      task.UpdatedAt,
 	})
 }
 
@@ -1221,6 +1393,31 @@ func (r *Registry) persistApprovalLocked(item ApprovalRecord) error {
 	})
 }
 
+func (r *Registry) persistWriteExecutionLocked(item WriteExecutionRecord) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.SaveWriteExecution(state.WriteExecutionRecord{
+		ID:                    item.ID,
+		ThreadID:              item.ThreadID,
+		TaskID:                item.TaskID,
+		ApprovalID:            item.ApprovalID,
+		ToolKind:              item.ToolKind,
+		Operation:             item.Operation,
+		RelatedExecutionID:    item.RelatedExecutionID,
+		Status:                item.Status,
+		TargetPaths:           encodeTargetPaths(item.TargetPaths),
+		PatchHash:             item.PatchHash,
+		PatchSummary:          item.PatchSummary,
+		BeforeSnapshotSummary: item.BeforeSnapshotSummary,
+		AfterSnapshotSummary:  item.AfterSnapshotSummary,
+		RollbackPayload:       encodeRollbackPayload(item.RollbackPayload),
+		ResultSummary:         item.ResultSummary,
+		CreatedAt:             item.CreatedAt,
+		UpdatedAt:             item.UpdatedAt,
+	})
+}
+
 func encodeTargetPaths(paths []string) string {
 	if len(paths) == 0 {
 		return "[]"
@@ -1241,4 +1438,26 @@ func decodeTargetPaths(raw string) []string {
 		return nil
 	}
 	return paths
+}
+
+func encodeRollbackPayload(items []WriteExecutionFileSnapshot) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	encoded, err := json.Marshal(items)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func decodeRollbackPayload(raw string) []WriteExecutionFileSnapshot {
+	if raw == "" {
+		return nil
+	}
+	var items []WriteExecutionFileSnapshot
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil
+	}
+	return items
 }

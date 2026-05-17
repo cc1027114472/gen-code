@@ -171,6 +171,17 @@ func (h *RuntimeHandler) Approvals(c *gin.Context) {
 	xresp.OK(c, gin.H{"items": data})
 }
 
+// WriteExecutions returns the write execution audit records under the given thread.
+func (h *RuntimeHandler) WriteExecutions(c *gin.Context) {
+	data, err := h.runtime.WriteExecutions(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, gin.H{"items": data})
+}
+
 // ApproveTask approves an existing thread-local task.
 func (h *RuntimeHandler) ApproveTask(c *gin.Context) {
 	var payload runtimecontract.ApproveTaskRequest

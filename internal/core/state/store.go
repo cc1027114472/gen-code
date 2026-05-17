@@ -39,16 +39,19 @@ type ThreadRecord struct {
 
 // TaskRecord is the persisted task row.
 type TaskRecord struct {
-	ID            string
-	ThreadID      string
-	Title         string
-	Status        string
-	Kind          string
-	Input         string
-	ResultSummary string
+	ID             string
+	ThreadID       string
+	Title          string
+	Status         string
+	Kind           string
+	Input          string
+	ResultSummary  string
 	ApprovalStatus string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ParentTaskID   string
+	WaitingStatus  string
+	AgentState     string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // MessageRecord is the persisted thread message row.
@@ -109,17 +112,39 @@ type ApprovalRecord struct {
 	UpdatedAt   time.Time
 }
 
+// WriteExecutionRecord is the persisted write execution audit row.
+type WriteExecutionRecord struct {
+	ID                    string
+	ThreadID              string
+	TaskID                string
+	ApprovalID            string
+	ToolKind              string
+	Operation             string
+	RelatedExecutionID    string
+	Status                string
+	TargetPaths           string
+	PatchHash             string
+	PatchSummary          string
+	BeforeSnapshotSummary string
+	AfterSnapshotSummary  string
+	RollbackPayload       string
+	ResultSummary         string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+}
+
 // Snapshot is the full persisted runtime state payload.
 type Snapshot struct {
-	Workspace WorkspaceRecord
-	Threads   []ThreadRecord
-	Tasks     []TaskRecord
-	Messages  []MessageRecord
-	ToolCalls []ToolCallRecord
-	Artifacts []ArtifactRecord
-	Flags     []RuntimeFlagRecord
-	Events    []EventRecord
-	Approvals []ApprovalRecord
+	Workspace       WorkspaceRecord
+	Threads         []ThreadRecord
+	Tasks           []TaskRecord
+	Messages        []MessageRecord
+	ToolCalls       []ToolCallRecord
+	Artifacts       []ArtifactRecord
+	Flags           []RuntimeFlagRecord
+	Events          []EventRecord
+	Approvals       []ApprovalRecord
+	WriteExecutions []WriteExecutionRecord
 }
 
 // Store persists runtime state to SQLite.
@@ -143,6 +168,15 @@ func Open(projectRoot string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("enable sqlite wal mode: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000;`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set sqlite busy timeout: %w", err)
 	}
 
 	store := &Store{path: path, db: db}
@@ -214,7 +248,7 @@ func (s *Store) Load() (Snapshot, error) {
 	}
 
 	taskRows, err := s.db.Query(`
-		SELECT id, thread_id, title, status, kind, input, result_summary, approval_status, created_at, updated_at
+		SELECT id, thread_id, title, status, kind, input, result_summary, approval_status, parent_task_id, waiting_status, agent_state, created_at, updated_at
 		FROM tasks
 		ORDER BY created_at ASC, id ASC
 	`)
@@ -226,7 +260,7 @@ func (s *Store) Load() (Snapshot, error) {
 	for taskRows.Next() {
 		var item TaskRecord
 		var created, updated string
-		if err := taskRows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Status, &item.Kind, &item.Input, &item.ResultSummary, &item.ApprovalStatus, &created, &updated); err != nil {
+		if err := taskRows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Status, &item.Kind, &item.Input, &item.ResultSummary, &item.ApprovalStatus, &item.ParentTaskID, &item.WaitingStatus, &item.AgentState, &created, &updated); err != nil {
 			return Snapshot{}, fmt.Errorf("scan task: %w", err)
 		}
 		item.CreatedAt, err = time.Parse(time.RFC3339, created)
@@ -382,6 +416,52 @@ func (s *Store) Load() (Snapshot, error) {
 		snapshot.Approvals = append(snapshot.Approvals, item)
 	}
 
+	writeExecutionRows, err := s.db.Query(`
+		SELECT id, thread_id, task_id, approval_id, tool_kind, operation, related_execution_id, status, target_paths, patch_hash, patch_summary,
+		       before_snapshot_summary, after_snapshot_summary, rollback_payload, result_summary, created_at, updated_at
+		FROM thread_write_executions
+		ORDER BY created_at ASC, id ASC
+	`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load write executions: %w", err)
+	}
+	defer writeExecutionRows.Close()
+
+	for writeExecutionRows.Next() {
+		var item WriteExecutionRecord
+		var created, updated string
+		if err := writeExecutionRows.Scan(
+			&item.ID,
+			&item.ThreadID,
+			&item.TaskID,
+			&item.ApprovalID,
+			&item.ToolKind,
+			&item.Operation,
+			&item.RelatedExecutionID,
+			&item.Status,
+			&item.TargetPaths,
+			&item.PatchHash,
+			&item.PatchSummary,
+			&item.BeforeSnapshotSummary,
+			&item.AfterSnapshotSummary,
+			&item.RollbackPayload,
+			&item.ResultSummary,
+			&created,
+			&updated,
+		); err != nil {
+			return Snapshot{}, fmt.Errorf("scan write execution: %w", err)
+		}
+		item.CreatedAt, err = time.Parse(time.RFC3339, created)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse write execution created_at: %w", err)
+		}
+		item.UpdatedAt, err = time.Parse(time.RFC3339, updated)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("parse write execution updated_at: %w", err)
+		}
+		snapshot.WriteExecutions = append(snapshot.WriteExecutions, item)
+	}
+
 	return snapshot, nil
 }
 
@@ -424,8 +504,8 @@ func (s *Store) SaveThread(item ThreadRecord) error {
 // SaveTask upserts a task row.
 func (s *Store) SaveTask(item TaskRecord) error {
 	_, err := s.db.Exec(`
-		INSERT INTO tasks (id, thread_id, title, status, kind, input, result_summary, approval_status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO tasks (id, thread_id, title, status, kind, input, result_summary, approval_status, parent_task_id, waiting_status, agent_state, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			thread_id=excluded.thread_id,
 			title=excluded.title,
@@ -434,9 +514,12 @@ func (s *Store) SaveTask(item TaskRecord) error {
 			input=excluded.input,
 			result_summary=excluded.result_summary,
 			approval_status=excluded.approval_status,
+			parent_task_id=excluded.parent_task_id,
+			waiting_status=excluded.waiting_status,
+			agent_state=excluded.agent_state,
 			created_at=excluded.created_at,
 			updated_at=excluded.updated_at
-	`, item.ID, item.ThreadID, item.Title, item.Status, item.Kind, item.Input, item.ResultSummary, item.ApprovalStatus, item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339))
+	`, item.ID, item.ThreadID, item.Title, item.Status, item.Kind, item.Input, item.ResultSummary, item.ApprovalStatus, item.ParentTaskID, item.WaitingStatus, item.AgentState, item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("save task: %w", err)
 	}
@@ -533,6 +616,38 @@ func (s *Store) SaveApproval(item ApprovalRecord) error {
 	return nil
 }
 
+// SaveWriteExecution inserts a write execution audit row.
+func (s *Store) SaveWriteExecution(item WriteExecutionRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO thread_write_executions (
+			id, thread_id, task_id, approval_id, tool_kind, operation, related_execution_id, status, target_paths, patch_hash, patch_summary,
+			before_snapshot_summary, after_snapshot_summary, rollback_payload, result_summary, created_at, updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			thread_id=excluded.thread_id,
+			task_id=excluded.task_id,
+			approval_id=excluded.approval_id,
+			tool_kind=excluded.tool_kind,
+			operation=excluded.operation,
+			related_execution_id=excluded.related_execution_id,
+			status=excluded.status,
+			target_paths=excluded.target_paths,
+			patch_hash=excluded.patch_hash,
+			patch_summary=excluded.patch_summary,
+			before_snapshot_summary=excluded.before_snapshot_summary,
+			after_snapshot_summary=excluded.after_snapshot_summary,
+			rollback_payload=excluded.rollback_payload,
+			result_summary=excluded.result_summary,
+			created_at=excluded.created_at,
+			updated_at=excluded.updated_at
+	`, item.ID, item.ThreadID, item.TaskID, item.ApprovalID, item.ToolKind, item.Operation, item.RelatedExecutionID, item.Status, item.TargetPaths, item.PatchHash, item.PatchSummary, item.BeforeSnapshotSummary, item.AfterSnapshotSummary, item.RollbackPayload, item.ResultSummary, item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("save write execution: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) migrate() error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS schema_version (
@@ -563,6 +678,9 @@ func (s *Store) migrate() error {
 			input TEXT NOT NULL DEFAULT '',
 			result_summary TEXT NOT NULL DEFAULT '',
 			approval_status TEXT NOT NULL DEFAULT '',
+			parent_task_id TEXT NOT NULL DEFAULT '',
+			waiting_status TEXT NOT NULL DEFAULT '',
+			agent_state TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
@@ -613,6 +731,25 @@ func (s *Store) migrate() error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS thread_write_executions (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			approval_id TEXT NOT NULL DEFAULT '',
+			tool_kind TEXT NOT NULL,
+			operation TEXT NOT NULL DEFAULT 'apply',
+			related_execution_id TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			target_paths TEXT NOT NULL DEFAULT '',
+			patch_hash TEXT NOT NULL DEFAULT '',
+			patch_summary TEXT NOT NULL DEFAULT '',
+			before_snapshot_summary TEXT NOT NULL DEFAULT '',
+			after_snapshot_summary TEXT NOT NULL DEFAULT '',
+			rollback_payload TEXT NOT NULL DEFAULT '[]',
+			result_summary TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 
 	for _, query := range queries {
@@ -641,6 +778,24 @@ func (s *Store) migrate() error {
 	}
 	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN approval_status TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		return fmt.Errorf("add tasks.approval_status column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN parent_task_id TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add tasks.parent_task_id column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN waiting_status TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add tasks.waiting_status column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN agent_state TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add tasks.agent_state column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE thread_write_executions ADD COLUMN operation TEXT NOT NULL DEFAULT 'apply'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add thread_write_executions.operation column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE thread_write_executions ADD COLUMN related_execution_id TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add thread_write_executions.related_execution_id column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE thread_write_executions ADD COLUMN rollback_payload TEXT NOT NULL DEFAULT '[]'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add thread_write_executions.rollback_payload column: %w", err)
 	}
 	return nil
 }
