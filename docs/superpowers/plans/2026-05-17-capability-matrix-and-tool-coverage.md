@@ -20,8 +20,8 @@
 | Project-local workspace state store | implemented | `.gen-code/state.db`, `internal/core/state`, `internal/core/session` | SQLite-backed persistence is present. |
 | Multiple threads under one workspace | implemented | `internal/core/session`, `runtimecontract.ThreadDescriptor` | Data model supports multi-thread organization. |
 | Active thread switching | implemented | runtime contract and desktop status payloads | Existing UI and runtime expose active thread semantics. |
-| Parent-child task relationships | partial | `ParentTaskID`, `LatestChildTaskID`, `WaitingStatus` fields | Runtime model exists; broader UX polish remains. |
-| Resume and interrupted-task recovery | partial | `runner.New(...).RecoverInterruptedTasks()` | Present in runtime path, but still a future release check. |
+| Parent-child task relationships | verified | `desktop/app.go`, `desktop/app_test.go`, `desktop/frontend/src/App.tsx`, `scripts/verify-desktop-live-refresh.py` | Desktop surfaces stable parent/child/waiting relationships across fallback and canonical lanes. |
+| Resume and interrupted-task recovery | verified | `runner.New(...).RecoverInterruptedTasks()`, `desktop/app_test.go`, `scripts/verify-desktop-live-refresh.py` | Verified with fallback restart evidence and canonical resumed-to-completion browser acceptance. |
 
 ## 3. Built-In Runtime Tool Coverage
 
@@ -106,6 +106,5 @@
 
 ## 9. Highest-Priority Remaining Gaps
 
-1. Continue desktop UX polish for parent/child task and interrupted-task recovery flows.
-2. Complete the remaining full 1:1 Chinese localization audit for copied grouped skills.
-3. Decide whether to extend the current verified MCP baseline beyond the fixture-backed external execution lane.
+1. Complete the remaining full 1:1 Chinese localization audit for copied grouped skills.
+2. Decide whether to extend the current verified MCP baseline beyond the fixture-backed external execution lane.

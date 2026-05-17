@@ -50,6 +50,7 @@ Pass standard:
 - `canonicalRuntimeUrl`, when present, matches the API target used for the run
 - all direct read-tool, MCP execution, agent, apply, and rollback checks pass
 - canonical direct read-tool coverage explicitly includes `workspace.read_file`, `workspace.list_files`, `workspace.stat_file`, `workspace.read_files_batch`, `workspace.list_files_filtered`, and `workspace.search_text_detailed`
+- canonical lane explicitly includes parent/child waiting visibility and one resumed-to-completion recovery continuation scenario
 - current MCP verification is fixture-backed stdio external execution, not blanket compatibility for arbitrary third-party MCP servers
 
 ## Fallback Interpretation Rules

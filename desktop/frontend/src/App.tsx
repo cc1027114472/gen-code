@@ -445,6 +445,7 @@ export default function App() {
     [tasks],
   );
   const childTasks = useMemo<ExtendedRuntimeTask[]>(() => tasks.filter((task) => task.parentTaskId), [tasks]);
+  const latestChildTask = useMemo(() => newestBy(childTasks, (item) => item.updatedAt || item.createdAt), [childTasks]);
   const approvalRequiredTasks = useMemo<ExtendedRuntimeTask[]>(
     () => tasks.filter((task) => task.status === "needs_approval" || task.approvalStatus === "pending"),
     [tasks],
@@ -934,7 +935,7 @@ export default function App() {
                     <h4>{activeThreadWorkflow?.name || activeThread?.name || "暂无活动线程"}</h4>
                     <p>{activeThreadWorkflow?.summary || "激活一个线程后，可以查看任务、审批和写执行关系。"}</p>
                   </article>
-                  <article className={`flow-item flow-item--neutral ${latestAgentTask ? "flow-item--agent-parent" : ""}`}>
+                  <article className={`flow-item flow-item--neutral ${latestAgentTask ? "flow-item--agent-parent" : ""}`} data-testid="latest-agent-overview-card">
                     <div className="flow-item__header">
                       <span className="mini-chip">Agent 闭环</span>
                       <span className="flow-item__meta">{latestAgentTask ? formatTaskStatus(latestAgentTask.status) : "就绪"}</span>
@@ -1141,23 +1142,41 @@ export default function App() {
                     title={latestTask ? formatLatestTaskTitle(latestTask, latestTask.parentTaskId ? taskMap.get(latestTask.parentTaskId) : undefined) : "暂无任务"}
                     body={latestTask ? formatLatestTaskBody(latestTask, latestTask.parentTaskId ? taskMap.get(latestTask.parentTaskId) : undefined) : "暂无结果"}
                     className={latestTask ? getTaskCardClassName(latestTask) : undefined}
+                    testId="latest-task-card"
+                  />
+                  <ResultCard
+                    label="最新 Agent"
+                    title={latestAgentTask ? formatLatestTaskTitle(latestAgentTask) : "暂无 Agent 父任务"}
+                    body={latestAgentTask ? formatLatestTaskBody(latestAgentTask) : "当前线程还没有 agent.run 父任务"}
+                    className={latestAgentTask ? getTaskCardClassName(latestAgentTask) : undefined}
+                    testId="latest-agent-card"
+                  />
+                  <ResultCard
+                    label="最新子任务"
+                    title={latestChildTask ? formatLatestTaskTitle(latestChildTask, latestChildTask.parentTaskId ? taskMap.get(latestChildTask.parentTaskId) : undefined) : "暂无 Agent 子任务"}
+                    body={latestChildTask ? formatLatestTaskBody(latestChildTask, latestChildTask.parentTaskId ? taskMap.get(latestChildTask.parentTaskId) : undefined) : "当前线程还没有派生子任务"}
+                    className={latestChildTask ? getTaskCardClassName(latestChildTask) : undefined}
+                    testId="latest-child-task-card"
                   />
                   <ResultCard
                     label="最新工具调用"
                     title={latestToolCall ? `${latestToolCall.toolId} / ${formatToolCallStatus(latestToolCall.status)}` : "暂无工具调用"}
                     body={latestToolCall?.summary || "暂无摘要"}
+                    testId="latest-toolcall-card"
                   />
                   <ResultCard
                     label="最新审批"
                     title={latestApproval ? `${latestApproval.toolKind} / ${latestApproval.approvalStatusLabel}` : "暂无审批"}
                     body={latestApproval ? `${latestApproval.summary} / ${latestApproval.patchStatsLabel}` : "当前线程还没有最近审批摘要"}
+                    testId="latest-approval-card"
                   />
-                  <ResultCard label="最新消息" title={latestMessage ? formatMessageRole(latestMessage.role) : "暂无消息"} body={latestMessage?.content || "暂无消息"} />
-                  <ResultCard label="最新事件" title={latestEvent ? formatEventType(latestEvent.type) : "暂无事件"} body={latestEvent?.message || "暂无事件"} />
+                  <ResultCard label="最新消息" title={latestMessage ? formatMessageRole(latestMessage.role) : "暂无消息"} body={latestMessage?.content || "暂无消息"} testId="latest-message-card" />
+                  <ResultCard label="最新事件" title={latestEvent ? formatEventType(latestEvent.type) : "暂无事件"} body={latestEvent?.message || "暂无事件"} testId="latest-event-card" />
                   <ResultCard
                     label="最近写执行"
                     title={latestWriteExecution ? `${latestWriteExecution.toolKind} / ${formatWriteExecutionStatus(latestWriteExecution.status)}` : "暂无写执行"}
                     body={latestWriteExecution ? summarizeWriteExecution(latestWriteExecution) : "尚未记录 patch 写执行审计"}
+                    testId="latest-write-execution-card"
                   />
                   <InfoCard label="最新产物" value={latestArtifact ? latestArtifact.kind : "暂无产物"} detail={latestArtifact?.path || "暂无产物"} />
                   <InfoCard
@@ -1500,7 +1519,10 @@ function formatTaskHeadline(task: ExtendedRuntimeTask, parentTask?: ExtendedRunt
 }
 
 function formatTaskLinkSummary(task: ExtendedRuntimeTask) {
-  const parts: string[] = [];
+  const parts: string[] = [`任务 ${task.id}`];
+  if (task.parentTaskId) {
+    parts.push(`父任务 ${task.parentTaskId}`);
+  }
   if (task.waitingTaskId) {
     parts.push(`关联子任务 ${task.waitingTaskId}`);
   }
@@ -1509,9 +1531,6 @@ function formatTaskLinkSummary(task: ExtendedRuntimeTask) {
   }
   if (task.latestChildTaskId) {
     parts.push(`最新子任务 ${task.latestChildTaskId}`);
-  }
-  if (parts.length === 0 && task.parentTaskId) {
-    parts.push(`父任务 ${task.parentTaskId}`);
   }
   return parts.join(" / ") || "当前没有额外关联信息。";
 }
@@ -1553,8 +1572,11 @@ function formatAgentMeta(task: RuntimeTask) {
   if (task.agentStep > 0 && task.agentMaxSteps > 0) {
     parts.push(`步骤 ${task.agentStep}/${task.agentMaxSteps}`);
   }
+  if (task.agentPlanMode) {
+    parts.push(`模式 ${task.agentPlanMode}`);
+  }
   if (task.latestChildTaskId) {
-    parts.push(`子任务 ${task.latestChildTaskId}`);
+    parts.push(`最新子任务 ${task.latestChildTaskId}`);
   }
   if (task.waitingStatus) {
     parts.push(formatWaitingStatus(task.waitingStatus));
@@ -1562,8 +1584,61 @@ function formatAgentMeta(task: RuntimeTask) {
   return parts.join(" / ");
 }
 
+function formatAgentStateSummary(task: RuntimeTask) {
+  const waitingStatus = task.waitingStatus || task.status;
+  if (waitingStatus === "waiting_for_approval") {
+    return "状态：等待审批通过后自动续跑";
+  }
+  if (waitingStatus === "waiting_for_task") {
+    return "状态：等待子任务完成后自动续跑";
+  }
+  if (task.status === "completed") {
+    return "状态：Agent 已完成本轮闭环";
+  }
+
+  const resultSummary = (task.resultSummary || "").trim();
+  if (resultSummary.startsWith("agent recovery failed:")) {
+    return `状态：恢复失败（task.recovered_as_failed） / ${resultSummary.slice("agent recovery failed:".length).trim() || "子任务状态不一致"}`;
+  }
+  if (resultSummary.startsWith("agent failed: child approval rejected:")) {
+    return `状态：审批已拒绝并中断续跑 / ${resultSummary.slice("agent failed: child approval rejected:".length).trim() || "写入审批被拒绝"}`;
+  }
+  if (resultSummary.includes("interrupted by runtime restart")) {
+    return "状态：运行时重启中断，已按 task.recovered_as_failed 收口";
+  }
+  if (resultSummary.startsWith("agent child task failed:")) {
+    return `状态：子任务失败 / ${resultSummary.slice("agent child task failed:".length).trim() || "请检查最近子任务结果"}`;
+  }
+  if (resultSummary.startsWith("agent failed: exceeded maxSteps=")) {
+    return `状态：超过步数上限 / ${resultSummary.slice("agent failed:".length).trim()}`;
+  }
+  if (resultSummary.startsWith("agent action parse error:")) {
+    return `状态：动作解析失败 / ${resultSummary.slice("agent action parse error:".length).trim() || "模型输出不符合最小 JSON 协议"}`;
+  }
+  if (resultSummary.startsWith("provider error:")) {
+    return `状态：Provider 调用失败 / ${resultSummary.slice("provider error:".length).trim() || "请检查模型或网络状态"}`;
+  }
+  if (resultSummary.startsWith("agent action \"") && resultSummary.includes("\" is not supported")) {
+    return `状态：动作不受支持 / ${resultSummary}`;
+  }
+  if (task.status === "failed") {
+    return "状态：Agent 已失败";
+  }
+  if (task.status === "running") {
+    return "状态：Agent 正在执行";
+  }
+  if (task.status === "queued") {
+    return "状态：Agent 已排队，等待开始";
+  }
+  return "";
+}
+
 function formatAgentDetails(task: RuntimeTask) {
   const parts: string[] = [];
+  const stateSummary = formatAgentStateSummary(task);
+  if (stateSummary) {
+    parts.push(stateSummary);
+  }
   if (task.agentPlanSummary) {
     parts.push(`计划：${task.agentPlanSummary}`);
   }
@@ -1660,7 +1735,7 @@ function formatTaskDisplaySummary(task: ExtendedRuntimeTask, parentTask?: Extend
     return formatAgentDetails(task) || task.waitingSummary || task.resultSummary || task.input || "等待 Agent 执行";
   }
 
-  const parts = [task.workflowLabel, task.waitingSummary, task.resultSummary].filter(Boolean) as string[];
+  const parts = [task.workflowLabel, formatTaskLinkSummary(task), task.waitingSummary, task.resultSummary].filter(Boolean) as string[];
   if (parts.length > 0) {
     return parts.join("\n");
   }
@@ -1690,6 +1765,10 @@ function formatAgentWorkflowOverview(task: ExtendedRuntimeTask | null) {
   }
 
   const parts: string[] = [];
+  const stateSummary = formatAgentStateSummary(task);
+  if (stateSummary) {
+    parts.push(`${stateSummary}。`);
+  }
   if (task.agentStep > 0 && task.agentMaxSteps > 0) {
     parts.push(`当前执行到第 ${task.agentStep}/${task.agentMaxSteps} 步。`);
   }
@@ -1789,9 +1868,9 @@ function WriteExecutionDetails({ execution }: { execution: WriteExecutionViewMod
   );
 }
 
-function ResultCard({ label, title, body, className }: { label: string; title: string; body: string; className?: string }) {
+function ResultCard({ label, title, body, className, testId }: { label: string; title: string; body: string; className?: string; testId?: string }) {
   return (
-    <article className={`result-card${className ? ` ${className}` : ""}`}>
+    <article className={`result-card${className ? ` ${className}` : ""}`} data-testid={testId}>
       <p>{label}</p>
       <strong>{title}</strong>
       <span>{body}</span>

@@ -698,6 +698,110 @@ def run_agent_scenario(page, thread_id: str, scenario: dict) -> dict:
     }
 
 
+def run_recovery_continuation_scenario(page, thread_id: str, run_id: str) -> dict:
+    title = f"Agent recovery continuation {run_id}"
+    baseline_assistant_messages = len(
+        [item for item in api("GET", f"/api/threads/{thread_id}/messages")["items"] if item.get("role") == "assistant"]
+    )
+    created_task = create_task(
+        thread_id,
+        title,
+        "agent.run",
+        {
+            "goal": (
+                "Apply a patch to playwright-recovery-note.txt that adds one line saying recovery evidence, "
+                "then answer in one short sentence about what you changed. Do not do any extra work."
+            ),
+            "maxSteps": 4,
+        },
+    )
+    task_id = created_task["id"]
+    run_task(thread_id, task_id)
+
+    waiting_parent = wait_for_task(
+        thread_id,
+        lambda item: item["id"] == task_id and item["status"] == "waiting_for_approval",
+    )
+    child_tasks = api("GET", f"/api/threads/{thread_id}/tasks")["items"]
+    waiting_child = next(
+        (
+            item
+            for item in child_tasks
+            if item.get("parentTaskId") == task_id and item.get("status") == "needs_approval"
+        ),
+        None,
+    )
+    if waiting_child is None:
+        raise AssertionError("expected a child task requiring approval for recovery continuation scenario")
+    if waiting_parent.get("waitingStatus") != "waiting_for_approval":
+        raise AssertionError(
+            f"expected waitingStatus waiting_for_approval, got {waiting_parent.get('waitingStatus')!r}"
+        )
+    if waiting_parent.get("latestChildTaskId") != waiting_child["id"]:
+        raise AssertionError(
+            f"expected latestChildTaskId {waiting_child['id']!r}, got {waiting_parent.get('latestChildTaskId')!r}"
+        )
+
+    refresh_thread_view(page, thread_id)
+    parentVisibleAfterRefresh = False
+    waitingIndicatorVisible = False
+    latestAgentCardVisible = False
+    latestChildCardVisible = False
+    try:
+        assert_article_contains(page, title, timeout=10000)
+        parentVisibleAfterRefresh = True
+        waitingIndicatorVisible = page.locator("article").filter(has_text=title).filter(has_text="等待审批").first.is_visible()
+    except Exception:
+        refresh_thread_view(page, thread_id)
+        assert_article_contains(page, title, timeout=10000)
+        parentVisibleAfterRefresh = True
+        waitingIndicatorVisible = page.locator("article").filter(has_text=title).filter(has_text="等待审批").first.is_visible()
+
+    latest_agent_card = page.get_by_test_id("latest-agent-card")
+    expect(latest_agent_card).to_contain_text(title, timeout=15000)
+    expect(latest_agent_card).to_contain_text("等待审批", timeout=15000)
+    latestAgentCardVisible = latest_agent_card.is_visible()
+
+    latest_child_card = page.get_by_test_id("latest-child-task-card")
+    expect(latest_child_card).to_contain_text(waiting_child["title"], timeout=15000)
+    expect(latest_child_card).to_contain_text(waiting_child["id"], timeout=15000)
+    latestChildCardVisible = latest_child_card.is_visible()
+
+    pending_child_card = page.locator("article").filter(has_text=waiting_child["title"]).filter(has_text="approval required").first
+    expect(pending_child_card).to_be_visible(timeout=15000)
+
+    approved_child = api("POST", f"/api/threads/{thread_id}/tasks/{waiting_child['id']}/approve", {})
+    if approved_child.get("status") != "completed":
+        raise AssertionError(f"expected approved child status completed, got {approved_child.get('status')!r}")
+
+    resumed_parent = wait_for_task_terminal(thread_id, task_id, timeout_seconds=60.0)
+    if resumed_parent.get("status") != "completed":
+        raise AssertionError(f"expected resumed parent completed, got {resumed_parent.get('status')!r}")
+
+    latest_message = wait_for_new_assistant_message(thread_id, baseline_assistant_messages, timeout_seconds=30.0)
+    expect(page.locator("article").filter(has_text=latest_message["content"]).first).to_be_visible(timeout=12000)
+    expect(latest_agent_card).to_contain_text("已完成", timeout=15000)
+    expect(latest_agent_card).to_contain_text("Agent 已完成本轮闭环", timeout=15000)
+    expect(page.get_by_test_id("latest-message-card")).to_contain_text(latest_message["content"], timeout=15000)
+
+    return {
+        "parentTaskId": task_id,
+        "parentTitle": title,
+        "parentStatusBeforeResume": waiting_parent["status"],
+        "waitingStatus": waiting_parent.get("waitingStatus", ""),
+        "latestChildTaskId": waiting_parent.get("latestChildTaskId", ""),
+        "childTaskId": waiting_child["id"],
+        "childStatusBeforeResume": waiting_child["status"],
+        "parentStatusAfterResume": resumed_parent["status"],
+        "resultSummary": resumed_parent.get("resultSummary", ""),
+        "parentVisibleAfterRefresh": parentVisibleAfterRefresh,
+        "waitingIndicatorVisible": waitingIndicatorVisible,
+        "latestAgentCardVisible": latestAgentCardVisible,
+        "latestChildCardVisible": latestChildCardVisible,
+        "messageId": latest_message["id"],
+    }
+
+
 def run_smoke_acceptance(page, runtime_status: dict, thread_id: str) -> dict:
     refresh_mode = summarize_refresh_mode(page)
     desktop_copy_runtime = assert_desktop_copy_and_runtime_lane(page, runtime_status, refresh_mode)
@@ -988,6 +1092,7 @@ def main() -> int:
                     },
                 )
             )
+            recovery_result = run_recovery_continuation_scenario(page, thread_id, run_id)
             created_task = create_task(
                 thread_id,
                 task_title,
@@ -1081,6 +1186,7 @@ def main() -> int:
                             for item in agent_results
                         ],
                     },
+                    "recoveryContinuation": recovery_result,
                     "approvalVisibility": {
                         "applyApprovalVisible": approval_visible_before_approve,
                         "rollbackApprovalVisible": rollback_approval_visible,
@@ -1186,6 +1292,7 @@ def main() -> int:
                     }
                     for item in agent_results
                 ],
+                "recoveryContinuation": recovery_result,
                 "runtimeSource": runtime_status.get("runtimeSource", ""),
                 "runtimeTrust": runtime_status.get("runtimeTrust", ""),
                 "canonicalRuntimeUrl": runtime_status.get("canonicalRuntimeUrl", ""),

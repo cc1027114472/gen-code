@@ -947,6 +947,12 @@ func TestDesktopFallbackAgentWaitingForApprovalPersistsAcrossRestart(t *testing.
 	if !strings.Contains(parent.WorkflowLabel, "waiting_for_approval") {
 		t.Fatalf("expected workflow label to include waiting_for_approval, got %q", parent.WorkflowLabel)
 	}
+	if !strings.Contains(parent.WorkflowLabel, "step 2/5") {
+		t.Fatalf("expected workflow label to include step 2/5, got %q", parent.WorkflowLabel)
+	}
+	if strings.TrimSpace(parent.WaitingSummary) == "" {
+		t.Fatal("expected non-empty parent waiting summary after restart")
+	}
 	if !containsString(parent.ChildTaskIDs, "task-child-approval") {
 		t.Fatalf("expected child task ids to include task-child-approval, got %+v", parent.ChildTaskIDs)
 	}
@@ -959,6 +965,12 @@ func TestDesktopFallbackAgentWaitingForApprovalPersistsAcrossRestart(t *testing.
 	}
 	if child.ApprovalStatus != "pending" {
 		t.Fatalf("expected child approval status pending, got %q", child.ApprovalStatus)
+	}
+	if !strings.Contains(child.WorkflowLabel, "child task") {
+		t.Fatalf("expected child workflow label to include child task, got %q", child.WorkflowLabel)
+	}
+	if !strings.Contains(child.WorkflowLabel, "needs_approval") {
+		t.Fatalf("expected child workflow label to include needs_approval, got %q", child.WorkflowLabel)
 	}
 	approval := findApprovalByTaskID(t, reloaded, "task-child-approval")
 	if approval.Status != "pending" {
@@ -1038,6 +1050,12 @@ func TestDesktopFallbackAgentWaitingForTaskPersistsAcrossRestart(t *testing.T) {
 	if !strings.Contains(parent.WorkflowLabel, "waiting_for_task") {
 		t.Fatalf("expected workflow label to include waiting_for_task, got %q", parent.WorkflowLabel)
 	}
+	if !strings.Contains(parent.WorkflowLabel, "step 1/4") {
+		t.Fatalf("expected workflow label to include step 1/4, got %q", parent.WorkflowLabel)
+	}
+	if strings.TrimSpace(parent.WaitingSummary) == "" {
+		t.Fatal("expected non-empty parent waiting summary after restart")
+	}
 	if !containsString(parent.ChildTaskIDs, "task-child-read") {
 		t.Fatalf("expected child task ids to include task-child-read, got %+v", parent.ChildTaskIDs)
 	}
@@ -1047,6 +1065,12 @@ func TestDesktopFallbackAgentWaitingForTaskPersistsAcrossRestart(t *testing.T) {
 	}
 	if child.Status != "completed" {
 		t.Fatalf("expected child completed status after restart, got %q", child.Status)
+	}
+	if !strings.Contains(child.WorkflowLabel, "child task") {
+		t.Fatalf("expected child workflow label to include child task, got %q", child.WorkflowLabel)
+	}
+	if !strings.Contains(child.WorkflowLabel, "completed") {
+		t.Fatalf("expected child workflow label to include completed, got %q", child.WorkflowLabel)
 	}
 	if reloaded.ActiveThreadSummary.WaitingForTaskCount != 1 {
 		t.Fatalf("expected waiting-for-task count 1, got %d", reloaded.ActiveThreadSummary.WaitingForTaskCount)
