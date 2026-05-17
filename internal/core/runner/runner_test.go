@@ -1358,6 +1358,49 @@ func TestRunnerExecutesAgentRunWithStatThenReadSequence(t *testing.T) {
 	require.Equal(t, KindWorkspaceRead, tasks[2].Kind)
 }
 
+func TestRunnerExecutesAgentRunWithListThenReadSequence(t *testing.T) {
+	projectRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("hello listing\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "notes.txt"), []byte("extra\n"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Agent List Read",
+		PermissionMode: policy.WorkspaceWrite,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Agent run",
+		Kind:  KindAgentRun,
+		Input: `{"goal":"Use list_files on . first, then read README.md, then answer.","maxSteps":5}`,
+	})
+	require.True(t, ok)
+
+	models := &scriptedModelExecutor{
+		results: []provider.ResponseResult{
+			{OutputText: `{"type":"list_files","path":".","reasoningSummary":"List candidate files first"}`},
+			{OutputText: `{"type":"read_file","path":"README.md","reasoningSummary":"Read the selected file next"}`},
+			{OutputText: `{"type":"respond","response":"README was listed and read.","reasoningSummary":"Answer now"}`},
+		},
+	}
+
+	result, err := New(registry, models).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+
+	tasks, ok := registry.Tasks(thread.ID)
+	require.True(t, ok)
+	require.Len(t, tasks, 3)
+	require.Equal(t, KindWorkspaceList, tasks[1].Kind)
+	require.Equal(t, KindWorkspaceRead, tasks[2].Kind)
+
+	reloaded, err := registry.Task(thread.ID, task.ID)
+	require.NoError(t, err)
+	state, err := parseAgentRunState(reloaded.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, "list_then_read", state.Plan.Mode)
+	require.Equal(t, []string{"list_files", "read_file", "respond"}, state.CompletedActions)
+}
+
 func TestRunnerRejectsRollbackWhenSourceIsNotLatestApply(t *testing.T) {
 	projectRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("old\n"), 0o644))

@@ -605,6 +605,20 @@ func deriveAgentExecutionPlan(goal string) AgentExecutionPlan {
 		}
 	}
 
+	if (strings.Contains(normalized, "list_files") || strings.Contains(normalized, "list files") || strings.Contains(normalized, "列出")) &&
+		(strings.Contains(normalized, "read") || strings.Contains(normalized, "读取") || strings.Contains(normalized, "inspect")) {
+		return AgentExecutionPlan{
+			Summary: "List files first, then read the selected file, then answer.",
+			Mode:    "list_then_read",
+			Steps: []AgentPlanStep{
+				{Title: "List candidate files", ExpectedActionTypes: []string{"list_files"}, Status: "pending"},
+				{Title: "Read the selected file", ExpectedActionTypes: []string{"read_file", "read_files_batch"}, Status: "pending"},
+				{Title: "Answer with the findings", ExpectedActionTypes: []string{"respond"}, Status: "pending"},
+			},
+			RequiredSequence: []string{"list_files", "read_file|read_files_batch", "respond"},
+		}
+	}
+
 	if strings.Contains(normalized, "line") || strings.Contains(normalized, "行号") || strings.Contains(normalized, "detailed") || strings.Contains(normalized, "详细") {
 		if strings.Contains(normalized, "search") || strings.Contains(normalized, "查") {
 			return AgentExecutionPlan{
@@ -697,6 +711,8 @@ func buildAgentModeGuidance(mode string) string {
 	switch strings.TrimSpace(mode) {
 	case "filter_then_read":
 		return "If the goal asks to filter by pattern first, your first action must be list_files_filtered. After filtering, read the selected files, then respond."
+	case "list_then_read":
+		return "If the goal asks you to list a directory before opening a file, your first action must be list_files. Only then read the selected file, then respond."
 	case "search_then_detailed":
 		return "If the goal asks for broad search before line-level detail, your first action must be search_text. Only then use search_text_detailed, then respond."
 	case "stat_then_read":

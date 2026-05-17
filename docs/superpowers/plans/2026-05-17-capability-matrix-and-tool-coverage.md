@@ -29,8 +29,8 @@
 
 | Tool Kind | Status | Verification | Notes |
 | --- | --- | --- | --- |
-| `workspace.read_file` | implemented | indirect runtime coverage | Present in discovery and runner. |
-| `workspace.list_files` | implemented | indirect runtime coverage | Implemented, not primary-lane verified. |
+| `workspace.read_file` | verified | direct task + agent scenario | Verified in both direct and agent paths. |
+| `workspace.list_files` | verified | direct task + agent scenario | Verified in both direct and agent paths. |
 | `workspace.search_text` | verified | Playwright acceptance agent scenario | Used in the `search_then_detailed` scenario. |
 | `workspace.stat_file` | verified | direct task + agent scenario | Verified in both direct and agent paths. |
 | `workspace.read_files_batch` | verified | direct task + agent scenario | Verified in both direct and agent paths. |
@@ -106,7 +106,6 @@
 
 ## 9. Highest-Priority Remaining Gaps
 
-1. Expand explicit primary-lane verification to the remaining read tools that are still only indirectly covered.
-2. Continue desktop UX polish for parent/child task and interrupted-task recovery flows.
-3. Complete the remaining full 1:1 Chinese localization audit for copied grouped skills.
-4. Decide whether to extend the current verified MCP baseline beyond the fixture-backed external execution lane.
+1. Continue desktop UX polish for parent/child task and interrupted-task recovery flows.
+2. Complete the remaining full 1:1 Chinese localization audit for copied grouped skills.
+3. Decide whether to extend the current verified MCP baseline beyond the fixture-backed external execution lane.
