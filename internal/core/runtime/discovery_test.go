@@ -71,6 +71,31 @@ This workflow is still explained in English.
 	require.Equal(t, "isolated", items[0].IsolationStatus)
 }
 
+func TestDiscoverSkillsIgnoresStructuralTagsAndQuadrupleCodeFences(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "tagged-skill.md"), []byte(
+		"---\n"+
+			"name: tagged-skill\n"+
+			"description: metadata is ignored for localization audit\n"+
+			"---\n\n"+
+			"# 完整中文技能\n"+
+			"<HARD-GATE>\n"+
+			"这里是完整的中文说明。\n"+
+			"</HARD-GATE>\n\n"+
+			"````markdown\n"+
+			"### Example\n"+
+			"git commit -m \"feat: leave code examples untouched\"\n"+
+			"````\n\n"+
+			"- 继续保持中文步骤。\n"+
+			"- 最终给出中文结论。\n",
+	), 0o644))
+
+	items := discoverSkills(root, skill.CC)
+	require.Len(t, items, 1)
+	require.True(t, items[0].LocalizationChecked)
+	require.Equal(t, "isolated", items[0].IsolationStatus)
+}
+
 func TestDiscoverTools(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(root, "tool-one"), 0o755))

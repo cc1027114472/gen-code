@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode"
 )
 
 const maxAuditLines = 160
+
+var structuralTagPattern = regexp.MustCompile(`^</?[A-Z0-9_-]+>$`)
 
 // LocalizationChecked returns true only when the copied skill content
 // reads like a fully Chinese-localized skill document instead of a mixed or
@@ -36,7 +39,7 @@ func filePassesChineseAudit(path string) bool {
 	meaningfulChineseLines := 0
 	meaningfulEnglishLines := 0
 	inFrontMatter := false
-	inCodeFence := false
+	activeCodeFence := ""
 	lineCount := 0
 
 	for scanner.Scan() && lineCount < maxAuditLines {
@@ -45,18 +48,23 @@ func filePassesChineseAudit(path string) bool {
 		if line == "" {
 			continue
 		}
-		if line == "---" && !inCodeFence {
+		if line == "---" && activeCodeFence == "" {
 			inFrontMatter = !inFrontMatter
 			continue
 		}
 		if inFrontMatter {
 			continue
 		}
-		if strings.HasPrefix(line, "```") {
-			inCodeFence = !inCodeFence
+		if activeCodeFence == "" {
+			if fence := codeFenceDelimiter(line); fence != "" {
+				activeCodeFence = fence
+				continue
+			}
+		} else if strings.HasPrefix(line, activeCodeFence) {
+			activeCodeFence = ""
 			continue
 		}
-		if inCodeFence {
+		if activeCodeFence != "" {
 			continue
 		}
 
@@ -83,6 +91,9 @@ func normalizeNarrativeLine(line string) string {
 	if trimmed == "" {
 		return ""
 	}
+	if structuralTagPattern.MatchString(trimmed) {
+		return ""
+	}
 	if strings.HasPrefix(trimmed, "`") || strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
 		return ""
 	}
@@ -100,6 +111,29 @@ func looksLikeEnglishNarrative(line string) bool {
 		}
 	}
 	return asciiLetters >= 4
+}
+
+func codeFenceDelimiter(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if len(trimmed) < 3 {
+		return ""
+	}
+	first := rune(trimmed[0])
+	if first != '`' && first != '~' {
+		return ""
+	}
+	count := 0
+	for _, r := range trimmed {
+		if r == first {
+			count++
+			continue
+		}
+		break
+	}
+	if count < 3 {
+		return ""
+	}
+	return strings.Repeat(string(first), count)
 }
 
 func containsHan(value string) bool {

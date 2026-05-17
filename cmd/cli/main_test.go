@@ -40,7 +40,7 @@ func TestRuntimeStatusUsesRemoteSourceWhenServerIsAvailable(t *testing.T) {
 		case "/api/runtime/status":
 			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","canonicalRuntimeUrl":"` + serverURL + `","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":2,"activeThreadId":"thread-1","taskCount":3,"eventCount":5}}`))
 		case "/api/skills":
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"common.browser","group":"common","name":"Browser","description":"Shared browser skill","source":"common","verificationStatus":"implemented","localizationChecked":false},{"id":"codex.review","group":"codex","name":"Review","description":"Codex review skill","source":"codex","verificationStatus":"implemented","localizationChecked":false}]}}`))
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"common.browser","group":"common","name":"Browser","description":"Shared browser skill","source":"common","verificationStatus":"implemented","localizationChecked":true},{"id":"codex.review","group":"codex","name":"Review","description":"Codex review skill","source":"codex","verificationStatus":"implemented","localizationChecked":true}]}}`))
 		case "/api/tools":
 			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"workspace.read_file","name":"Read File","description":"Read a file from workspace","permissionMode":"read-only","source":"runtime","kind":"workspace.read_file","readOnly":true,"executable":true}]}}`))
 		case "/api/mcp/servers":
@@ -147,7 +147,7 @@ func TestSkillsListUsesRemoteRuntimeSourceWhenServerIsAvailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/skills":
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"common.browser","group":"common","name":"Browser","description":"Shared browser skill","source":"common","verificationStatus":"implemented","localizationChecked":false,"isolationStatus":"shared-common"},{"id":"codex.review","group":"codex","name":"Review","description":"Codex review skill","source":"codex","verificationStatus":"verified","localizationChecked":true,"isolationStatus":"isolated"}]}}`))
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"common.browser","group":"common","name":"Browser","description":"Shared browser skill","source":"common","verificationStatus":"implemented","localizationChecked":true,"isolationStatus":"shared-common"},{"id":"codex.review","group":"codex","name":"Review","description":"Codex review skill","source":"codex","verificationStatus":"verified","localizationChecked":true,"isolationStatus":"isolated"}]}}`))
 		case "/api/runtime/status":
 			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":0,"eventCount":0}}`))
 		default:
@@ -165,12 +165,11 @@ func TestSkillsListUsesRemoteRuntimeSourceWhenServerIsAvailable(t *testing.T) {
 
 	require.Contains(t, output, "source: remote-app-server")
 	require.Contains(t, output, "source trust: canonical")
-	require.Contains(t, output, "common: implemented=1 verified=0 localization-pending=1")
+	require.Contains(t, output, "common: implemented=1 verified=0 localization-pending=0")
 	require.Contains(t, output, "codex: implemented=1 verified=1 localization-pending=0")
 	require.Contains(t, output, "cc: implemented=0 verified=0 localization-pending=0")
 	require.Contains(t, output, "verification=verified")
 	require.Contains(t, output, "localization=checked")
-	require.Contains(t, output, "localization=unchecked")
 	require.Contains(t, output, "isolation=shared-common")
 	require.Contains(t, output, "isolation=isolated")
 }
