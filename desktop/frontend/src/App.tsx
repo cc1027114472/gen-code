@@ -41,6 +41,7 @@ type FlowItem = {
 
 type RuntimeTask = RuntimeStatus["tasks"][number];
 type RuntimeApproval = RuntimeStatus["approvals"][number];
+type RuntimeWriteExecution = RuntimeStatus["writeExecutions"][number];
 
 type PatchStats = {
   added: number;
@@ -66,6 +67,24 @@ type ApprovalViewModel = {
   updatedAt: string;
 };
 
+type WriteExecutionViewModel = {
+  id: string;
+  taskId: string;
+  approvalId: string;
+  title: string;
+  toolKind: string;
+  operation: string;
+  relatedExecutionId: string;
+  status: string;
+  statusLabel: string;
+  targetPaths: string[];
+  patchSummary: string;
+  beforeSummary: string;
+  afterSummary: string;
+  resultSummary: string;
+  updatedAt: string;
+};
+
 const defaultDraft: Draft = {
   title: "",
   kind: "model.response.create",
@@ -75,6 +94,24 @@ const defaultDraft: Draft = {
 const defaultPreviewURL = "http://127.0.0.1:5174/";
 const embeddedPreviewParam = "gcPreview";
 const showPreviewDebug = import.meta.env.DEV;
+const runtimeEventTypes = [
+  "thread.created",
+  "thread.activated",
+  "task.created",
+  "task.started",
+  "task.completed",
+  "task.failed",
+  "task.approval_required",
+  "task.approved",
+  "task.rejected",
+  "task.recovered_as_failed",
+  "task.rollback_required",
+  "toolcall.started",
+  "toolcall.completed",
+  "toolcall.failed",
+  "toolcall.approved",
+  "toolcall.rejected",
+] as const;
 
 export default function App() {
   const embeddedPreview = useMemo(() => getEmbeddedPreviewState(), []);
@@ -164,6 +201,9 @@ export default function App() {
 
     const refresh = () => void refreshStatus(false);
     source.onmessage = refresh;
+    for (const eventType of runtimeEventTypes) {
+      source.addEventListener(eventType, refresh);
+    }
     source.onerror = () => {
       setSseEnabled(false);
       setStreamState("SSE 已断开，已回退到手动刷新");
@@ -171,6 +211,9 @@ export default function App() {
     };
 
     return () => {
+      for (const eventType of runtimeEventTypes) {
+        source.removeEventListener(eventType, refresh);
+      }
       source.close();
       setSseEnabled(false);
     };
@@ -190,6 +233,7 @@ export default function App() {
     ? runtimeStatus.executableKinds
     : ["model.response.create", "thread.message.append", "workspace.list_files", "workspace.read_file", "workspace.search_text"];
   const approvals = runtimeStatus?.approvals ?? [];
+  const writeExecutions = runtimeStatus?.writeExecutions ?? [];
   const messages = runtimeStatus?.messages ?? [];
   const toolCalls = runtimeStatus?.toolCalls ?? [];
   const artifacts = runtimeStatus?.artifacts ?? [];
@@ -208,19 +252,36 @@ export default function App() {
   const latestMessage = useMemo(() => newestBy(messages, (item) => item.createdAt), [messages]);
   const latestArtifact = useMemo(() => newestBy(artifacts, (item) => item.createdAt), [artifacts]);
   const latestEvent = useMemo(() => newestBy(events, (item) => item.createdAt), [events]);
+  const latestWriteExecution = useMemo(() => newestBy(writeExecutions, (item) => item.updatedAt || item.createdAt), [writeExecutions]);
   const approvalViewModels = useMemo(() => {
     const taskMap = new Map(tasks.map((task) => [task.id, task]));
     return approvals
       .map((approval) => createApprovalViewModel(approval, taskMap.get(approval.taskId)))
       .sort((left, right) => toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt));
   }, [approvals, tasks]);
+  const writeExecutionViewModels = useMemo(() => {
+    const taskMap = new Map(tasks.map((task) => [task.id, task]));
+    const approvalMap = new Map(approvals.map((approval) => [approval.taskId, approval]));
+    return writeExecutions
+      .map((execution) => createWriteExecutionViewModel(execution, taskMap.get(execution.taskId), approvalMap.get(execution.taskId)))
+      .sort((left, right) => toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt));
+  }, [approvals, tasks, writeExecutions]);
   const approvalByTaskID = useMemo(
     () => new Map(approvalViewModels.map((item) => [item.taskId, item])),
     [approvalViewModels],
   );
+  const writeExecutionByTaskID = useMemo(
+    () => new Map(writeExecutionViewModels.map((item) => [item.taskId, item])),
+    [writeExecutionViewModels],
+  );
   const pendingApprovals = useMemo(
     () => approvalViewModels.filter((item) => item.approvalStatus === "pending"),
     [approvalViewModels],
+  );
+  const recentWriteExecutions = useMemo(() => writeExecutionViewModels.slice(0, 3), [writeExecutionViewModels]);
+  const latestRollbackCandidate = useMemo(
+    () => writeExecutionViewModels.find((item) => item.operation === "apply" && item.status === "completed") ?? null,
+    [writeExecutionViewModels],
   );
 
   const flowItems = useMemo(() => {
@@ -228,13 +289,16 @@ export default function App() {
 
     for (const task of tasks.slice(0, 8)) {
       const approval = approvalByTaskID.get(task.id);
+      const writeExecution = writeExecutionByTaskID.get(task.id);
       const taskStatusLabel = formatTaskStatus(task.status);
       items.push({
         id: `task-${task.id}`,
         tone: task.status === "completed" ? "good" : task.status === "failed" || task.status === "needs_approval" ? "warning" : "neutral",
         badge: `任务 / ${taskStatusLabel}`,
         title: `${task.title} / ${task.kind || "prompt"}`,
-        body: approval ? (
+        body: writeExecution ? (
+          <WriteExecutionDetails execution={writeExecution} />
+        ) : approval ? (
           <ApprovalDetails approval={approval} />
         ) : (
           <FlowBodyText text={task.resultSummary || task.input || "等待任务输入"} />
@@ -296,7 +360,7 @@ export default function App() {
     }
 
     return items.sort((left, right) => right.timestamp - left.timestamp).slice(0, 16);
-  }, [approvalByTaskID, events, loading, messages, tasks, toolCalls]);
+  }, [approvalByTaskID, events, loading, messages, tasks, toolCalls, writeExecutionByTaskID]);
 
   const runtimeSourceLabel =
     runtimeStatus?.runtimeSource === "runtime-http"
@@ -306,7 +370,7 @@ export default function App() {
         : runtimeStatus?.runtimeSource || "未连接";
   const statusTone = error ? "warning" : runtimeStatus?.runtimeReady || bridgeResult?.ok ? "good" : "muted";
   const projectName = runtimeStatus?.projectRoot?.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "gen-code";
-  const contextSummary = `messages ${messages.length} / tool calls ${toolCalls.length} / artifacts ${artifacts.length}`;
+  const contextSummary = `messages ${messages.length} / tool calls ${toolCalls.length} / write executions ${writeExecutions.length}`;
   const activeThreadRememberedURL = activeThread ? threadPreviewMemory.current[activeThread.id] || "" : "";
   const preferredProvider = runtimeStatus?.providers.find((item) => item.recommended) ?? runtimeStatus?.providers[0] ?? null;
   const providerSummary = preferredProvider
@@ -469,6 +533,49 @@ export default function App() {
       setLastCheckedAt(formatTime(next.updatedAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "拒绝任务失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRollbackLatest(writeExecutionId: string) {
+    if (!runtimeStatus?.activeThreadId) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      const existingTaskIDs = new Set((runtimeStatus.tasks ?? []).map((task) => task.id));
+      const payload = JSON.stringify({
+        title: "Rollback latest write execution",
+        kind: "workspace.apply_patch.rollback",
+        input: JSON.stringify({ writeExecutionId }),
+      });
+      const created = (await CreateTask(runtimeStatus.activeThreadId, payload)) as RuntimeStatus;
+      const createdTask =
+        created.tasks.find((task) => !existingTaskIDs.has(task.id)) ??
+        created.tasks.find((task) => task.kind === "workspace.apply_patch.rollback" && task.input.includes(writeExecutionId)) ??
+        null;
+
+      if (!createdTask) {
+        setRuntimeStatus(created);
+        setStatusMessage("已创建 rollback task，请检查当前线程状态");
+        setLastCheckedAt(formatTime(created.updatedAt));
+        return;
+      }
+
+      if (createdTask.status === "needs_approval" || createdTask.approvalStatus === "pending") {
+        setRuntimeStatus(created);
+        setStatusMessage("rollback 已进入待审批状态");
+        setLastCheckedAt(formatTime(created.updatedAt));
+        return;
+      }
+
+      const next = (await AdvanceTask(createdTask.id)) as RuntimeStatus;
+      setRuntimeStatus(next);
+      setStatusMessage("rollback 已触发执行");
+      setLastCheckedAt(formatTime(next.updatedAt));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "发起 rollback 失败");
     } finally {
       setLoading(false);
     }
@@ -683,7 +790,7 @@ export default function App() {
                 <div className="section-header">
                   <div>
                     <p className="section-title">消息流</p>
-                    <h3>任务、工具调用、消息与事件按时间线展示</h3>
+                    <h3>任务、工具调用、消息、事件和写执行审计按时间线展示</h3>
                   </div>
                   <span className="mini-chip">{contextSummary}</span>
                 </div>
@@ -704,6 +811,33 @@ export default function App() {
                           onApprove={handleApproveTask}
                           onReject={handleRejectTask}
                         />
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+
+                {recentWriteExecutions.length > 0 ? (
+                  <div className="write-execution-panel" data-testid="write-execution-panel">
+                    {recentWriteExecutions.map((execution) => (
+                      <article className="flow-item flow-item--good" key={execution.id}>
+                        <div className="flow-item__header">
+                          <span className="mini-chip">{`写执行 / ${execution.statusLabel}`}</span>
+                          <span className="flow-item__meta">{formatTime(execution.updatedAt)}</span>
+                        </div>
+                        <h4>{execution.title}</h4>
+                        <WriteExecutionDetails execution={execution} />
+                        {latestRollbackCandidate?.id === execution.id ? (
+                          <div className="flow-item__actions">
+                            <button
+                              className="thread-action"
+                              data-testid={`rollback-latest-${execution.id}`}
+                              onClick={() => void handleRollbackLatest(execution.id)}
+                              disabled={loading}
+                            >
+                              回退最近一次
+                            </button>
+                          </div>
+                        ) : null}
                       </article>
                     ))}
                   </div>
@@ -732,7 +866,7 @@ export default function App() {
                 <div className="section-header">
                   <div>
                     <p className="section-title">结果抽屉</p>
-                    <h3>当前线程的关键信息与运行摘要</h3>
+                    <h3>当前线程的关键结果、审批状态与写执行摘要</h3>
                   </div>
                   <span className="mini-chip">{activeThread?.id || "no-thread"}</span>
                 </div>
@@ -759,15 +893,21 @@ export default function App() {
                     body={latestEvent?.message || "暂无事件"}
                   />
                   <ResultCard
-                    label="最新产物"
-                    title={latestArtifact ? latestArtifact.kind : "暂无产物"}
-                    body={latestArtifact?.path || "暂无产物"}
+                    label="最近写执行"
+                    title={latestWriteExecution ? `${latestWriteExecution.toolKind} / ${formatWriteExecutionStatus(latestWriteExecution.status)}` : "暂无写执行"}
+                    body={latestWriteExecution ? summarizeWriteExecution(latestWriteExecution) : "尚未记录 patch 写执行审计"}
                   />
+                  <InfoCard label="最新产物" value={latestArtifact ? latestArtifact.kind : "暂无产物"} detail={latestArtifact?.path || "暂无产物"} />
                   <InfoCard label="桥接 / SSE" value={sseEnabled ? "已连接" : "手动刷新"} detail={`${bridgeResult?.message || "桥接待检查"} / ${streamState}`} />
                   <InfoCard
                     label="审批状态"
                     value={pendingApprovals.length > 0 ? `${pendingApprovals.length} 条待审批` : "无待审批"}
                     detail={pendingApprovals[0] ? `${pendingApprovals[0].summary} / ${pendingApprovals[0].patchStatsLabel}` : "当前没有待审批写任务"}
+                  />
+                  <InfoCard
+                    label="写执行历史"
+                    value={writeExecutionViewModels.length > 0 ? `${writeExecutionViewModels.length} 条记录` : "暂无记录"}
+                    detail={latestWriteExecution ? `${latestWriteExecution.patchSummary} / ${latestWriteExecution.afterSummary}` : "通过审批并完成 patch 后，会在这里显示最近一次审计摘要"}
                   />
                   <InfoCard label="Provider" value={preferredProvider?.kind || "暂无 provider"} detail={providerSummary} />
                   <InfoCard label="状态存储" value={runtimeStatus?.stateStore || "sqlite"} detail={runtimeStatus?.statePath || "project-local state store"} />
@@ -941,6 +1081,30 @@ function createApprovalViewModel(approval: RuntimeApproval, task?: RuntimeTask):
   };
 }
 
+function createWriteExecutionViewModel(
+  execution: RuntimeWriteExecution,
+  task?: RuntimeTask,
+  approval?: RuntimeApproval,
+): WriteExecutionViewModel {
+  return {
+    id: execution.id,
+    taskId: execution.taskId,
+    approvalId: execution.approvalId || approval?.id || "",
+    title: task?.title || execution.toolKind,
+    toolKind: execution.toolKind,
+    operation: execution.operation || "apply",
+    relatedExecutionId: execution.relatedExecutionId || "",
+    status: execution.status,
+    statusLabel: formatWriteExecutionStatus(execution.status),
+    targetPaths: execution.targetPaths || approval?.targetPaths || [],
+    patchSummary: execution.patchSummary || task?.resultSummary || "暂无补丁摘要",
+    beforeSummary: execution.beforeSummary || "暂无执行前摘要",
+    afterSummary: execution.afterSummary || "暂无执行后摘要",
+    resultSummary: execution.resultSummary || task?.resultSummary || "暂无执行结果",
+    updatedAt: execution.updatedAt || task?.updatedAt || execution.createdAt,
+  };
+}
+
 function parsePatchPreview(rawInput: string) {
   const trimmed = rawInput.trim();
   const fallback = {
@@ -1040,6 +1204,19 @@ function formatApprovalStatus(status: string) {
   }
 }
 
+function formatWriteExecutionStatus(status: string) {
+  switch (status) {
+    case "completed":
+      return "已执行";
+    case "failed":
+      return "执行失败";
+    case "running":
+      return "执行中";
+    default:
+      return status || "未知写执行状态";
+  }
+}
+
 function formatToolCallStatus(status: string) {
   switch (status) {
     case "queued":
@@ -1121,6 +1298,42 @@ function ApprovalDetails({ approval }: { approval: ApprovalViewModel }) {
   );
 }
 
+function WriteExecutionDetails({ execution }: { execution: WriteExecutionViewModel }) {
+  return (
+    <div className="approval-details">
+      <div className="approval-details__meta">
+        <span className="mini-chip">{execution.toolKind}</span>
+        <span className="mini-chip">{execution.operation === "rollback" ? "rollback" : "apply"}</span>
+        <span className="mini-chip">{execution.statusLabel}</span>
+        <span className="mini-chip">{execution.approvalId ? "来自审批任务" : "直接执行"}</span>
+      </div>
+      {execution.relatedExecutionId ? (
+        <div className="approval-details__section">
+          <span className="approval-details__label">来源写执行</span>
+          <p>{execution.relatedExecutionId}</p>
+        </div>
+      ) : null}
+      <p>{execution.resultSummary}</p>
+      <div className="approval-details__section">
+        <span className="approval-details__label">目标路径</span>
+        <p>{execution.targetPaths.length > 0 ? execution.targetPaths.join(", ") : "未提供目标路径"}</p>
+      </div>
+      <div className="approval-details__section">
+        <span className="approval-details__label">补丁摘要</span>
+        <p>{execution.patchSummary}</p>
+      </div>
+      <div className="approval-details__section">
+        <span className="approval-details__label">执行前摘要</span>
+        <p>{execution.beforeSummary}</p>
+      </div>
+      <div className="approval-details__section">
+        <span className="approval-details__label">执行后摘要</span>
+        <p>{execution.afterSummary}</p>
+      </div>
+    </div>
+  );
+}
+
 function ResultCard({ label, title, body }: { label: string; title: string; body: string }) {
   return (
     <article className="result-card">
@@ -1139,6 +1352,11 @@ function InfoCard({ label, value, detail }: { label: string; value: string; deta
       <span>{detail}</span>
     </article>
   );
+}
+
+function summarizeWriteExecution(execution: RuntimeWriteExecution) {
+  const parts = [execution.resultSummary, execution.afterSummary].filter(Boolean);
+  return summarizeText(parts.join(" / "), 180);
 }
 
 function summarizeText(value: string, maxLength: number) {
