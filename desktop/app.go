@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,44 +44,90 @@ type apiEnvelope[T any] struct {
 }
 
 type RuntimeStatus struct {
-	AppName               string              `json:"appName"`
-	AppEnv                string              `json:"appEnv"`
-	Port                  int                 `json:"port"`
-	Debug                 bool                `json:"debug"`
-	ShutdownTimeout       string              `json:"shutdownTimeout"`
-	TrustedProxies        []string            `json:"trustedProxies"`
-	LogLevel              string              `json:"logLevel"`
-	HTTPAccessLog         bool                `json:"httpAccessLog"`
-	WorkspaceRoot         string              `json:"workspaceRoot"`
-	WorkspaceID           string              `json:"workspaceId"`
-	ProjectRoot           string              `json:"projectRoot"`
-	ThreadCount           int                 `json:"threadCount"`
-	ActiveThreadID        string              `json:"activeThreadId"`
-	Threads               []ThreadSummary     `json:"threads"`
-	Tasks                 []TaskSummary       `json:"tasks"`
-	Approvals             []ApprovalSummary   `json:"approvals"`
-	Messages              []MessageSummary    `json:"messages"`
-	ToolCalls             []ToolCallSummary   `json:"toolCalls"`
-	Artifacts             []ArtifactSummary   `json:"artifacts"`
-	Events                []EventSummary      `json:"events"`
-	DesktopReady          bool                `json:"desktopReady"`
-	RuntimeState          string              `json:"runtimeState"`
-	RuntimeReady          bool                `json:"runtimeReady"`
-	RuntimeMessage        string              `json:"runtimeMessage"`
-	RuntimeSource         string              `json:"runtimeSource"`
-	SupportsSSE           bool                `json:"supportsSSE"`
-	SSEEndpoint           string              `json:"sseEndpoint"`
-	LastSyncAt            string              `json:"lastSyncAt"`
-	SkillsByGroup         map[string][]string `json:"skillsByGroup"`
-	ToolsByGroup          map[string][]string `json:"toolsByGroup"`
-	MCPByGroup            map[string][]string `json:"mcpByGroup"`
-	Providers             []ProviderSummary   `json:"providers"`
-	MissingPaths          []string            `json:"missingPaths"`
-	StateStore            string              `json:"stateStore"`
-	StatePath             string              `json:"statePath"`
-	UsesProjectLocalStore bool                `json:"usesProjectLocalStore"`
-	RecoverySummary       string              `json:"recoverySummary"`
-	UpdatedAt             string              `json:"updatedAt"`
+	AppName               string                  `json:"appName"`
+	AppEnv                string                  `json:"appEnv"`
+	Port                  int                     `json:"port"`
+	Debug                 bool                    `json:"debug"`
+	ShutdownTimeout       string                  `json:"shutdownTimeout"`
+	TrustedProxies        []string                `json:"trustedProxies"`
+	LogLevel              string                  `json:"logLevel"`
+	HTTPAccessLog         bool                    `json:"httpAccessLog"`
+	WorkspaceRoot         string                  `json:"workspaceRoot"`
+	WorkspaceID           string                  `json:"workspaceId"`
+	WorkspaceSummary      WorkspaceSummary        `json:"workspaceSummary"`
+	ProjectRoot           string                  `json:"projectRoot"`
+	ThreadCount           int                     `json:"threadCount"`
+	ActiveThreadID        string                  `json:"activeThreadId"`
+	ActiveThreadSummary   ThreadWorkflowSummary   `json:"activeThreadSummary"`
+	Threads               []ThreadSummary         `json:"threads"`
+	Tasks                 []TaskSummary           `json:"tasks"`
+	Approvals             []ApprovalSummary       `json:"approvals"`
+	WriteExecutions       []WriteExecutionSummary `json:"writeExecutions"`
+	Messages              []MessageSummary        `json:"messages"`
+	ToolCalls             []ToolCallSummary       `json:"toolCalls"`
+	Artifacts             []ArtifactSummary       `json:"artifacts"`
+	RuntimeFlags          []RuntimeFlagSummary    `json:"runtimeFlags"`
+	Events                []EventSummary          `json:"events"`
+	DesktopReady          bool                    `json:"desktopReady"`
+	RuntimeState          string                  `json:"runtimeState"`
+	RuntimeReady          bool                    `json:"runtimeReady"`
+	RuntimeMessage        string                  `json:"runtimeMessage"`
+	RuntimeSource         string                  `json:"runtimeSource"`
+	RuntimeSourceDetail   string                  `json:"runtimeSourceDetail"`
+	RuntimeTrust          string                  `json:"runtimeTrust"`
+	CanonicalRuntimeURL   string                  `json:"canonicalRuntimeUrl"`
+	SupportsSSE           bool                    `json:"supportsSSE"`
+	SSEEndpoint           string                  `json:"sseEndpoint"`
+	LastSyncAt            string                  `json:"lastSyncAt"`
+	SkillsByGroup         map[string][]string     `json:"skillsByGroup"`
+	ToolsByGroup          map[string][]string     `json:"toolsByGroup"`
+	MCPByGroup            map[string][]string     `json:"mcpByGroup"`
+	Providers             []ProviderSummary       `json:"providers"`
+	MissingPaths          []string                `json:"missingPaths"`
+	StateStore            string                  `json:"stateStore"`
+	StatePath             string                  `json:"statePath"`
+	UsesProjectLocalStore bool                    `json:"usesProjectLocalStore"`
+	RecoverySummary       string                  `json:"recoverySummary"`
+	UpdatedAt             string                  `json:"updatedAt"`
+}
+
+type WorkspaceSummary struct {
+	ID                    string `json:"id"`
+	Root                  string `json:"root"`
+	ProjectRoot           string `json:"projectRoot"`
+	ActiveThreadID        string `json:"activeThreadId"`
+	ActiveThreadName      string `json:"activeThreadName"`
+	ThreadCount           int    `json:"threadCount"`
+	TaskCount             int    `json:"taskCount"`
+	WaitingTaskCount      int    `json:"waitingTaskCount"`
+	ApprovalRequiredCount int    `json:"approvalRequiredCount"`
+	PendingApprovalCount  int    `json:"pendingApprovalCount"`
+	CompletedTaskCount    int    `json:"completedTaskCount"`
+	FailedTaskCount       int    `json:"failedTaskCount"`
+	WriteExecutionCount   int    `json:"writeExecutionCount"`
+	Summary               string `json:"summary"`
+}
+
+type ThreadWorkflowSummary struct {
+	ID                    string `json:"id"`
+	Name                  string `json:"name"`
+	Status                string `json:"status"`
+	PermissionMode        string `json:"permissionMode"`
+	ActiveModel           string `json:"activeModel"`
+	TaskCount             int    `json:"taskCount"`
+	WaitingTaskCount      int    `json:"waitingTaskCount"`
+	WaitingForTaskCount   int    `json:"waitingForTaskCount"`
+	WaitingForApproval    int    `json:"waitingForApprovalCount"`
+	ApprovalRequiredCount int    `json:"approvalRequiredCount"`
+	PendingApprovalCount  int    `json:"pendingApprovalCount"`
+	CompletedTaskCount    int    `json:"completedTaskCount"`
+	FailedTaskCount       int    `json:"failedTaskCount"`
+	ChildTaskCount        int    `json:"childTaskCount"`
+	WriteExecutionCount   int    `json:"writeExecutionCount"`
+	LatestTaskID          string `json:"latestTaskId"`
+	LatestApprovalTaskID  string `json:"latestApprovalTaskId"`
+	LatestWriteTaskID     string `json:"latestWriteTaskId"`
+	Summary               string `json:"summary"`
 }
 
 type ThreadSummary struct {
@@ -92,16 +140,32 @@ type ThreadSummary struct {
 }
 
 type TaskSummary struct {
-	ID             string `json:"id"`
-	ThreadID       string `json:"threadId"`
-	Title          string `json:"title"`
-	Kind           string `json:"kind"`
-	Input          string `json:"input"`
-	Status         string `json:"status"`
-	ResultSummary  string `json:"resultSummary"`
-	ApprovalStatus string `json:"approvalStatus"`
-	CreatedAt      string `json:"createdAt"`
-	UpdatedAt      string `json:"updatedAt"`
+	ID                    string   `json:"id"`
+	ThreadID              string   `json:"threadId"`
+	Title                 string   `json:"title"`
+	Kind                  string   `json:"kind"`
+	Input                 string   `json:"input"`
+	Status                string   `json:"status"`
+	ResultSummary         string   `json:"resultSummary"`
+	ApprovalStatus        string   `json:"approvalStatus"`
+	ParentTaskID          string   `json:"parentTaskId"`
+	WaitingStatus         string   `json:"waitingStatus"`
+	WaitingTaskID         string   `json:"waitingTaskId"`
+	WaitingSummary        string   `json:"waitingSummary"`
+	WorkflowLabel         string   `json:"workflowLabel"`
+	ChildTaskIDs          []string `json:"childTaskIds"`
+	LatestChildTaskID     string   `json:"latestChildTaskId"`
+	ApprovalID            string   `json:"approvalId"`
+	ApprovalSummary       string   `json:"approvalSummary"`
+	WriteExecutionID      string   `json:"writeExecutionId"`
+	WriteExecutionSummary string   `json:"writeExecutionSummary"`
+	AgentStep             int      `json:"agentStep"`
+	AgentMaxSteps         int      `json:"agentMaxSteps"`
+	AgentPlanSummary      string   `json:"agentPlanSummary"`
+	AgentCurrentStepTitle string   `json:"agentCurrentStepTitle"`
+	AgentLastReasoning    string   `json:"agentLastReasoning"`
+	CreatedAt             string   `json:"createdAt"`
+	UpdatedAt             string   `json:"updatedAt"`
 }
 
 type ApprovalSummary struct {
@@ -114,6 +178,24 @@ type ApprovalSummary struct {
 	TargetPaths []string `json:"targetPaths"`
 	CreatedAt   string   `json:"createdAt"`
 	UpdatedAt   string   `json:"updatedAt"`
+}
+
+type WriteExecutionSummary struct {
+	ID                 string   `json:"id"`
+	ThreadID           string   `json:"threadId"`
+	TaskID             string   `json:"taskId"`
+	ApprovalID         string   `json:"approvalId"`
+	ToolKind           string   `json:"toolKind"`
+	Operation          string   `json:"operation"`
+	RelatedExecutionID string   `json:"relatedExecutionId"`
+	Status             string   `json:"status"`
+	TargetPaths        []string `json:"targetPaths"`
+	PatchSummary       string   `json:"patchSummary"`
+	BeforeSummary      string   `json:"beforeSummary"`
+	AfterSummary       string   `json:"afterSummary"`
+	ResultSummary      string   `json:"resultSummary"`
+	CreatedAt          string   `json:"createdAt"`
+	UpdatedAt          string   `json:"updatedAt"`
 }
 
 type MessageSummary struct {
@@ -149,6 +231,13 @@ type EventSummary struct {
 	CreatedAt string `json:"createdAt"`
 }
 
+type RuntimeFlagSummary struct {
+	ThreadID  string `json:"threadId"`
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
 type BridgeCheckResult struct {
 	OK          bool   `json:"ok"`
 	Message     string `json:"message"`
@@ -173,18 +262,21 @@ type BrowserWorkspaceState struct {
 }
 
 type apiStatus struct {
-	State          string `json:"state"`
-	Ready          bool   `json:"ready"`
-	Message        string `json:"message"`
-	RuntimeSource  string `json:"runtimeSource"`
-	StateStore     string `json:"stateStore"`
-	StatePath      string `json:"statePath"`
-	WorkspaceID    string `json:"workspaceId"`
-	ProjectRoot    string `json:"projectRoot"`
-	ThreadCount    int    `json:"threadCount"`
-	ActiveThreadID string `json:"activeThreadId"`
-	TaskCount      int    `json:"taskCount"`
-	EventCount     int    `json:"eventCount"`
+	State               string `json:"state"`
+	Ready               bool   `json:"ready"`
+	Message             string `json:"message"`
+	RuntimeSource       string `json:"runtimeSource"`
+	RuntimeSourceDetail string `json:"runtimeSourceDetail"`
+	RuntimeTrust        string `json:"runtimeTrust"`
+	CanonicalRuntimeURL string `json:"canonicalRuntimeUrl"`
+	StateStore          string `json:"stateStore"`
+	StatePath           string `json:"statePath"`
+	WorkspaceID         string `json:"workspaceId"`
+	ProjectRoot         string `json:"projectRoot"`
+	ThreadCount         int    `json:"threadCount"`
+	ActiveThreadID      string `json:"activeThreadId"`
+	TaskCount           int    `json:"taskCount"`
+	EventCount          int    `json:"eventCount"`
 }
 
 type apiThread struct {
@@ -197,16 +289,32 @@ type apiThread struct {
 }
 
 type apiTask struct {
-	ID             string `json:"id"`
-	ThreadID       string `json:"threadId"`
-	Title          string `json:"title"`
-	Kind           string `json:"kind"`
-	Input          string `json:"input"`
-	Status         string `json:"status"`
-	ResultSummary  string `json:"resultSummary"`
-	ApprovalStatus string `json:"approvalStatus"`
-	CreatedAt      string `json:"createdAt"`
-	UpdatedAt      string `json:"updatedAt"`
+	ID                    string   `json:"id"`
+	ThreadID              string   `json:"threadId"`
+	Title                 string   `json:"title"`
+	Kind                  string   `json:"kind"`
+	Input                 string   `json:"input"`
+	Status                string   `json:"status"`
+	ResultSummary         string   `json:"resultSummary"`
+	ApprovalStatus        string   `json:"approvalStatus"`
+	ParentTaskID          string   `json:"parentTaskId"`
+	WaitingStatus         string   `json:"waitingStatus"`
+	WaitingTaskID         string   `json:"waitingTaskId"`
+	WaitingSummary        string   `json:"waitingSummary"`
+	WorkflowLabel         string   `json:"workflowLabel"`
+	ChildTaskIDs          []string `json:"childTaskIds"`
+	LatestChildTaskID     string   `json:"latestChildTaskId"`
+	ApprovalID            string   `json:"approvalId"`
+	ApprovalSummary       string   `json:"approvalSummary"`
+	WriteExecutionID      string   `json:"writeExecutionId"`
+	WriteExecutionSummary string   `json:"writeExecutionSummary"`
+	AgentStep             int      `json:"agentStep"`
+	AgentMaxSteps         int      `json:"agentMaxSteps"`
+	AgentPlanSummary      string   `json:"agentPlanSummary"`
+	AgentCurrentStepTitle string   `json:"agentCurrentStepTitle"`
+	AgentLastReasoning    string   `json:"agentLastReasoning"`
+	CreatedAt             string   `json:"createdAt"`
+	UpdatedAt             string   `json:"updatedAt"`
 }
 
 type apiApproval struct {
@@ -219,6 +327,24 @@ type apiApproval struct {
 	TargetPaths []string `json:"targetPaths"`
 	CreatedAt   string   `json:"createdAt"`
 	UpdatedAt   string   `json:"updatedAt"`
+}
+
+type apiWriteExecution struct {
+	ID                 string   `json:"id"`
+	ThreadID           string   `json:"threadId"`
+	TaskID             string   `json:"taskId"`
+	ApprovalID         string   `json:"approvalId"`
+	ToolKind           string   `json:"toolKind"`
+	Operation          string   `json:"operation"`
+	RelatedExecutionID string   `json:"relatedExecutionId"`
+	Status             string   `json:"status"`
+	TargetPaths        []string `json:"targetPaths"`
+	PatchSummary       string   `json:"patchSummary"`
+	BeforeSummary      string   `json:"beforeSummary"`
+	AfterSummary       string   `json:"afterSummary"`
+	ResultSummary      string   `json:"resultSummary"`
+	CreatedAt          string   `json:"createdAt"`
+	UpdatedAt          string   `json:"updatedAt"`
 }
 
 type apiMessage struct {
@@ -332,6 +458,9 @@ type persistedTask struct {
 	Status         string
 	ResultSummary  string
 	ApprovalStatus string
+	ParentTaskID   string
+	WaitingStatus  string
+	AgentState     string
 	CreatedAt      string
 	UpdatedAt      string
 }
@@ -346,6 +475,35 @@ type persistedApproval struct {
 	TargetPaths []string
 	CreatedAt   string
 	UpdatedAt   string
+}
+
+type persistedWriteExecution struct {
+	ID                 string
+	ThreadID           string
+	TaskID             string
+	ApprovalID         string
+	ToolKind           string
+	Operation          string
+	RelatedExecutionID string
+	Status             string
+	TargetPaths        []string
+	PatchHash          string
+	PatchSummary       string
+	BeforeSummary      string
+	AfterSummary       string
+	RollbackPayload    string
+	ResultSummary      string
+	CreatedAt          string
+	UpdatedAt          string
+}
+
+type localWriteExecutionFileSnapshot struct {
+	Path          string `json:"path"`
+	BeforeExists  bool   `json:"beforeExists"`
+	BeforeContent string `json:"beforeContent"`
+	BeforeHash    string `json:"beforeHash"`
+	AfterExists   bool   `json:"afterExists"`
+	AfterHash     string `json:"afterHash"`
 }
 
 type TaskCreateInput struct {
@@ -398,6 +556,13 @@ type persistedEvent struct {
 	Type      string
 	Message   string
 	CreatedAt string
+}
+
+type persistedRuntimeFlag struct {
+	ThreadID  string
+	Key       string
+	Value     string
+	UpdatedAt string
 }
 
 func NewApp() *App {
@@ -482,21 +647,23 @@ func (a *App) GetRuntimeStatus() RuntimeStatus {
 	status, err := a.collectRuntimeStatus()
 	if err != nil {
 		return RuntimeStatus{
-			AppName:        "gen-code",
-			AppEnv:         "local",
-			Port:           10008,
-			DesktopReady:   true,
-			RuntimeState:   "degraded",
-			RuntimeReady:   false,
-			RuntimeMessage: err.Error(),
-			RuntimeSource:  "desktop-local",
-			StateStore:     "sqlite",
-			StatePath:      "",
-			SkillsByGroup:  map[string][]string{},
-			ToolsByGroup:   map[string][]string{},
-			MCPByGroup:     map[string][]string{},
-			MissingPaths:   []string{},
-			UpdatedAt:      time.Now().Format(time.RFC3339),
+			AppName:             "gen-code",
+			AppEnv:              "local",
+			Port:                10008,
+			DesktopReady:        true,
+			RuntimeState:        "degraded",
+			RuntimeReady:        false,
+			RuntimeMessage:      err.Error(),
+			RuntimeSource:       "local-fallback",
+			RuntimeSourceDetail: "project-local SQLite fallback because the canonical app-server runtime is unavailable",
+			RuntimeTrust:        "degraded",
+			StateStore:          "sqlite",
+			StatePath:           "",
+			SkillsByGroup:       map[string][]string{},
+			ToolsByGroup:        map[string][]string{},
+			MCPByGroup:          map[string][]string{},
+			MissingPaths:        []string{},
+			UpdatedAt:           time.Now().Format(time.RFC3339),
 		}
 	}
 	return status
@@ -517,7 +684,7 @@ func (a *App) CheckBridge() BridgeCheckResult {
 		OK:          true,
 		Message:     "Go bridge is available, using local desktop runtime fallback.",
 		CheckedAt:   now,
-		RuntimeHint: fmt.Sprintf("%s / %s / %s", status.RuntimeSource, status.RuntimeState, fallbackText(status.StatePath, "no-state-path")),
+		RuntimeHint: fmt.Sprintf("%s / %s / %s / %s", status.RuntimeSource, fallbackText(status.RuntimeTrust, "unknown"), status.RuntimeState, fallbackText(status.StatePath, "no-state-path")),
 	}
 }
 
@@ -589,7 +756,10 @@ func (a *App) collectRuntimeStatus() (RuntimeStatus, error) {
 	localStatus.RuntimeMessage = "External runtime is unavailable, switched to project-local SQLite fallback."
 	localStatus.RuntimeState = "fallback"
 	localStatus.RuntimeReady = true
-	localStatus.RuntimeSource = "desktop-local"
+	localStatus.RuntimeSource = "local-fallback"
+	localStatus.RuntimeSourceDetail = "project-local SQLite fallback because the canonical app-server runtime is unavailable"
+	localStatus.RuntimeTrust = "degraded"
+	localStatus.CanonicalRuntimeURL = ""
 	localStatus.SupportsSSE = false
 	localStatus.SSEEndpoint = ""
 	localStatus.UpdatedAt = time.Now().Format(time.RFC3339)
@@ -680,6 +850,9 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	approvalsPayload := struct {
 		Items []apiApproval `json:"items"`
 	}{}
+	writeExecutionsPayload := struct {
+		Items []apiWriteExecution `json:"items"`
+	}{}
 	messagesPayload := struct {
 		Items []apiMessage `json:"items"`
 	}{}
@@ -698,6 +871,9 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 			return RuntimeStatus{}, err
 		}
 		if err := client.fetchEnvelope("/api/threads/"+threadID+"/approvals", &approvalsPayload); err != nil {
+			return RuntimeStatus{}, err
+		}
+		if _, err := client.fetchEnvelopeOptional("/api/threads/"+threadID+"/write-executions", &writeExecutionsPayload); err != nil {
 			return RuntimeStatus{}, err
 		}
 		if err := client.fetchEnvelope("/api/threads/"+threadID+"/messages", &messagesPayload); err != nil {
@@ -723,6 +899,7 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	status.Threads = mapThreads(threadPayload.Items)
 	status.Tasks = mapTasks(tasksPayload.Items)
 	status.Approvals = mapApprovals(approvalsPayload.Items)
+	status.WriteExecutions = mapWriteExecutions(writeExecutionsPayload.Items)
 	status.Messages = mapMessages(messagesPayload.Items)
 	status.ToolCalls = mapToolCalls(toolCallsPayload.Items)
 	status.Artifacts = mapArtifacts(artifactsPayload.Items)
@@ -730,7 +907,10 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	status.RuntimeState = runtimeStatus.State
 	status.RuntimeReady = runtimeStatus.Ready
 	status.RuntimeMessage = runtimeStatus.Message
-	status.RuntimeSource = fallbackText(runtimeStatus.RuntimeSource, "runtime-http")
+	status.RuntimeSource = fallbackText(runtimeStatus.RuntimeSource, "remote-app-server")
+	status.RuntimeSourceDetail = fallbackText(runtimeStatus.RuntimeSourceDetail, "canonical shared runtime served by the app-server entry")
+	status.RuntimeTrust = fallbackText(runtimeStatus.RuntimeTrust, "canonical")
+	status.CanonicalRuntimeURL = fallbackText(runtimeStatus.CanonicalRuntimeURL, strings.TrimRight(runtimeBaseURL(), "/"))
 	status.StateStore = fallbackText(runtimeStatus.StateStore, "sqlite")
 	status.StatePath = fallbackText(runtimeStatus.StatePath, defaultStateStorePath(workspaceRoot))
 	status.UsesProjectLocalStore = strings.EqualFold(status.StateStore, "sqlite")
@@ -745,6 +925,7 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	status.Providers = mapProviders(providerPayload.Items)
 	status.RecoverySummary = fmt.Sprintf("Live runtime connected. Active thread: %s, tasks: %d, messages: %d, tool calls: %d, artifacts: %d.", fallbackText(runtimeStatus.ActiveThreadID, "none"), len(status.Tasks), len(status.Messages), len(status.ToolCalls), len(status.Artifacts))
 	status.UpdatedAt = time.Now().Format(time.RFC3339)
+	normalizeWorkflowSummaries(&status)
 	return status, nil
 }
 
@@ -1017,7 +1198,7 @@ func fetchBridgeCheck(client runtimeClient) (BridgeCheckResult, error) {
 	return BridgeCheckResult{
 		OK:          payload.OK,
 		Message:     fallbackText(payload.Message, "runtime bridge online"),
-		RuntimeHint: "runtime-http",
+		RuntimeHint: "remote-app-server",
 	}, nil
 }
 
@@ -1127,6 +1308,22 @@ func (c runtimeClient) fetchEnvelope(path string, target any) error {
 	return decodeEnvelope(response, target)
 }
 
+func (c runtimeClient) fetchEnvelopeOptional(path string, target any) (bool, error) {
+	response, err := c.client.Get(c.baseURL + path)
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if err := decodeEnvelope(response, target); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (c runtimeClient) postEnvelope(path string, body any, target any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -1224,6 +1421,19 @@ func decodeEnvelope(response *http.Response, target any) error {
 	}:
 		var envelope apiEnvelope[struct {
 			Items []apiTask `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
+		Items []apiWriteExecution `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []apiWriteExecution `json:"items"`
 		}]
 		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 			return err
@@ -1461,16 +1671,32 @@ func mapTasks(items []apiTask) []TaskSummary {
 	result := make([]TaskSummary, 0, len(items))
 	for _, item := range items {
 		result = append(result, TaskSummary{
-			ID:             item.ID,
-			ThreadID:       item.ThreadID,
-			Title:          item.Title,
-			Kind:           item.Kind,
-			Input:          item.Input,
-			Status:         item.Status,
-			ResultSummary:  item.ResultSummary,
-			ApprovalStatus: item.ApprovalStatus,
-			CreatedAt:      item.CreatedAt,
-			UpdatedAt:      item.UpdatedAt,
+			ID:                    item.ID,
+			ThreadID:              item.ThreadID,
+			Title:                 item.Title,
+			Kind:                  item.Kind,
+			Input:                 item.Input,
+			Status:                item.Status,
+			ResultSummary:         item.ResultSummary,
+			ApprovalStatus:        item.ApprovalStatus,
+			ParentTaskID:          item.ParentTaskID,
+			WaitingStatus:         item.WaitingStatus,
+			WaitingTaskID:         item.WaitingTaskID,
+			WaitingSummary:        item.WaitingSummary,
+			WorkflowLabel:         item.WorkflowLabel,
+			ChildTaskIDs:          append([]string(nil), item.ChildTaskIDs...),
+			LatestChildTaskID:     item.LatestChildTaskID,
+			ApprovalID:            item.ApprovalID,
+			ApprovalSummary:       item.ApprovalSummary,
+			WriteExecutionID:      item.WriteExecutionID,
+			WriteExecutionSummary: item.WriteExecutionSummary,
+			AgentStep:             item.AgentStep,
+			AgentMaxSteps:         item.AgentMaxSteps,
+			AgentPlanSummary:      item.AgentPlanSummary,
+			AgentCurrentStepTitle: item.AgentCurrentStepTitle,
+			AgentLastReasoning:    item.AgentLastReasoning,
+			CreatedAt:             item.CreatedAt,
+			UpdatedAt:             item.UpdatedAt,
 		})
 	}
 	return result
@@ -1489,6 +1715,30 @@ func mapApprovals(items []apiApproval) []ApprovalSummary {
 			TargetPaths: append([]string(nil), item.TargetPaths...),
 			CreatedAt:   item.CreatedAt,
 			UpdatedAt:   item.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func mapWriteExecutions(items []apiWriteExecution) []WriteExecutionSummary {
+	result := make([]WriteExecutionSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, WriteExecutionSummary{
+			ID:                 item.ID,
+			ThreadID:           item.ThreadID,
+			TaskID:             item.TaskID,
+			ApprovalID:         item.ApprovalID,
+			ToolKind:           item.ToolKind,
+			Operation:          item.Operation,
+			RelatedExecutionID: item.RelatedExecutionID,
+			Status:             item.Status,
+			TargetPaths:        append([]string(nil), item.TargetPaths...),
+			PatchSummary:       item.PatchSummary,
+			BeforeSummary:      item.BeforeSummary,
+			AfterSummary:       item.AfterSummary,
+			ResultSummary:      item.ResultSummary,
+			CreatedAt:          item.CreatedAt,
+			UpdatedAt:          item.UpdatedAt,
 		})
 	}
 	return result
@@ -1748,12 +1998,39 @@ func (s *localRuntimeStore) CreateTask(threadID string, input TaskCreateInput) R
 			approvalStatus = "direct"
 		}
 		_ = pathValue
+	} else if normalized.Kind == "workspace.apply_patch.rollback" {
+		writeExecutionID, parseErr := parseLocalRollbackInput(normalized.Input)
+		if parseErr != nil {
+			return runtimeErrorStatus(parseErr)
+		}
+		source, sourceErr := readWriteExecutionByIDTx(tx, trimmedThreadID, writeExecutionID)
+		if sourceErr != nil {
+			return runtimeErrorStatus(sourceErr)
+		}
+		summary := localRollbackApprovalSummary(source.TargetPaths)
+		switch permissionMode {
+		case "read-only":
+			statusValue = "failed"
+			resultSummary = "rollback failed: permission denied: read-only mode does not allow workspace writes"
+			approvalStatus = "rejected"
+			eventType = "task.failed"
+			eventMessage = resultSummary
+		case "", "ask-user":
+			statusValue = "needs_approval"
+			resultSummary = summary
+			approvalStatus = "pending"
+			eventType = "task.rollback_required"
+			eventMessage = summary
+		default:
+			statusValue = "queued"
+			approvalStatus = "direct"
+		}
 	}
 
 	if _, err := tx.Exec(`
-		INSERT INTO tasks(id, thread_id, title, kind, input, status, result_summary, approval_status, updated_at, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, taskID, trimmedThreadID, normalized.Title, normalized.Kind, normalized.Input, statusValue, resultSummary, approvalStatus, now, now); err != nil {
+		INSERT INTO tasks(id, thread_id, title, kind, input, status, result_summary, approval_status, parent_task_id, waiting_status, agent_state, updated_at, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, taskID, trimmedThreadID, normalized.Title, normalized.Kind, normalized.Input, statusValue, resultSummary, approvalStatus, "", "", "", now, now); err != nil {
 		return runtimeErrorStatus(err)
 	}
 	if _, err := tx.Exec(`
@@ -1762,12 +2039,20 @@ func (s *localRuntimeStore) CreateTask(threadID string, input TaskCreateInput) R
 	`, nextLocalID("local-message"), trimmedThreadID, "user", normalized.Input, now); err != nil {
 		return runtimeErrorStatus(err)
 	}
-	if normalized.Kind == "workspace.apply_patch" && approvalStatus == "pending" {
-		pathValue, patchValue, _ := parseLocalPatchInput(normalized.Input)
-		targets, _ := extractLocalPatchTargets(patchValue)
-		targetJSON := encodeTargetPaths(targets)
-		if len(targets) == 0 {
-			targetJSON = encodeTargetPaths([]string{pathValue})
+	if (normalized.Kind == "workspace.apply_patch" || normalized.Kind == "workspace.apply_patch.rollback") && approvalStatus == "pending" {
+		targetJSON := ""
+		switch normalized.Kind {
+		case "workspace.apply_patch":
+			pathValue, patchValue, _ := parseLocalPatchInput(normalized.Input)
+			targets, _ := extractLocalPatchTargets(patchValue)
+			targetJSON = encodeTargetPaths(targets)
+			if len(targets) == 0 {
+				targetJSON = encodeTargetPaths([]string{pathValue})
+			}
+		case "workspace.apply_patch.rollback":
+			writeExecutionID, _ := parseLocalRollbackInput(normalized.Input)
+			source, _ := readWriteExecutionByIDTx(tx, trimmedThreadID, writeExecutionID)
+			targetJSON = encodeTargetPaths(source.TargetPaths)
 		}
 		if _, err := tx.Exec(`
 			INSERT INTO thread_approvals(id, thread_id, task_id, tool_kind, status, summary, target_paths, created_at, updated_at)
@@ -1841,7 +2126,26 @@ func (s *localRuntimeStore) RunTask(taskID string) RuntimeStatus {
 		if currentStatus == "needs_approval" {
 			return runtimeErrorStatus(fmt.Errorf("task approval required"))
 		}
-		if err := s.executePatchTask(tx, base.WorkspaceRoot, trimmedTaskID, threadID, title, input, approvalStatus, now); err != nil {
+		if err := s.executePatchTask(tx, base.WorkspaceRoot, trimmedTaskID, threadID, "", title, input, approvalStatus, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+	} else if kind == "workspace.apply_patch.rollback" {
+		if currentStatus == "needs_approval" {
+			return runtimeErrorStatus(fmt.Errorf("task approval required"))
+		}
+		if err := s.executeRollbackTask(tx, base.WorkspaceRoot, trimmedTaskID, threadID, "", title, input, approvalStatus, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+	} else if kind == "thread.toolcall.append" {
+		if err := s.executeToolCallAppendTask(tx, trimmedTaskID, threadID, input, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+	} else if kind == "thread.artifact.append" {
+		if err := s.executeArtifactAppendTask(tx, trimmedTaskID, threadID, input, now); err != nil {
+			return runtimeErrorStatus(err)
+		}
+	} else if kind == "thread.runtimeflag.set" {
+		if err := s.executeRuntimeFlagSetTask(tx, trimmedTaskID, threadID, input, now); err != nil {
 			return runtimeErrorStatus(err)
 		}
 	} else {
@@ -1923,6 +2227,9 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 			status TEXT NOT NULL,
 			result_summary TEXT NOT NULL DEFAULT '',
 			approval_status TEXT NOT NULL DEFAULT '',
+			parent_task_id TEXT NOT NULL DEFAULT '',
+			waiting_status TEXT NOT NULL DEFAULT '',
+			agent_state TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
@@ -1973,6 +2280,25 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS thread_write_executions (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			approval_id TEXT NOT NULL DEFAULT '',
+			tool_kind TEXT NOT NULL,
+			operation TEXT NOT NULL DEFAULT 'apply',
+			related_execution_id TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			target_paths TEXT NOT NULL DEFAULT '',
+			patch_hash TEXT NOT NULL DEFAULT '',
+			patch_summary TEXT NOT NULL DEFAULT '',
+			before_snapshot_summary TEXT NOT NULL DEFAULT '',
+			after_snapshot_summary TEXT NOT NULL DEFAULT '',
+			rollback_payload TEXT NOT NULL DEFAULT '',
+			result_summary TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 
 	for _, statement := range schema {
@@ -1986,6 +2312,12 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 		`ALTER TABLE tasks ADD COLUMN input TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE tasks ADD COLUMN result_summary TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE tasks ADD COLUMN approval_status TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE tasks ADD COLUMN parent_task_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE tasks ADD COLUMN waiting_status TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE tasks ADD COLUMN agent_state TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE thread_write_executions ADD COLUMN operation TEXT NOT NULL DEFAULT 'apply'`,
+		`ALTER TABLE thread_write_executions ADD COLUMN related_execution_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE thread_write_executions ADD COLUMN rollback_payload TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, statement := range migrations {
 		if _, err := db.Exec(statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -2048,6 +2380,14 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	if err != nil {
 		return RuntimeStatus{}, err
 	}
+	runtimeFlags, err := s.readRuntimeFlags(workspaceRecord.ActiveThreadID)
+	if err != nil {
+		return RuntimeStatus{}, err
+	}
+	writeExecutions, err := s.readWriteExecutions(workspaceRecord.ActiveThreadID)
+	if err != nil {
+		return RuntimeStatus{}, err
+	}
 
 	status := base
 	status.WorkspaceID = fallbackText(workspaceRecord.ID, filepath.Base(base.WorkspaceRoot))
@@ -2059,23 +2399,380 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	status.Messages = toMessageSummaries(messages)
 	status.ToolCalls = toToolCallSummaries(toolCalls)
 	status.Artifacts = toArtifactSummaries(artifacts)
+	status.RuntimeFlags = toRuntimeFlagSummaries(runtimeFlags)
 	status.Events = toEventSummaries(events)
 	status.Approvals = toApprovalSummaries(approvals)
+	status.WriteExecutions = toWriteExecutionSummaries(writeExecutions)
 	status.ToolsByGroup = groupTools(localToolCatalog())
 	status.Providers = localProviderCatalog()
 	status.RuntimeState = "fallback"
 	status.RuntimeReady = true
 	status.RuntimeMessage = "Using project-local SQLite runtime fallback because no external runtime is connected."
-	status.RuntimeSource = "desktop-local"
+	status.RuntimeSource = "local-fallback"
+	status.RuntimeSourceDetail = "project-local SQLite fallback because the canonical app-server runtime is unavailable"
+	status.RuntimeTrust = "degraded"
+	status.CanonicalRuntimeURL = ""
 	status.SupportsSSE = false
 	status.SSEEndpoint = ""
 	status.LastSyncAt = ""
 	status.StateStore = "sqlite"
 	status.StatePath = defaultStateStorePath(base.WorkspaceRoot)
 	status.UsesProjectLocalStore = true
-	status.RecoverySummary = fmt.Sprintf("Recovered %d thread(s), %d task(s), %d approval(s), %d message(s), %d tool call(s), %d artifact(s), %d event(s) from project-local state store.", len(threads), len(tasks), len(approvals), len(messages), len(toolCalls), len(artifacts), len(events))
+	status.RecoverySummary = fmt.Sprintf("Recovered %d thread(s), %d task(s), %d approval(s), %d write execution(s), %d message(s), %d tool call(s), %d artifact(s), %d event(s) from project-local state store.", len(threads), len(tasks), len(approvals), len(writeExecutions), len(messages), len(toolCalls), len(artifacts), len(events))
 	status.UpdatedAt = time.Now().Format(time.RFC3339)
+	normalizeWorkflowSummaries(&status)
 	return status, nil
+}
+
+type agentStateSummary struct {
+	Step              int
+	MaxSteps          int
+	WaitingTaskID     string
+	WaitingSummary    string
+	WorkflowLabel     string
+	ChildTaskIDs      []string
+	LatestChildTaskID string
+	PlanSummary       string
+	CurrentStepTitle  string
+	LastReasoning     string
+}
+
+func parseAgentStateSummary(raw string) agentStateSummary {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return agentStateSummary{}
+	}
+	var payload struct {
+		StepIndex          int      `json:"stepIndex"`
+		MaxSteps           int      `json:"maxSteps"`
+		WaitingChildTaskID string   `json:"waitingChildTaskId"`
+		LatestChildTaskID  string   `json:"latestChildTaskId"`
+		Status             string   `json:"status"`
+		Goal               string   `json:"goal"`
+		PlanSummary        string   `json:"planSummary"`
+		CurrentStepTitle   string   `json:"currentStepTitle"`
+		LastReasoning      string   `json:"lastReasoning"`
+		ChildTaskIDs       []string `json:"childTaskIds"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return agentStateSummary{}
+	}
+	waitingTaskID := fallbackText(strings.TrimSpace(payload.WaitingChildTaskID), strings.TrimSpace(payload.LatestChildTaskID))
+	waitingSummary := ""
+	switch strings.TrimSpace(payload.Status) {
+	case "waiting_for_task":
+		waitingSummary = fmt.Sprintf("waiting for child task %s", fallbackText(waitingTaskID, "to start"))
+	case "waiting_for_approval":
+		waitingSummary = fmt.Sprintf("waiting for approval before resuming%s", withOptionalLabel(waitingTaskID, " via child task "))
+	}
+	workflowLabel := ""
+	statusLabel := strings.TrimSpace(payload.Status)
+	if payload.StepIndex > 0 && payload.MaxSteps > 0 {
+		workflowLabel = fmt.Sprintf("step %d/%d", payload.StepIndex, payload.MaxSteps)
+	}
+	if waitingSummary != "" {
+		if workflowLabel == "" {
+			workflowLabel = waitingSummary
+		} else {
+			workflowLabel = waitingSummary + " / " + workflowLabel
+		}
+	}
+	if statusLabel != "" {
+		if workflowLabel == "" {
+			workflowLabel = statusLabel
+		} else {
+			workflowLabel = statusLabel + " / " + workflowLabel
+		}
+	}
+	return agentStateSummary{
+		Step:              payload.StepIndex,
+		MaxSteps:          payload.MaxSteps,
+		WaitingTaskID:     waitingTaskID,
+		WaitingSummary:    waitingSummary,
+		WorkflowLabel:     workflowLabel,
+		ChildTaskIDs:      append([]string(nil), payload.ChildTaskIDs...),
+		LatestChildTaskID: fallbackText(strings.TrimSpace(payload.LatestChildTaskID), waitingTaskID),
+		PlanSummary:       fallbackText(strings.TrimSpace(payload.PlanSummary), compactText(payload.Goal, 96)),
+		CurrentStepTitle:  strings.TrimSpace(payload.CurrentStepTitle),
+		LastReasoning:     strings.TrimSpace(payload.LastReasoning),
+	}
+}
+
+func normalizeWorkflowSummaries(status *RuntimeStatus) {
+	if status == nil {
+		return
+	}
+
+	taskIndex := make(map[string]*TaskSummary, len(status.Tasks))
+	threadIndex := make(map[string]ThreadSummary, len(status.Threads))
+	for _, thread := range status.Threads {
+		threadIndex[thread.ID] = thread
+	}
+	for i := range status.Tasks {
+		taskIndex[status.Tasks[i].ID] = &status.Tasks[i]
+	}
+
+	childTaskIDsByParent := map[string][]string{}
+	for i := range status.Tasks {
+		task := &status.Tasks[i]
+		if task.ParentTaskID != "" {
+			childTaskIDsByParent[task.ParentTaskID] = append(childTaskIDsByParent[task.ParentTaskID], task.ID)
+		}
+	}
+	for i := range status.Approvals {
+		approval := status.Approvals[i]
+		if task := taskIndex[approval.TaskID]; task != nil {
+			task.ApprovalID = approval.ID
+			task.ApprovalSummary = localApprovalSummary(approval.ToolKind, approval.TargetPaths)
+		}
+	}
+	for i := range status.WriteExecutions {
+		execution := status.WriteExecutions[i]
+		if task := taskIndex[execution.TaskID]; task != nil {
+			task.WriteExecutionID = execution.ID
+			if task.WriteExecutionSummary == "" {
+				task.WriteExecutionSummary = fallbackText(execution.ResultSummary, execution.PatchSummary)
+			}
+			if task.ApprovalID == "" {
+				task.ApprovalID = execution.ApprovalID
+			}
+		}
+	}
+
+	summaryByThread := map[string]*ThreadWorkflowSummary{}
+	for _, thread := range status.Threads {
+		copy := ThreadWorkflowSummary{
+			ID:             thread.ID,
+			Name:           thread.Name,
+			Status:         thread.Status,
+			PermissionMode: thread.PermissionMode,
+			ActiveModel:    thread.ActiveModel,
+		}
+		summaryByThread[thread.ID] = &copy
+	}
+
+	for i := range status.Tasks {
+		task := &status.Tasks[i]
+		if len(task.ChildTaskIDs) == 0 {
+			task.ChildTaskIDs = append([]string(nil), childTaskIDsByParent[task.ID]...)
+		}
+		if task.LatestChildTaskID == "" && len(task.ChildTaskIDs) > 0 {
+			task.LatestChildTaskID = task.ChildTaskIDs[0]
+		}
+		if task.WorkflowLabel == "" {
+			task.WorkflowLabel = buildTaskWorkflowLabel(*task)
+		}
+		if task.WaitingSummary == "" {
+			task.WaitingSummary = buildWaitingSummary(*task)
+		}
+		threadSummary := summaryByThread[task.ThreadID]
+		if threadSummary == nil {
+			continue
+		}
+		threadSummary.TaskCount++
+		if task.ParentTaskID != "" {
+			threadSummary.ChildTaskCount++
+		}
+		switch task.Status {
+		case "completed":
+			threadSummary.CompletedTaskCount++
+		case "failed":
+			threadSummary.FailedTaskCount++
+		case "needs_approval":
+			threadSummary.ApprovalRequiredCount++
+		case "waiting_for_task":
+			threadSummary.WaitingTaskCount++
+			threadSummary.WaitingForTaskCount++
+		case "waiting_for_approval":
+			threadSummary.WaitingTaskCount++
+			threadSummary.WaitingForApproval++
+		}
+		if task.WaitingStatus == "waiting_for_task" && task.Status != "waiting_for_task" {
+			threadSummary.WaitingTaskCount++
+			threadSummary.WaitingForTaskCount++
+		}
+		if task.WaitingStatus == "waiting_for_approval" && task.Status != "waiting_for_approval" {
+			threadSummary.WaitingTaskCount++
+			threadSummary.WaitingForApproval++
+		}
+		if task.ApprovalStatus == "pending" {
+			threadSummary.PendingApprovalCount++
+		}
+		if task.ApprovalID != "" && threadSummary.LatestApprovalTaskID == "" {
+			threadSummary.LatestApprovalTaskID = task.ID
+		}
+		if task.WriteExecutionID != "" {
+			threadSummary.WriteExecutionCount++
+			if threadSummary.LatestWriteTaskID == "" {
+				threadSummary.LatestWriteTaskID = task.ID
+			}
+		}
+		if threadSummary.LatestTaskID == "" {
+			threadSummary.LatestTaskID = task.ID
+		}
+	}
+
+	activeThreadName := ""
+	activeSummary := ThreadWorkflowSummary{}
+	if activeThread, ok := threadIndex[status.ActiveThreadID]; ok {
+		activeThreadName = activeThread.Name
+	}
+	if summary := summaryByThread[status.ActiveThreadID]; summary != nil {
+		summary.Summary = buildThreadWorkflowSummary(*summary)
+		activeSummary = *summary
+	}
+	for _, summary := range summaryByThread {
+		if summary.Summary == "" {
+			summary.Summary = buildThreadWorkflowSummary(*summary)
+		}
+	}
+
+	waitingTaskCount := 0
+	approvalRequiredCount := 0
+	pendingApprovalCount := 0
+	completedTaskCount := 0
+	failedTaskCount := 0
+	for _, task := range status.Tasks {
+		if task.WaitingStatus != "" || task.Status == "waiting_for_task" || task.Status == "waiting_for_approval" {
+			waitingTaskCount++
+		}
+		if task.Status == "needs_approval" {
+			approvalRequiredCount++
+		}
+		if task.ApprovalStatus == "pending" {
+			pendingApprovalCount++
+		}
+		if task.Status == "completed" {
+			completedTaskCount++
+		}
+		if task.Status == "failed" {
+			failedTaskCount++
+		}
+	}
+	status.ActiveThreadSummary = activeSummary
+	status.WorkspaceSummary = WorkspaceSummary{
+		ID:                    status.WorkspaceID,
+		Root:                  status.WorkspaceRoot,
+		ProjectRoot:           fallbackText(status.ProjectRoot, status.WorkspaceRoot),
+		ActiveThreadID:        status.ActiveThreadID,
+		ActiveThreadName:      activeThreadName,
+		ThreadCount:           len(status.Threads),
+		TaskCount:             len(status.Tasks),
+		WaitingTaskCount:      waitingTaskCount,
+		ApprovalRequiredCount: approvalRequiredCount,
+		PendingApprovalCount:  pendingApprovalCount,
+		CompletedTaskCount:    completedTaskCount,
+		FailedTaskCount:       failedTaskCount,
+		WriteExecutionCount:   len(status.WriteExecutions),
+		Summary:               buildWorkspaceSummary(status, activeThreadName, waitingTaskCount, approvalRequiredCount, pendingApprovalCount),
+	}
+}
+
+func buildTaskWorkflowLabel(task TaskSummary) string {
+	parts := make([]string, 0, 8)
+	if task.ParentTaskID != "" {
+		parts = append(parts, "child task")
+	}
+	if task.Status != "" {
+		parts = append(parts, task.Status)
+	}
+	if task.WaitingStatus != "" {
+		parts = append(parts, task.WaitingStatus)
+	}
+	if task.ApprovalStatus == "pending" || task.Status == "needs_approval" {
+		parts = append(parts, "approval required")
+	}
+	if task.WriteExecutionID != "" {
+		parts = append(parts, "write execution linked")
+	}
+	if task.WaitingSummary != "" {
+		parts = append(parts, task.WaitingSummary)
+	}
+	if task.AgentStep > 0 && task.AgentMaxSteps > 0 {
+		parts = append(parts, fmt.Sprintf("step %d/%d", task.AgentStep, task.AgentMaxSteps))
+	}
+	if task.AgentLastReasoning != "" {
+		parts = append(parts, "reasoning: "+task.AgentLastReasoning)
+	}
+	if len(parts) == 0 {
+		return fallbackText(task.Kind, "task")
+	}
+	return strings.Join(parts, " / ")
+}
+
+func buildWaitingSummary(task TaskSummary) string {
+	switch task.WaitingStatus {
+	case "waiting_for_task":
+		if task.WaitingTaskID != "" {
+			return fmt.Sprintf("waiting for child task %s", task.WaitingTaskID)
+		}
+		if task.LatestChildTaskID != "" {
+			return fmt.Sprintf("waiting for child task %s", task.LatestChildTaskID)
+		}
+		return "waiting for child task"
+	case "waiting_for_approval":
+		if task.ApprovalID != "" {
+			return fmt.Sprintf("waiting for approval %s", task.ApprovalID)
+		}
+		if task.WaitingTaskID != "" {
+			return fmt.Sprintf("waiting for approval via child task %s", task.WaitingTaskID)
+		}
+		return "waiting for approval"
+	default:
+		return ""
+	}
+}
+
+func buildThreadWorkflowSummary(summary ThreadWorkflowSummary) string {
+	parts := []string{
+		fmt.Sprintf("%d task(s)", summary.TaskCount),
+	}
+	if summary.ChildTaskCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d child task(s)", summary.ChildTaskCount))
+	}
+	if summary.WaitingTaskCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d waiting", summary.WaitingTaskCount))
+	}
+	if summary.WaitingForTaskCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d waiting for task", summary.WaitingForTaskCount))
+	}
+	if summary.WaitingForApproval > 0 {
+		parts = append(parts, fmt.Sprintf("%d waiting for approval", summary.WaitingForApproval))
+	}
+	if summary.PendingApprovalCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d pending approval", summary.PendingApprovalCount))
+	}
+	if summary.WriteExecutionCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d write execution(s)", summary.WriteExecutionCount))
+	}
+	return strings.Join(parts, " / ")
+}
+
+func buildWorkspaceSummary(status *RuntimeStatus, activeThreadName string, waitingTaskCount int, approvalRequiredCount int, pendingApprovalCount int) string {
+	if status == nil {
+		return ""
+	}
+	parts := []string{fmt.Sprintf("%d thread(s)", len(status.Threads))}
+	if strings.TrimSpace(activeThreadName) != "" {
+		parts = append(parts, fmt.Sprintf("active thread %s", activeThreadName))
+	}
+	if waitingTaskCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d waiting task(s)", waitingTaskCount))
+	}
+	if approvalRequiredCount > 0 || pendingApprovalCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d approval-required / %d pending", approvalRequiredCount, pendingApprovalCount))
+	}
+	if len(status.WriteExecutions) > 0 {
+		parts = append(parts, fmt.Sprintf("%d write execution(s)", len(status.WriteExecutions)))
+	}
+	return strings.Join(parts, " / ")
+}
+
+func withOptionalLabel(value string, prefix string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return prefix + strings.TrimSpace(value)
 }
 
 func (s *localRuntimeStore) readThreads(workspaceID string, activeThreadID string) ([]persistedThread, error) {
@@ -2148,7 +2845,7 @@ func (s *localRuntimeStore) saveWorkspace(tx *sql.Tx, workspaceRoot string, acti
 
 func (s *localRuntimeStore) readTasks(threadID string) ([]persistedTask, error) {
 	query := `
-		SELECT id, thread_id, title, kind, input, status, result_summary, approval_status, created_at, updated_at
+		SELECT id, thread_id, title, kind, input, status, result_summary, approval_status, parent_task_id, waiting_status, agent_state, created_at, updated_at
 		FROM tasks
 	`
 	args := []any{}
@@ -2167,7 +2864,7 @@ func (s *localRuntimeStore) readTasks(threadID string) ([]persistedTask, error) 
 	result := []persistedTask{}
 	for rows.Next() {
 		var item persistedTask
-		if err := rows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Kind, &item.Input, &item.Status, &item.ResultSummary, &item.ApprovalStatus, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Kind, &item.Input, &item.Status, &item.ResultSummary, &item.ApprovalStatus, &item.ParentTaskID, &item.WaitingStatus, &item.AgentState, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, item)
@@ -2198,6 +2895,37 @@ func (s *localRuntimeStore) readApprovals(threadID string) ([]persistedApproval,
 		var item persistedApproval
 		var targetPaths string
 		if err := rows.Scan(&item.ID, &item.ThreadID, &item.TaskID, &item.ToolKind, &item.Status, &item.Summary, &targetPaths, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.TargetPaths = decodeTargetPaths(targetPaths)
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *localRuntimeStore) readWriteExecutions(threadID string) ([]persistedWriteExecution, error) {
+	query := `
+		SELECT id, thread_id, task_id, approval_id, tool_kind, operation, related_execution_id, status, target_paths, patch_hash, patch_summary, before_snapshot_summary, after_snapshot_summary, rollback_payload, result_summary, created_at, updated_at
+		FROM thread_write_executions
+	`
+	args := []any{}
+	if strings.TrimSpace(threadID) != "" {
+		query += ` WHERE thread_id = ?`
+		args = append(args, threadID)
+	}
+	query += ` ORDER BY datetime(updated_at) DESC, id DESC LIMIT 12`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []persistedWriteExecution{}
+	for rows.Next() {
+		var item persistedWriteExecution
+		var targetPaths string
+		if err := rows.Scan(&item.ID, &item.ThreadID, &item.TaskID, &item.ApprovalID, &item.ToolKind, &item.Operation, &item.RelatedExecutionID, &item.Status, &targetPaths, &item.PatchHash, &item.PatchSummary, &item.BeforeSummary, &item.AfterSummary, &item.RollbackPayload, &item.ResultSummary, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		item.TargetPaths = decodeTargetPaths(targetPaths)
@@ -2293,6 +3021,35 @@ func (s *localRuntimeStore) readArtifacts(threadID string) ([]persistedArtifact,
 	return result, rows.Err()
 }
 
+func (s *localRuntimeStore) readRuntimeFlags(threadID string) ([]persistedRuntimeFlag, error) {
+	query := `
+		SELECT thread_id, key, value, updated_at
+		FROM thread_runtime_flags
+	`
+	args := []any{}
+	if strings.TrimSpace(threadID) != "" {
+		query += ` WHERE thread_id = ?`
+		args = append(args, threadID)
+	}
+	query += ` ORDER BY datetime(updated_at) DESC, key ASC LIMIT 24`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []persistedRuntimeFlag{}
+	for rows.Next() {
+		var item persistedRuntimeFlag
+		if err := rows.Scan(&item.ThreadID, &item.Key, &item.Value, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 func (s *localRuntimeStore) readEvents(threadID string) ([]persistedEvent, error) {
 	query := `
 		SELECT id, thread_id, type, message, created_at
@@ -2340,17 +3097,30 @@ func toThreadSummaries(items []persistedThread) []ThreadSummary {
 func toTaskSummaries(items []persistedTask) []TaskSummary {
 	result := make([]TaskSummary, 0, len(items))
 	for _, item := range items {
+		agent := parseAgentStateSummary(item.AgentState)
 		result = append(result, TaskSummary{
-			ID:             item.ID,
-			ThreadID:       item.ThreadID,
-			Title:          item.Title,
-			Kind:           item.Kind,
-			Input:          item.Input,
-			Status:         item.Status,
-			ResultSummary:  item.ResultSummary,
-			ApprovalStatus: item.ApprovalStatus,
-			CreatedAt:      item.CreatedAt,
-			UpdatedAt:      item.UpdatedAt,
+			ID:                    item.ID,
+			ThreadID:              item.ThreadID,
+			Title:                 item.Title,
+			Kind:                  item.Kind,
+			Input:                 item.Input,
+			Status:                item.Status,
+			ResultSummary:         item.ResultSummary,
+			ApprovalStatus:        item.ApprovalStatus,
+			ParentTaskID:          item.ParentTaskID,
+			WaitingStatus:         item.WaitingStatus,
+			WaitingTaskID:         agent.WaitingTaskID,
+			WaitingSummary:        agent.WaitingSummary,
+			WorkflowLabel:         agent.WorkflowLabel,
+			ChildTaskIDs:          append([]string(nil), agent.ChildTaskIDs...),
+			LatestChildTaskID:     agent.LatestChildTaskID,
+			AgentStep:             agent.Step,
+			AgentMaxSteps:         agent.MaxSteps,
+			AgentPlanSummary:      agent.PlanSummary,
+			AgentCurrentStepTitle: agent.CurrentStepTitle,
+			AgentLastReasoning:    agent.LastReasoning,
+			CreatedAt:             item.CreatedAt,
+			UpdatedAt:             item.UpdatedAt,
 		})
 	}
 	return result
@@ -2369,6 +3139,30 @@ func toApprovalSummaries(items []persistedApproval) []ApprovalSummary {
 			TargetPaths: append([]string(nil), item.TargetPaths...),
 			CreatedAt:   item.CreatedAt,
 			UpdatedAt:   item.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func toWriteExecutionSummaries(items []persistedWriteExecution) []WriteExecutionSummary {
+	result := make([]WriteExecutionSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, WriteExecutionSummary{
+			ID:                 item.ID,
+			ThreadID:           item.ThreadID,
+			TaskID:             item.TaskID,
+			ApprovalID:         item.ApprovalID,
+			ToolKind:           item.ToolKind,
+			Operation:          item.Operation,
+			RelatedExecutionID: item.RelatedExecutionID,
+			Status:             item.Status,
+			TargetPaths:        append([]string(nil), item.TargetPaths...),
+			PatchSummary:       item.PatchSummary,
+			BeforeSummary:      item.BeforeSummary,
+			AfterSummary:       item.AfterSummary,
+			ResultSummary:      item.ResultSummary,
+			CreatedAt:          item.CreatedAt,
+			UpdatedAt:          item.UpdatedAt,
 		})
 	}
 	return result
@@ -2433,9 +3227,16 @@ func (s *localRuntimeStore) handleApprovalAction(threadID string, taskID string,
 		if err := insertEventTx(tx, trimmedThreadID, "toolcall.approved", approval.Summary, now); err != nil {
 			return runtimeErrorStatus(err)
 		}
-		if task.Kind == "workspace.apply_patch" {
-			if err := s.executePatchTask(tx, base.WorkspaceRoot, trimmedTaskID, trimmedThreadID, task.Title, task.Input, "approved", now); err != nil {
-				return runtimeErrorStatus(err)
+		if task.Kind == "workspace.apply_patch" || task.Kind == "workspace.apply_patch.rollback" {
+			var execErr error
+			switch task.Kind {
+			case "workspace.apply_patch":
+				execErr = s.executePatchTask(tx, base.WorkspaceRoot, trimmedTaskID, trimmedThreadID, approval.ID, task.Title, task.Input, "approved", now)
+			case "workspace.apply_patch.rollback":
+				execErr = s.executeRollbackTask(tx, base.WorkspaceRoot, trimmedTaskID, trimmedThreadID, approval.ID, task.Title, task.Input, "approved", now)
+			}
+			if execErr != nil {
+				return runtimeErrorStatus(execErr)
 			}
 			if _, err := tx.Exec(`UPDATE thread_approvals SET status = ?, summary = ?, updated_at = ? WHERE task_id = ?`, "executed", readTaskResultSummaryTx(tx, trimmedTaskID), now, trimmedTaskID); err != nil {
 				return runtimeErrorStatus(err)
@@ -2486,12 +3287,12 @@ func (s *localRuntimeStore) readThreadPermissionMode(threadID string) (string, e
 
 func (s *localRuntimeStore) readTaskByID(taskID string) (persistedTask, error) {
 	row := s.db.QueryRow(`
-		SELECT id, thread_id, title, kind, input, status, result_summary, approval_status, created_at, updated_at
+		SELECT id, thread_id, title, kind, input, status, result_summary, approval_status, parent_task_id, waiting_status, agent_state, created_at, updated_at
 		FROM tasks
 		WHERE id = ?
 	`, taskID)
 	var item persistedTask
-	if err := row.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Kind, &item.Input, &item.Status, &item.ResultSummary, &item.ApprovalStatus, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.ThreadID, &item.Title, &item.Kind, &item.Input, &item.Status, &item.ResultSummary, &item.ApprovalStatus, &item.ParentTaskID, &item.WaitingStatus, &item.AgentState, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return persistedTask{}, err
 	}
 	return item, nil
@@ -2514,6 +3315,45 @@ func (s *localRuntimeStore) readApprovalByTask(threadID string, taskID string) (
 	return item, nil
 }
 
+func readWriteExecutionByIDTx(tx *sql.Tx, threadID string, executionID string) (persistedWriteExecution, error) {
+	row := tx.QueryRow(`
+		SELECT id, thread_id, task_id, approval_id, tool_kind, operation, related_execution_id, status, target_paths, patch_hash, patch_summary, before_snapshot_summary, after_snapshot_summary, rollback_payload, result_summary, created_at, updated_at
+		FROM thread_write_executions
+		WHERE thread_id = ? AND id = ?
+		LIMIT 1
+	`, threadID, executionID)
+	var item persistedWriteExecution
+	var targetPaths string
+	if err := row.Scan(&item.ID, &item.ThreadID, &item.TaskID, &item.ApprovalID, &item.ToolKind, &item.Operation, &item.RelatedExecutionID, &item.Status, &targetPaths, &item.PatchHash, &item.PatchSummary, &item.BeforeSummary, &item.AfterSummary, &item.RollbackPayload, &item.ResultSummary, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return persistedWriteExecution{}, fmt.Errorf("write execution not found")
+		}
+		return persistedWriteExecution{}, err
+	}
+	item.TargetPaths = decodeTargetPaths(targetPaths)
+	return item, nil
+}
+
+func readLatestCompletedApplyExecutionTx(tx *sql.Tx, threadID string) (persistedWriteExecution, error) {
+	row := tx.QueryRow(`
+		SELECT id, thread_id, task_id, approval_id, tool_kind, operation, related_execution_id, status, target_paths, patch_hash, patch_summary, before_snapshot_summary, after_snapshot_summary, rollback_payload, result_summary, created_at, updated_at
+		FROM thread_write_executions
+		WHERE thread_id = ? AND operation = 'apply' AND status = 'completed'
+		ORDER BY datetime(updated_at) DESC, id DESC
+		LIMIT 1
+	`, threadID)
+	var item persistedWriteExecution
+	var targetPaths string
+	if err := row.Scan(&item.ID, &item.ThreadID, &item.TaskID, &item.ApprovalID, &item.ToolKind, &item.Operation, &item.RelatedExecutionID, &item.Status, &targetPaths, &item.PatchHash, &item.PatchSummary, &item.BeforeSummary, &item.AfterSummary, &item.RollbackPayload, &item.ResultSummary, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return persistedWriteExecution{}, fmt.Errorf("rollback failed: no completed apply execution found")
+		}
+		return persistedWriteExecution{}, err
+	}
+	item.TargetPaths = decodeTargetPaths(targetPaths)
+	return item, nil
+}
+
 func insertEventTx(tx *sql.Tx, threadID string, eventType string, message string, createdAt string) error {
 	_, err := tx.Exec(`
 		INSERT INTO events(id, thread_id, type, message, created_at)
@@ -2531,7 +3371,7 @@ func readTaskResultSummaryTx(tx *sql.Tx, taskID string) string {
 	return summary
 }
 
-func (s *localRuntimeStore) executePatchTask(tx *sql.Tx, workspaceRoot string, taskID string, threadID string, title string, rawInput string, approvalStatus string, now string) error {
+func (s *localRuntimeStore) executePatchTask(tx *sql.Tx, workspaceRoot string, taskID string, threadID string, approvalID string, title string, rawInput string, approvalStatus string, now string) error {
 	pathValue, patchValue, err := parseLocalPatchInput(rawInput)
 	if err != nil {
 		return err
@@ -2544,8 +3384,19 @@ func (s *localRuntimeStore) executePatchTask(tx *sql.Tx, workspaceRoot string, t
 		return fmt.Errorf("task approval required")
 	}
 
-	resultSummary, err := applyLocalWorkspacePatch(resolvedPath, patchValue, workspaceRoot)
+	targetPaths := collectLocalWriteExecutionTargets(pathValue, patchValue)
+	rollbackSnapshot, err := captureLocalRollbackSnapshot(resolvedPath, targetPaths[0])
 	if err != nil {
+		return err
+	}
+	patchHash := hashLocalText(patchValue)
+	patchSummary := localPatchExecutionSummary(targetPaths, patchValue)
+	beforeSummary := localFileSnapshotSummary(resolvedPath)
+
+	resultSummary, err := applyLocalWorkspacePatch(resolvedPath, patchValue, workspaceRoot)
+	rollbackSnapshot.AfterExists, rollbackSnapshot.AfterHash = readLocalFilePresenceAndHash(resolvedPath)
+	if err != nil {
+		afterSummary := localFileSnapshotSummary(resolvedPath)
 		if _, updateErr := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "failed", err.Error(), now, taskID); updateErr != nil {
 			return updateErr
 		}
@@ -2558,9 +3409,30 @@ func (s *localRuntimeStore) executePatchTask(tx *sql.Tx, workspaceRoot string, t
 		if eventErr := insertEventTx(tx, threadID, "toolcall.failed", err.Error(), now); eventErr != nil {
 			return eventErr
 		}
+		if err := insertLocalWriteExecutionTx(tx, persistedWriteExecution{
+			ID:              nextLocalID("local-write-execution"),
+			ThreadID:        threadID,
+			TaskID:          taskID,
+			ApprovalID:      approvalID,
+			ToolKind:        "workspace.apply_patch",
+			Operation:       "apply",
+			Status:          "failed",
+			TargetPaths:     targetPaths,
+			PatchHash:       patchHash,
+			PatchSummary:    patchSummary,
+			BeforeSummary:   beforeSummary,
+			AfterSummary:    afterSummary,
+			RollbackPayload: encodeLocalRollbackPayload([]localWriteExecutionFileSnapshot{rollbackSnapshot}),
+			ResultSummary:   err.Error(),
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}); err != nil {
+			return err
+		}
 		return insertEventTx(tx, threadID, "task.failed", err.Error(), now)
 	}
 
+	afterSummary := localFileSnapshotSummary(resolvedPath)
 	if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "completed", resultSummary, now, taskID); err != nil {
 		return err
 	}
@@ -2573,10 +3445,329 @@ func (s *localRuntimeStore) executePatchTask(tx *sql.Tx, workspaceRoot string, t
 	if err := insertEventTx(tx, threadID, "toolcall.completed", resultSummary, now); err != nil {
 		return err
 	}
+	if err := insertLocalWriteExecutionTx(tx, persistedWriteExecution{
+		ID:              nextLocalID("local-write-execution"),
+		ThreadID:        threadID,
+		TaskID:          taskID,
+		ApprovalID:      approvalID,
+		ToolKind:        "workspace.apply_patch",
+		Operation:       "apply",
+		Status:          "completed",
+		TargetPaths:     targetPaths,
+		PatchHash:       patchHash,
+		PatchSummary:    patchSummary,
+		BeforeSummary:   beforeSummary,
+		AfterSummary:    afterSummary,
+		RollbackPayload: encodeLocalRollbackPayload([]localWriteExecutionFileSnapshot{rollbackSnapshot}),
+		ResultSummary:   resultSummary,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		return err
+	}
 	if err := insertEventTx(tx, threadID, "task.completed", fmt.Sprintf("Ran task %s and completed it", title), now); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (s *localRuntimeStore) executeRollbackTask(tx *sql.Tx, workspaceRoot string, taskID string, threadID string, approvalID string, title string, rawInput string, approvalStatus string, now string) error {
+	writeExecutionID, err := parseLocalRollbackInput(rawInput)
+	if err != nil {
+		return err
+	}
+	if approvalStatus != "approved" && approvalStatus != "executed" && approvalStatus != "direct" {
+		return fmt.Errorf("task approval required")
+	}
+
+	source, err := readWriteExecutionByIDTx(tx, threadID, writeExecutionID)
+	if err != nil {
+		return err
+	}
+	targetPaths := append([]string(nil), source.TargetPaths...)
+	patchSummary := localRollbackPatchSummary(source)
+	recordFailure := func(message string, beforeSummary string, afterSummary string) error {
+		if afterSummary == "" {
+			afterSummary = beforeSummary
+		}
+		if _, updateErr := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "failed", message, now, taskID); updateErr != nil {
+			return updateErr
+		}
+		if _, toolErr := tx.Exec(`
+			INSERT INTO thread_tool_calls(id, thread_id, tool_id, status, summary, created_at)
+			VALUES(?, ?, ?, ?, ?, ?)
+		`, nextLocalID("local-tool-call"), threadID, "workspace.apply_patch.rollback", "failed", message, now); toolErr != nil {
+			return toolErr
+		}
+		if eventErr := insertEventTx(tx, threadID, "toolcall.failed", message, now); eventErr != nil {
+			return eventErr
+		}
+		if err := insertLocalWriteExecutionTx(tx, persistedWriteExecution{
+			ID:                 nextLocalID("local-write-execution"),
+			ThreadID:           threadID,
+			TaskID:             taskID,
+			ApprovalID:         approvalID,
+			ToolKind:           "workspace.apply_patch.rollback",
+			Operation:          "rollback",
+			RelatedExecutionID: source.ID,
+			Status:             "failed",
+			TargetPaths:        targetPaths,
+			PatchSummary:       patchSummary,
+			BeforeSummary:      beforeSummary,
+			AfterSummary:       afterSummary,
+			ResultSummary:      message,
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		}); err != nil {
+			return err
+		}
+		return insertEventTx(tx, threadID, "task.failed", message, now)
+	}
+
+	if source.Operation != "apply" {
+		return recordFailure(fmt.Sprintf("rollback failed: write execution %s is not an apply execution", source.ID), "", "")
+	}
+	if source.Status != "completed" {
+		return recordFailure(fmt.Sprintf("rollback failed: write execution %s is not completed", source.ID), "", "")
+	}
+	latestApply, latestErr := readLatestCompletedApplyExecutionTx(tx, threadID)
+	if latestErr != nil {
+		return latestErr
+	}
+	if latestApply.ID != source.ID {
+		return recordFailure("rollback failed: only the latest completed apply execution can be rolled back", "", "")
+	}
+	payload, err := decodeLocalRollbackPayload(source.RollbackPayload)
+	if err != nil {
+		return recordFailure(fmt.Sprintf("rollback failed: %s", err.Error()), "", "")
+	}
+	if len(payload) == 0 {
+		return recordFailure(fmt.Sprintf("rollback failed: write execution %s has no rollback payload", source.ID), "", "")
+	}
+
+	beforeSummary := localFileSnapshotSummary(localResolveRollbackPrimaryPath(workspaceRoot, payload))
+	changeSummary, afterSummary, rollbackErr := applyLocalRollbackPayload(workspaceRoot, payload)
+	if rollbackErr != nil {
+		return recordFailure(fmt.Sprintf("rollback failed: %s", rollbackErr.Error()), beforeSummary, beforeSummary)
+	}
+
+	resultSummary := localRollbackExecutionSummary(targetPaths, changeSummary)
+	if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "completed", resultSummary, now, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO thread_tool_calls(id, thread_id, tool_id, status, summary, created_at)
+		VALUES(?, ?, ?, ?, ?, ?)
+	`, nextLocalID("local-tool-call"), threadID, "workspace.apply_patch.rollback", "completed", resultSummary, now); err != nil {
+		return err
+	}
+	if err := insertEventTx(tx, threadID, "toolcall.completed", resultSummary, now); err != nil {
+		return err
+	}
+	if err := insertLocalWriteExecutionTx(tx, persistedWriteExecution{
+		ID:                 nextLocalID("local-write-execution"),
+		ThreadID:           threadID,
+		TaskID:             taskID,
+		ApprovalID:         approvalID,
+		ToolKind:           "workspace.apply_patch.rollback",
+		Operation:          "rollback",
+		RelatedExecutionID: source.ID,
+		Status:             "completed",
+		TargetPaths:        targetPaths,
+		PatchSummary:       patchSummary,
+		BeforeSummary:      beforeSummary,
+		AfterSummary:       afterSummary,
+		ResultSummary:      resultSummary,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}); err != nil {
+		return err
+	}
+	if err := insertEventTx(tx, threadID, "task.completed", fmt.Sprintf("Rolled back task %s", title), now); err != nil {
+		return err
+	}
+	return nil
+}
+
+func insertLocalWriteExecutionTx(tx *sql.Tx, item persistedWriteExecution) error {
+	_, err := tx.Exec(`
+		INSERT INTO thread_write_executions(id, thread_id, task_id, approval_id, tool_kind, operation, related_execution_id, status, target_paths, patch_hash, patch_summary, before_snapshot_summary, after_snapshot_summary, rollback_payload, result_summary, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.ThreadID, item.TaskID, item.ApprovalID, item.ToolKind, fallbackText(strings.TrimSpace(item.Operation), "apply"), strings.TrimSpace(item.RelatedExecutionID), item.Status, encodeTargetPaths(item.TargetPaths), item.PatchHash, item.PatchSummary, item.BeforeSummary, item.AfterSummary, fallbackText(item.RollbackPayload, "[]"), item.ResultSummary, item.CreatedAt, item.UpdatedAt)
+	return err
+}
+
+func collectLocalWriteExecutionTargets(pathValue string, patchValue string) []string {
+	targets, err := extractLocalPatchTargets(patchValue)
+	if err != nil || len(targets) == 0 {
+		targets = []string{strings.TrimSpace(pathValue)}
+	}
+	return targets
+}
+
+func localPatchExecutionSummary(targets []string, patch string) string {
+	added, removed := localPatchChangeStats(patch)
+	changeSummary := fmt.Sprintf("%d added / %d removed line(s)", added, removed)
+	if len(targets) == 0 {
+		return changeSummary
+	}
+	return fmt.Sprintf("applied patch to %s: %s", strings.Join(targets, ", "), changeSummary)
+}
+
+func localPatchChangeStats(patch string) (int, int) {
+	added := 0
+	removed := 0
+	for _, line := range splitLocalPatchLines(strings.TrimSpace(patch)) {
+		if strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+			added++
+		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+			removed++
+		}
+	}
+	return added, removed
+}
+
+func localFileSnapshotSummary(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "missing file"
+		}
+		return fmt.Sprintf("snapshot unavailable: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("unreadable file / %d byte(s): %v", info.Size(), err)
+	}
+	lineCount := len(splitLocalTextLines(string(content)))
+	return fmt.Sprintf("exists / %d line(s) / %d byte(s) / sha256:%s", lineCount, len(content), shortLocalHashBytes(content))
+}
+
+func hashLocalText(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func encodeLocalRollbackPayload(items []localWriteExecutionFileSnapshot) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	payload, err := json.Marshal(items)
+	if err != nil {
+		return "[]"
+	}
+	return string(payload)
+}
+
+func decodeLocalRollbackPayload(raw string) ([]localWriteExecutionFileSnapshot, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+	var items []localWriteExecutionFileSnapshot
+	if err := json.Unmarshal([]byte(trimmed), &items); err != nil {
+		return nil, fmt.Errorf("invalid rollback payload")
+	}
+	return items, nil
+}
+
+func captureLocalRollbackSnapshot(targetPath string, pathLabel string) (localWriteExecutionFileSnapshot, error) {
+	content, exists, err := readLocalOptionalFile(targetPath)
+	if err != nil {
+		return localWriteExecutionFileSnapshot{}, err
+	}
+	snapshot := localWriteExecutionFileSnapshot{
+		Path:          pathLabel,
+		BeforeExists:  exists,
+		BeforeContent: content,
+	}
+	if exists {
+		snapshot.BeforeHash = hashLocalText(content)
+	}
+	return snapshot, nil
+}
+
+func readLocalOptionalFile(targetPath string) (string, bool, error) {
+	content, err := os.ReadFile(targetPath)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return string(content), true, nil
+}
+
+func readLocalFilePresenceAndHash(targetPath string) (bool, string) {
+	content, exists, err := readLocalOptionalFile(targetPath)
+	if err != nil || !exists {
+		return exists, ""
+	}
+	return true, hashLocalText(content)
+}
+
+func localResolveRollbackPrimaryPath(workspaceRoot string, payload []localWriteExecutionFileSnapshot) string {
+	if len(payload) == 0 {
+		return workspaceRoot
+	}
+	resolved, err := resolveLocalWorkspacePath(workspaceRoot, payload[0].Path)
+	if err != nil {
+		return workspaceRoot
+	}
+	return resolved
+}
+
+func applyLocalRollbackPayload(workspaceRoot string, payload []localWriteExecutionFileSnapshot) (string, string, error) {
+	changes := make([]string, 0, len(payload))
+	afterSummaries := make([]string, 0, len(payload))
+	for _, item := range payload {
+		resolvedPath, err := resolveLocalWorkspacePath(workspaceRoot, item.Path)
+		if err != nil {
+			return "", "", err
+		}
+		currentContent, currentExists, err := readLocalOptionalFile(resolvedPath)
+		if err != nil {
+			return "", "", err
+		}
+		currentHash := ""
+		if currentExists {
+			currentHash = hashLocalText(currentContent)
+		}
+		if currentExists != item.AfterExists {
+			return "", "", fmt.Errorf("file drift detected for %s", item.Path)
+		}
+		if currentExists && currentHash != item.AfterHash {
+			return "", "", fmt.Errorf("file drift detected for %s", item.Path)
+		}
+		if item.BeforeExists {
+			if err := os.MkdirAll(filepath.Dir(resolvedPath), 0o755); err != nil {
+				return "", "", err
+			}
+			if err := os.WriteFile(resolvedPath, []byte(item.BeforeContent), 0o644); err != nil {
+				return "", "", err
+			}
+			changes = append(changes, fmt.Sprintf("restored %s", item.Path))
+		} else {
+			if currentExists {
+				if err := os.Remove(resolvedPath); err != nil {
+					return "", "", err
+				}
+			}
+			changes = append(changes, fmt.Sprintf("removed %s", item.Path))
+		}
+		afterSummaries = append(afterSummaries, fmt.Sprintf("%s => %s", item.Path, localFileSnapshotSummary(resolvedPath)))
+	}
+	return strings.Join(changes, "; "), strings.Join(afterSummaries, " | "), nil
+}
+
+func shortLocalHashBytes(value []byte) string {
+	sum := sha256.Sum256(value)
+	return hex.EncodeToString(sum[:8])
 }
 
 func toMessageSummaries(items []persistedMessage) []MessageSummary {
@@ -2617,6 +3808,19 @@ func toArtifactSummaries(items []persistedArtifact) []ArtifactSummary {
 			Path:      item.Path,
 			Kind:      item.Kind,
 			CreatedAt: item.CreatedAt,
+		})
+	}
+	return result
+}
+
+func toRuntimeFlagSummaries(items []persistedRuntimeFlag) []RuntimeFlagSummary {
+	result := make([]RuntimeFlagSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, RuntimeFlagSummary{
+			ThreadID:  item.ThreadID,
+			Key:       item.Key,
+			Value:     item.Value,
+			UpdatedAt: item.UpdatedAt,
 		})
 	}
 	return result
@@ -2692,6 +3896,131 @@ func buildTaskResultSummary(kind string, input string, previousStatus string) st
 	return fmt.Sprintf("Task completed for %s with %s.", kindLabel, inputLabel)
 }
 
+func parseLocalToolCallAppendInput(raw string) (string, string, string, error) {
+	var input struct {
+		ToolID  string `json:"toolId"`
+		Status  string `json:"status"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return "", "", "", err
+	}
+	if strings.TrimSpace(input.ToolID) == "" {
+		return "", "", "", fmt.Errorf("toolId is required")
+	}
+	if strings.TrimSpace(input.Status) == "" {
+		return "", "", "", fmt.Errorf("status is required")
+	}
+	if strings.TrimSpace(input.Summary) == "" {
+		return "", "", "", fmt.Errorf("summary is required")
+	}
+	return strings.TrimSpace(input.ToolID), strings.TrimSpace(input.Status), strings.TrimSpace(input.Summary), nil
+}
+
+func parseLocalArtifactAppendInput(raw string) (string, string, error) {
+	var input struct {
+		Path string `json:"path"`
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(input.Path) == "" {
+		return "", "", fmt.Errorf("path is required")
+	}
+	if strings.TrimSpace(input.Kind) == "" {
+		return "", "", fmt.Errorf("kind is required")
+	}
+	return strings.TrimSpace(input.Path), strings.TrimSpace(input.Kind), nil
+}
+
+func parseLocalRuntimeFlagSetInput(raw string) (string, string, error) {
+	var input struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(input.Key) == "" {
+		return "", "", fmt.Errorf("key is required")
+	}
+	return strings.TrimSpace(input.Key), input.Value, nil
+}
+
+func (s *localRuntimeStore) executeToolCallAppendTask(tx *sql.Tx, taskID string, threadID string, input string, now string) error {
+	toolID, statusValue, summary, err := parseLocalToolCallAppendInput(input)
+	if err != nil {
+		return err
+	}
+	resultSummary := fmt.Sprintf("tool call %s appended", toolID)
+	if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "completed", resultSummary, now, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO thread_tool_calls(id, thread_id, tool_id, status, summary, created_at)
+		VALUES(?, ?, ?, ?, ?, ?)
+	`, nextLocalID("local-tool-call"), threadID, toolID, statusValue, summary, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO events(id, thread_id, type, message, created_at)
+		VALUES(?, ?, ?, ?, ?)
+	`, nextLocalID("local-event"), threadID, "toolcall.appended", resultSummary, now); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *localRuntimeStore) executeArtifactAppendTask(tx *sql.Tx, taskID string, threadID string, input string, now string) error {
+	pathValue, kindValue, err := parseLocalArtifactAppendInput(input)
+	if err != nil {
+		return err
+	}
+	resultSummary := fmt.Sprintf("artifact %s appended", kindValue)
+	if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "completed", resultSummary, now, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO thread_artifacts(id, thread_id, path, kind, created_at)
+		VALUES(?, ?, ?, ?, ?)
+	`, nextLocalID("local-artifact"), threadID, pathValue, kindValue, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO events(id, thread_id, type, message, created_at)
+		VALUES(?, ?, ?, ?, ?)
+	`, nextLocalID("local-event"), threadID, "artifact.appended", resultSummary, now); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *localRuntimeStore) executeRuntimeFlagSetTask(tx *sql.Tx, taskID string, threadID string, input string, now string) error {
+	keyValue, flagValue, err := parseLocalRuntimeFlagSetInput(input)
+	if err != nil {
+		return err
+	}
+	resultSummary := fmt.Sprintf("runtime flag %s updated", keyValue)
+	if _, err := tx.Exec(`UPDATE tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?`, "completed", resultSummary, now, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO thread_runtime_flags(thread_id, key, value, updated_at)
+		VALUES(?, ?, ?, ?)
+		ON CONFLICT(thread_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+	`, threadID, keyValue, flagValue, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO events(id, thread_id, type, message, created_at)
+		VALUES(?, ?, ?, ?, ?)
+	`, nextLocalID("local-event"), threadID, "runtimeflag.updated", resultSummary, now); err != nil {
+		return err
+	}
+	return nil
+}
+
 func parseLocalPatchInput(raw string) (string, string, error) {
 	var input struct {
 		Path  string `json:"path"`
@@ -2707,6 +4036,19 @@ func parseLocalPatchInput(raw string) (string, string, error) {
 		return "", "", fmt.Errorf("patch is required")
 	}
 	return strings.TrimSpace(input.Path), strings.TrimSpace(input.Patch), nil
+}
+
+func parseLocalRollbackInput(raw string) (string, error) {
+	var input struct {
+		WriteExecutionID string `json:"writeExecutionId"`
+	}
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(input.WriteExecutionID) == "" {
+		return "", fmt.Errorf("writeExecutionId is required")
+	}
+	return strings.TrimSpace(input.WriteExecutionID), nil
 }
 
 func extractLocalPatchTargets(raw string) ([]string, error) {
@@ -2749,6 +4091,14 @@ func localApprovalSummary(kind string, targets []string) string {
 	return fmt.Sprintf("approval required for %s on %s", label, strings.Join(targets, ", "))
 }
 
+func localRollbackApprovalSummary(targets []string) string {
+	label := strings.Join(targets, ", ")
+	if strings.TrimSpace(label) == "" {
+		label = "workspace"
+	}
+	return fmt.Sprintf("approval required for rollback of %s", label)
+}
+
 func localTruncatedPatchSummary(raw string, max int) string {
 	lines := splitLocalPatchLines(strings.TrimSpace(raw))
 	delta := 0
@@ -2759,6 +4109,24 @@ func localTruncatedPatchSummary(raw string, max int) string {
 	}
 	summary := fmt.Sprintf("%d patch line(s)", delta)
 	return compactText(summary, max)
+}
+
+func localRollbackExecutionSummary(targets []string, changeSummary string) string {
+	label := strings.Join(targets, ", ")
+	if strings.TrimSpace(label) == "" {
+		label = "workspace"
+	}
+	if strings.TrimSpace(changeSummary) == "" {
+		return fmt.Sprintf("rolled back patch on %s", label)
+	}
+	return fmt.Sprintf("rolled back patch on %s: %s", label, changeSummary)
+}
+
+func localRollbackPatchSummary(source persistedWriteExecution) string {
+	if strings.TrimSpace(source.PatchSummary) == "" {
+		return fmt.Sprintf("rollback of %s", source.ID)
+	}
+	return fmt.Sprintf("rollback of %s", source.PatchSummary)
 }
 
 func splitLocalPatchLines(value string) []string {
@@ -3012,20 +4380,22 @@ func defaultStateStorePath(workspaceRoot string) string {
 
 func runtimeErrorStatus(err error) RuntimeStatus {
 	return RuntimeStatus{
-		AppName:        "gen-code",
-		AppEnv:         "local",
-		Port:           10008,
-		DesktopReady:   true,
-		RuntimeState:   "degraded",
-		RuntimeReady:   false,
-		RuntimeMessage: err.Error(),
-		RuntimeSource:  "desktop-local",
-		StateStore:     "sqlite",
-		SkillsByGroup:  map[string][]string{},
-		ToolsByGroup:   map[string][]string{},
-		MCPByGroup:     map[string][]string{},
-		MissingPaths:   []string{},
-		UpdatedAt:      time.Now().Format(time.RFC3339),
+		AppName:             "gen-code",
+		AppEnv:              "local",
+		Port:                10008,
+		DesktopReady:        true,
+		RuntimeState:        "degraded",
+		RuntimeReady:        false,
+		RuntimeMessage:      err.Error(),
+		RuntimeSource:       "local-fallback",
+		RuntimeSourceDetail: "project-local SQLite fallback because the canonical app-server runtime is unavailable",
+		RuntimeTrust:        "degraded",
+		StateStore:          "sqlite",
+		SkillsByGroup:       map[string][]string{},
+		ToolsByGroup:        map[string][]string{},
+		MCPByGroup:          map[string][]string{},
+		MissingPaths:        []string{},
+		UpdatedAt:           time.Now().Format(time.RFC3339),
 	}
 }
 

@@ -194,6 +194,28 @@ def wait_for_tool_call(thread_id: str, predicate, timeout_seconds: float = 20.0)
     raise RuntimeError("timed out waiting for matching tool call")
 
 
+def wait_for_artifact(thread_id: str, predicate, timeout_seconds: float = 20.0):
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        items = api("GET", f"/api/threads/{thread_id}/artifacts")["items"]
+        for item in reversed(items):
+            if predicate(item):
+                return item
+        time.sleep(0.5)
+    raise RuntimeError("timed out waiting for matching artifact")
+
+
+def wait_for_runtime_flag(thread_id: str, predicate, timeout_seconds: float = 20.0):
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        items = api("GET", f"/api/threads/{thread_id}/runtime-flags")["items"]
+        for item in reversed(items):
+            if predicate(item):
+                return item
+        time.sleep(0.5)
+    raise RuntimeError("timed out waiting for matching runtime flag")
+
+
 def assert_article_contains(page, *texts: str, timeout: int = 15000):
     locator = page.locator("article")
     for text in texts:
@@ -229,6 +251,36 @@ def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
     except Exception:
         assert_article_contains(page, tool_call["toolId"])
     return completed_task
+
+
+def run_thread_mutation_scenario(page, thread_id: str, scenario: dict) -> dict:
+    completed_task = run_direct_tool_scenario(page, thread_id, scenario)
+    kind = scenario["kind"]
+
+    if kind == "thread.toolcall.append":
+        record = wait_for_tool_call(
+            thread_id,
+            lambda item: item["toolId"] == scenario["input"]["toolId"]
+            and item["status"] == scenario["input"]["status"]
+            and item["summary"] == scenario["input"]["summary"],
+        )
+    elif kind == "thread.artifact.append":
+        record = wait_for_artifact(
+            thread_id,
+            lambda item: item["path"] == scenario["input"]["path"] and item["kind"] == scenario["input"]["kind"],
+        )
+    elif kind == "thread.runtimeflag.set":
+        record = wait_for_runtime_flag(
+            thread_id,
+            lambda item: item["key"] == scenario["input"]["key"] and item["value"] == scenario["input"]["value"],
+        )
+    else:
+        raise AssertionError(f"unsupported thread mutation scenario kind: {kind}")
+
+    return {
+        "task": completed_task,
+        "record": record,
+    }
 
 
 def wait_for_new_assistant_message(thread_id: str, baseline_count: int, timeout_seconds: float = 60.0) -> dict:
@@ -425,6 +477,43 @@ def main() -> int:
                     },
                 )
             )
+            thread_mutation_results = []
+            thread_mutation_results.append(
+                run_thread_mutation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Append tool call {run_id}",
+                        "kind": "thread.toolcall.append",
+                        "input": {"toolId": "workspace.read_file", "status": "completed", "summary": "read finished"},
+                        "summary_contains": "tool call workspace.read_file appended",
+                    },
+                )
+            )
+            thread_mutation_results.append(
+                run_thread_mutation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Append artifact {run_id}",
+                        "kind": "thread.artifact.append",
+                        "input": {"path": "artifacts/acceptance-note.md", "kind": "markdown"},
+                        "summary_contains": "artifact markdown appended",
+                    },
+                )
+            )
+            thread_mutation_results.append(
+                run_thread_mutation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Set runtime flag {run_id}",
+                        "kind": "thread.runtimeflag.set",
+                        "input": {"key": "acceptance.mode", "value": run_id},
+                        "summary_contains": "runtime flag acceptance.mode updated",
+                    },
+                )
+            )
 
             agent_results = []
             agent_results.append(
@@ -568,6 +657,16 @@ def main() -> int:
                         "directToolTasks": [
                             {"id": item["id"], "title": item["title"], "kind": item["kind"], "resultSummary": item["resultSummary"]}
                             for item in direct_results
+                        ],
+                        "threadMutationTasks": [
+                            {
+                                "taskId": item["task"]["id"],
+                                "title": item["task"]["title"],
+                                "kind": item["task"]["kind"],
+                                "resultSummary": item["task"]["resultSummary"],
+                                "record": item["record"],
+                            }
+                            for item in thread_mutation_results
                         ],
                         "agentScenarios": [
                             {
