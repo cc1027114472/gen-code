@@ -110,6 +110,50 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 			Executable:         true,
 		},
 		{
+			ID:                 "workspace.stat_file",
+			Name:               "Workspace Stat File",
+			Description:        "Inspect a workspace file or directory metadata",
+			InputSchemaSummary: `{"path":"workspace-relative path"}`,
+			PermissionMode:     policy.ReadOnly,
+			Source:             "runtime",
+			Kind:               "workspace.stat_file",
+			ReadOnly:           true,
+			Executable:         true,
+		},
+		{
+			ID:                 "workspace.read_files_batch",
+			Name:               "Workspace Read Files Batch",
+			Description:        "Read multiple text files under the current workspace root",
+			InputSchemaSummary: `{"paths":["a.txt","docs/b.md"]}`,
+			PermissionMode:     policy.ReadOnly,
+			Source:             "runtime",
+			Kind:               "workspace.read_files_batch",
+			ReadOnly:           true,
+			Executable:         true,
+		},
+		{
+			ID:                 "workspace.list_files_filtered",
+			Name:               "Workspace List Files Filtered",
+			Description:        "List workspace entries filtered by a glob pattern",
+			InputSchemaSummary: `{"path":"optional relative directory","pattern":"*.go","includeDirs":false}`,
+			PermissionMode:     policy.ReadOnly,
+			Source:             "runtime",
+			Kind:               "workspace.list_files_filtered",
+			ReadOnly:           true,
+			Executable:         true,
+		},
+		{
+			ID:                 "workspace.search_text_detailed",
+			Name:               "Workspace Search Text Detailed",
+			Description:        "Search workspace text with file and line details",
+			InputSchemaSummary: `{"query":"text to search","path":"optional relative directory within workspace","limit":20}`,
+			PermissionMode:     policy.ReadOnly,
+			Source:             "runtime",
+			Kind:               "workspace.search_text_detailed",
+			ReadOnly:           true,
+			Executable:         true,
+		},
+		{
 			ID:                 "workspace.apply_patch",
 			Name:               "Workspace Apply Patch",
 			Description:        "Apply an approved text patch inside the current workspace root",
@@ -142,6 +186,7 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 			Enabled:       true,
 			ToolCount:     1,
 			ResourceCount: 1,
+			Status:        "enabled",
 		})
 	}
 
@@ -223,6 +268,7 @@ func discoverMCPServers(root string) []mcp.ServerDescriptor {
 			Enabled:       true,
 			ToolCount:     0,
 			ResourceCount: 0,
+			Status:        "degraded",
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -341,6 +387,14 @@ func workspaceRoot() string {
 }
 
 func newServiceFromDiscoveryWithStore(discovered discoverySet, explicitStore *state.Store, providers *provider.Registry) *Service {
+	return newServiceFromDiscovery(discovered, explicitStore, providers, true)
+}
+
+func newServiceFromDiscoveryWithStoreWithoutRecovery(discovered discoverySet, explicitStore *state.Store, providers *provider.Registry) *Service {
+	return newServiceFromDiscovery(discovered, explicitStore, providers, false)
+}
+
+func newServiceFromDiscovery(discovered discoverySet, explicitStore *state.Store, providers *provider.Registry, recoverInterrupted bool) *Service {
 	registry := tool.NewRegistry()
 	for _, item := range discovered.tools {
 		registry.Register(item)
@@ -353,7 +407,10 @@ func newServiceFromDiscoveryWithStore(discovered discoverySet, explicitStore *st
 		opened, err := state.Open(projectRoot)
 		if err != nil {
 			sessions := session.NewRegistry(projectRoot)
-			return NewService(defaultVersion, skill.Common, policy.DefaultMode(), projectRoot, registry, skills, mcpManager, providers, sessions)
+			if recoverInterrupted {
+				return NewService(defaultVersion, skill.Common, policy.DefaultMode(), projectRoot, registry, skills, mcpManager, providers, sessions)
+			}
+			return NewServiceWithoutRecovery(defaultVersion, skill.Common, policy.DefaultMode(), projectRoot, registry, skills, mcpManager, providers, sessions)
 		}
 		store = opened
 	}
@@ -361,7 +418,10 @@ func newServiceFromDiscoveryWithStore(discovered discoverySet, explicitStore *st
 	if err != nil {
 		sessions = session.NewRegistry(projectRoot)
 	}
-	return NewService(defaultVersion, skill.Common, policy.DefaultMode(), projectRoot, registry, skills, mcpManager, providers, sessions)
+	if recoverInterrupted {
+		return NewService(defaultVersion, skill.Common, policy.DefaultMode(), projectRoot, registry, skills, mcpManager, providers, sessions)
+	}
+	return NewServiceWithoutRecovery(defaultVersion, skill.Common, policy.DefaultMode(), projectRoot, registry, skills, mcpManager, providers, sessions)
 }
 
 func newSkillResolver(discovered discoverySet) *skill.Resolver {

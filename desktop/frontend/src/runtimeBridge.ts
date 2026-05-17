@@ -70,6 +70,15 @@ type TaskDescriptor = {
   inputSummary?: string;
   resultSummary?: string;
   approvalStatus?: string;
+  parentTaskId?: string;
+  waitingStatus?: string;
+  agentStep?: number;
+  agentMaxSteps?: number;
+  latestChildTaskId?: string;
+  agentPlanSummary?: string;
+  agentPlanMode?: string;
+  agentCurrentStepTitle?: string;
+  agentLastReasoning?: string;
   createdAt: string;
   updatedAt?: string;
 };
@@ -82,6 +91,24 @@ type ApprovalDescriptor = {
   status: string;
   summary: string;
   targetPaths: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WriteExecutionDescriptor = {
+  id: string;
+  threadId: string;
+  taskId: string;
+  approvalId: string;
+  toolKind: string;
+  operation: string;
+  relatedExecutionId: string;
+  status: string;
+  targetPaths: string[];
+  patchSummary: string;
+  beforeSummary: string;
+  afterSummary: string;
+  resultSummary: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -148,11 +175,15 @@ type ProviderDescriptor = {
   recommendedReason?: string;
 };
 
+type MCPServerStatus = "enabled" | "disabled" | "degraded" | "unreachable";
+
 type MCPDescriptor = {
   id: string;
   source?: string;
+  enabled: boolean;
   toolCount: number;
   resourceCount: number;
+  status: MCPServerStatus;
 };
 
 export type BridgeCheckResult = {
@@ -209,11 +240,21 @@ export type RuntimeStatus = {
     status: string;
     resultSummary: string;
     approvalStatus: string;
+    parentTaskId: string;
+    waitingStatus: string;
+    agentStep: number;
+    agentMaxSteps: number;
+    latestChildTaskId: string;
+    agentPlanSummary: string;
+    agentPlanMode: string;
+    agentCurrentStepTitle: string;
+    agentLastReasoning: string;
     createdAt: string;
     updatedAt: string;
   }>;
   executableKinds: string[];
   approvals: ApprovalDescriptor[];
+  writeExecutions: WriteExecutionDescriptor[];
   messages: MessageDescriptor[];
   toolCalls: ToolCallDescriptor[];
   artifacts: ArtifactDescriptor[];
@@ -255,6 +296,8 @@ type BrowserImportMeta = ImportMeta & {
 
 const defaultRuntimeBaseURL = "http://127.0.0.1:10008";
 let fallbackBrowserState: BrowserWorkspaceState | null = null;
+const defaultFetchRetries = 4;
+const defaultFetchRetryDelayMs = 250;
 
 function hasWailsBridge() {
   return typeof window !== "undefined" && !!window.go?.main?.App;
@@ -279,21 +322,70 @@ function runtimeBaseURL() {
 }
 
 async function fetchEnvelope<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  if (init?.body && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < defaultFetchRetries; attempt += 1) {
+    try {
+      const headers = new Headers(init?.headers);
+      if (init?.body && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+      }
 
-  const response = await fetch(`${runtimeBaseURL()}${path}`, {
-    headers,
-    ...init,
-  });
-  if (!response.ok) {
-    throw new Error(`request failed: ${response.status}`);
-  }
+      const response = await fetch(`${runtimeBaseURL()}${path}`, {
+        headers,
+        ...init,
+      });
+      if (!response.ok) {
+        throw new Error(`request failed: ${response.status}`);
+      }
 
-  const payload = (await response.json()) as ApiEnvelope<T>;
-  return payload.data;
+      const payload = (await response.json()) as ApiEnvelope<T>;
+      return payload.data;
+    } catch (error) {
+      lastError = error;
+      if (attempt === defaultFetchRetries - 1) {
+        break;
+      }
+      await delay(defaultFetchRetryDelayMs * (attempt + 1));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("request failed");
+}
+
+async function fetchEnvelopeOptional<T>(path: string, init?: RequestInit): Promise<T | null> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < defaultFetchRetries; attempt += 1) {
+    try {
+      const headers = new Headers(init?.headers);
+      if (init?.body && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+      }
+
+      const response = await fetch(`${runtimeBaseURL()}${path}`, {
+        headers,
+        ...init,
+      });
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new Error(`request failed: ${response.status}`);
+      }
+
+      const payload = (await response.json()) as ApiEnvelope<T>;
+      return payload.data;
+    } catch (error) {
+      lastError = error;
+      if (attempt === defaultFetchRetries - 1) {
+        break;
+      }
+      await delay(defaultFetchRetryDelayMs * (attempt + 1));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("request failed");
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function groupItems<T extends { group?: string; source?: string; id: string }>(items: T[]) {
@@ -357,10 +449,11 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
   ]);
 
   const activeThreadID = status.activeThreadId || "";
-  const [tasks, approvals, messages, toolCalls, artifacts, events] = activeThreadID
+  const [tasks, approvals, writeExecutions, messages, toolCalls, artifacts, events] = activeThreadID
     ? await Promise.all([
         fetchEnvelope<{ items: TaskDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/tasks`),
         fetchEnvelope<{ items: ApprovalDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/approvals`),
+        fetchEnvelopeOptional<{ items: WriteExecutionDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/write-executions`),
         fetchEnvelope<{ items: MessageDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/messages`),
         fetchEnvelope<{ items: ToolCallDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/tool-calls`),
         fetchEnvelope<{ items: ArtifactDescriptor[] }>(`/api/threads/${encodeURIComponent(activeThreadID)}/artifacts`),
@@ -369,6 +462,7 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
     : [
         { items: [] as TaskDescriptor[] },
         { items: [] as ApprovalDescriptor[] },
+        { items: [] as WriteExecutionDescriptor[] },
         { items: [] as MessageDescriptor[] },
         { items: [] as ToolCallDescriptor[] },
         { items: [] as ArtifactDescriptor[] },
@@ -406,6 +500,15 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
       status: item.status,
       resultSummary: item.resultSummary || "",
       approvalStatus: item.approvalStatus || "",
+      parentTaskId: item.parentTaskId || "",
+      waitingStatus: item.waitingStatus || "",
+      agentStep: item.agentStep || 0,
+      agentMaxSteps: item.agentMaxSteps || 0,
+      latestChildTaskId: item.latestChildTaskId || "",
+      agentPlanSummary: item.agentPlanSummary || "",
+      agentPlanMode: item.agentPlanMode || "",
+      agentCurrentStepTitle: item.agentCurrentStepTitle || "",
+      agentLastReasoning: item.agentLastReasoning || "",
       createdAt: item.createdAt,
       updatedAt: item.updatedAt || item.createdAt,
     })),
@@ -414,6 +517,7 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
       .map((item) => item.kind as string)
       .sort((left, right) => left.localeCompare(right)),
     approvals: approvals.items,
+    writeExecutions: writeExecutions?.items ?? [],
     messages: messages.items,
     toolCalls: toolCalls.items,
     artifacts: artifacts.items,
@@ -422,7 +526,7 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
     runtimeState: status.state,
     runtimeReady: status.ready,
     runtimeMessage: status.message,
-    runtimeSource: status.runtimeSource || "runtime-http",
+    runtimeSource: status.runtimeSource || "remote-app-server",
     supportsSSE: activeThreadID !== "",
     sseEndpoint: activeThreadID ? `${runtimeBaseURL()}/api/threads/${encodeURIComponent(activeThreadID)}/events/stream?limit=200` : "",
     lastSyncAt: new Date().toISOString(),
@@ -474,7 +578,7 @@ export async function CheckBridge(): Promise<BridgeCheckResult> {
     ok: result.ok,
     message: result.message,
     checkedAt: new Date().toISOString(),
-    runtimeHint: "runtime-http",
+    runtimeHint: "remote-app-server",
   };
 }
 

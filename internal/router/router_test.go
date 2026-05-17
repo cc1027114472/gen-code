@@ -178,6 +178,13 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			wantBody:       []string{`"items":[{"id":"approval-1","threadId":"thread-1","taskId":"task-1","toolKind":"workspace.apply_patch","status":"pending"`},
 		},
 		{
+			name:           "write executions",
+			method:         http.MethodGet,
+			path:           "/api/threads/thread-1/write-executions",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"writeexec-1","threadId":"thread-1","taskId":"task-1","approvalId":"approval-1","toolKind":"workspace.apply_patch","operation":"apply","status":"completed"`},
+		},
+		{
 			name:           "approve task",
 			method:         http.MethodPost,
 			path:           "/api/threads/thread-1/tasks/task-1/approve",
@@ -249,7 +256,12 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			method:         http.MethodGet,
 			path:           "/api/mcp/servers",
 			wantStatusCode: http.StatusOK,
-			wantBody:       []string{`"items":[{"id":"server-1","source":"node_modules","enabled":true,"toolCount":2,"resourceCount":1,"status":"enabled"}`},
+			wantBody: []string{
+				`"id":"server-1","source":"node_modules","enabled":true,"toolCount":2,"resourceCount":1,"status":"enabled"`,
+				`"id":"server-2","source":"builtin","enabled":false,"toolCount":0,"resourceCount":0,"status":"disabled"`,
+				`"id":"server-3","source":"node_modules","enabled":true,"toolCount":0,"resourceCount":0,"status":"degraded"`,
+				`"id":"server-4","source":"remote","enabled":true,"toolCount":1,"resourceCount":0,"status":"unreachable"`,
+			},
 		},
 		{
 			name:           "bridge check",
@@ -633,16 +645,16 @@ func (stubRuntimeService) RunTask(_ context.Context, threadID string, taskID str
 		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1007, "task not found")
 	}
 	return runtimecontract.TaskDescriptor{
-		ID:            taskID,
-		ThreadID:      threadID,
-		Title:         "Task 1",
-		Status:        "completed",
-		Kind:          "thread.message.append",
-		InputSummary:  `{"role":"user","content":"Draft spec"}`,
-		ResultSummary: "message appended",
+		ID:             taskID,
+		ThreadID:       threadID,
+		Title:          "Task 1",
+		Status:         "completed",
+		Kind:           "thread.message.append",
+		InputSummary:   `{"role":"user","content":"Draft spec"}`,
+		ResultSummary:  "message appended",
 		ApprovalStatus: "",
-		CreatedAt:     "2026-05-15T00:00:00Z",
-		UpdatedAt:     "2026-05-15T00:05:00Z",
+		CreatedAt:      "2026-05-15T00:00:00Z",
+		UpdatedAt:      "2026-05-15T00:05:00Z",
 	}, nil
 }
 
@@ -660,6 +672,26 @@ func (stubRuntimeService) Approvals(context.Context, string) ([]runtimecontract.
 	}}, nil
 }
 
+func (stubRuntimeService) WriteExecutions(context.Context, string) ([]runtimecontract.WriteExecutionDescriptor, error) {
+	return []runtimecontract.WriteExecutionDescriptor{{
+		ID:                 "writeexec-1",
+		ThreadID:           "thread-1",
+		TaskID:             "task-1",
+		ApprovalID:         "approval-1",
+		ToolKind:           "workspace.apply_patch",
+		Operation:          "apply",
+		RelatedExecutionID: "",
+		Status:             "completed",
+		TargetPaths:        []string{"README.md"},
+		PatchSummary:       "2 patch line(s)",
+		BeforeSummary:      "exists, 1 line(s), 4 byte(s), sha256:oldhash123456",
+		AfterSummary:       "exists, 1 line(s), 4 byte(s), sha256:newhash123456",
+		ResultSummary:      "applied patch to README.md: updated 2 line(s)",
+		CreatedAt:          "2026-05-15T00:00:00Z",
+		UpdatedAt:          "2026-05-15T00:05:00Z",
+	}}, nil
+}
+
 func (stubRuntimeService) ApproveTask(_ context.Context, threadID string, taskID string, _ runtimecontract.ApproveTaskRequest) (runtimecontract.TaskDescriptor, error) {
 	return runtimecontract.TaskDescriptor{
 		ID:             taskID,
@@ -668,7 +700,7 @@ func (stubRuntimeService) ApproveTask(_ context.Context, threadID string, taskID
 		Status:         "completed",
 		Kind:           "workspace.apply_patch",
 		InputSummary:   `{"path":"README.md","patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch"}`,
-		ResultSummary:  "applied patch to README.md: updated 1 line(s)",
+		ResultSummary:  "applied patch to README.md: updated 2 line(s)",
 		ApprovalStatus: "executed",
 		CreatedAt:      "2026-05-15T00:00:00Z",
 		UpdatedAt:      "2026-05-15T00:05:00Z",
@@ -702,13 +734,13 @@ func (stubRuntimeService) UpdateTaskStatus(_ context.Context, threadID string, t
 	}
 
 	return runtimecontract.TaskDescriptor{
-		ID:        taskID,
-		ThreadID:  threadID,
-		Title:     "Task 1",
-		Status:    request.Status,
+		ID:             taskID,
+		ThreadID:       threadID,
+		Title:          "Task 1",
+		Status:         request.Status,
 		ApprovalStatus: "",
-		CreatedAt: "2026-05-15T00:00:00Z",
-		UpdatedAt: "2026-05-15T00:05:00Z",
+		CreatedAt:      "2026-05-15T00:00:00Z",
+		UpdatedAt:      "2026-05-15T00:05:00Z",
 	}, nil
 }
 
@@ -770,14 +802,40 @@ func (stubRuntimeService) Tools(context.Context) ([]runtimecontract.Tool, error)
 }
 
 func (stubRuntimeService) MCPServers(context.Context) ([]runtimecontract.MCPServer, error) {
-	return []runtimecontract.MCPServer{{
-		ID:            "server-1",
-		Source:        "node_modules",
-		Enabled:       true,
-		ToolCount:     2,
-		ResourceCount: 1,
-		Status:        "enabled",
-	}}, nil
+	return []runtimecontract.MCPServer{
+		{
+			ID:            "server-1",
+			Source:        "node_modules",
+			Enabled:       true,
+			ToolCount:     2,
+			ResourceCount: 1,
+			Status:        "enabled",
+		},
+		{
+			ID:            "server-2",
+			Source:        "builtin",
+			Enabled:       false,
+			ToolCount:     0,
+			ResourceCount: 0,
+			Status:        "disabled",
+		},
+		{
+			ID:            "server-3",
+			Source:        "node_modules",
+			Enabled:       true,
+			ToolCount:     0,
+			ResourceCount: 0,
+			Status:        "degraded",
+		},
+		{
+			ID:            "server-4",
+			Source:        "remote",
+			Enabled:       true,
+			ToolCount:     1,
+			ResourceCount: 0,
+			Status:        "unreachable",
+		},
+	}, nil
 }
 
 func (stubRuntimeService) Providers(context.Context) ([]runtimecontract.Provider, error) {
@@ -859,6 +917,10 @@ func (errorRuntimeService) RunTask(context.Context, string, string, runtimecontr
 }
 
 func (errorRuntimeService) Approvals(context.Context, string) ([]runtimecontract.ApprovalDescriptor, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) WriteExecutions(context.Context, string) ([]runtimecontract.WriteExecutionDescriptor, error) {
 	return nil, xerror.Internal(2001, "runtime unavailable")
 }
 
