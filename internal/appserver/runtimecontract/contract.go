@@ -207,11 +207,13 @@ type UpdateTaskStatusRequest struct {
 
 // Skill describes an available runtime skill.
 type Skill struct {
-	ID          string `json:"id"`
-	Group       string `json:"group"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Source      string `json:"source,omitempty"`
+	ID                  string `json:"id"`
+	Group               string `json:"group"`
+	Name                string `json:"name"`
+	Description         string `json:"description,omitempty"`
+	Source              string `json:"source,omitempty"`
+	VerificationStatus  string `json:"verificationStatus,omitempty"`
+	LocalizationChecked bool   `json:"localizationChecked"`
 }
 
 // Tool describes an available runtime tool.

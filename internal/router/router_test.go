@@ -227,7 +227,7 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			method:         http.MethodGet,
 			path:           "/api/skills",
 			wantStatusCode: http.StatusOK,
-			wantBody:       []string{`"items":[{"id":"skill-1","group":"codex","name":"Skill One","description":"Skill description","source":"codex"}`},
+			wantBody:       []string{`"items":[{"id":"skill-1","group":"codex","name":"Skill One","description":"Skill description","source":"codex","verificationStatus":"implemented","localizationChecked":false}`},
 		},
 		{
 			name:           "tools",
@@ -780,11 +780,13 @@ func (stubRuntimeService) StreamEvents(_ context.Context, threadID string, _ run
 
 func (stubRuntimeService) Skills(context.Context) ([]runtimecontract.Skill, error) {
 	return []runtimecontract.Skill{{
-		ID:          "skill-1",
-		Group:       "codex",
-		Name:        "Skill One",
-		Description: "Skill description",
-		Source:      "codex",
+		ID:                  "skill-1",
+		Group:               "codex",
+		Name:                "Skill One",
+		Description:         "Skill description",
+		Source:              "codex",
+		VerificationStatus:  "implemented",
+		LocalizationChecked: false,
 	}}, nil
 }
 

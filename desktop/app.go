@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	_ "modernc.org/sqlite"
 )
@@ -79,6 +80,8 @@ type RuntimeStatus struct {
 	SupportsSSE           bool                    `json:"supportsSSE"`
 	SSEEndpoint           string                  `json:"sseEndpoint"`
 	LastSyncAt            string                  `json:"lastSyncAt"`
+	Skills                []SkillSummary          `json:"skills"`
+	SkillGovernance       []SkillGovernanceGroup  `json:"skillGovernance"`
 	SkillsByGroup         map[string][]string     `json:"skillsByGroup"`
 	ToolsByGroup          map[string][]string     `json:"toolsByGroup"`
 	MCPByGroup            map[string][]string     `json:"mcpByGroup"`
@@ -238,6 +241,23 @@ type RuntimeFlagSummary struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+type SkillSummary struct {
+	ID                  string `json:"id"`
+	Group               string `json:"group"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	Source              string `json:"source"`
+	VerificationStatus  string `json:"verificationStatus"`
+	LocalizationChecked bool   `json:"localizationChecked"`
+}
+
+type SkillGovernanceGroup struct {
+	Group               string `json:"group"`
+	ImplementedCount    int    `json:"implementedCount"`
+	VerifiedCount       int    `json:"verifiedCount"`
+	LocalizationPending int    `json:"localizationPending"`
+}
+
 type BridgeCheckResult struct {
 	OK          bool   `json:"ok"`
 	Message     string `json:"message"`
@@ -381,8 +401,13 @@ type apiEvent struct {
 }
 
 type apiSkill struct {
-	ID    string `json:"id"`
-	Group string `json:"group"`
+	ID                  string `json:"id"`
+	Group               string `json:"group"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	Source              string `json:"source"`
+	VerificationStatus  string `json:"verificationStatus"`
+	LocalizationChecked bool   `json:"localizationChecked"`
 }
 
 type apiTool struct {
@@ -793,6 +818,8 @@ func buildBaseStatus(workspaceRoot string) (*RuntimeStatus, error) {
 		HTTPAccessLog:         true,
 		WorkspaceRoot:         workspaceRoot,
 		DesktopReady:          true,
+		Skills:                []SkillSummary{},
+		SkillGovernance:       []SkillGovernanceGroup{},
 		SkillsByGroup:         map[string][]string{},
 		ToolsByGroup:          map[string][]string{},
 		MCPByGroup:            map[string][]string{},
@@ -921,6 +948,8 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 		status.SSEEndpoint = strings.TrimRight(runtimeBaseURL(), "/") + "/api/threads/" + url.PathEscape(runtimeStatus.ActiveThreadID) + "/events/stream"
 	}
 	status.LastSyncAt = time.Now().Format(time.RFC3339)
+	status.Skills = mapSkills(skillsPayload.Items)
+	status.SkillGovernance = summarizeSkillGovernance(status.Skills)
 	status.SkillsByGroup = groupSkills(skillsPayload.Items)
 	status.ToolsByGroup = groupTools(toolsPayload.Items)
 	status.MCPByGroup = groupMCPServers(mcpPayload.Items)
@@ -1543,6 +1572,71 @@ func groupSkills(items []apiSkill) map[string][]string {
 	return normalizeGroups(groups)
 }
 
+func mapSkills(items []apiSkill) []SkillSummary {
+	result := make([]SkillSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, SkillSummary{
+			ID:                  item.ID,
+			Group:               fallbackText(strings.TrimSpace(item.Group), "common"),
+			Name:                item.Name,
+			Description:         item.Description,
+			Source:              fallbackText(strings.TrimSpace(item.Source), fallbackText(strings.TrimSpace(item.Group), "common")),
+			VerificationStatus:  fallbackText(strings.TrimSpace(item.VerificationStatus), "implemented"),
+			LocalizationChecked: item.LocalizationChecked,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Group == result[j].Group {
+			return result[i].ID < result[j].ID
+		}
+		return result[i].Group < result[j].Group
+	})
+	return result
+}
+
+func summarizeSkillGovernance(items []SkillSummary) []SkillGovernanceGroup {
+	summaries := map[string]*SkillGovernanceGroup{
+		"common": {Group: "common"},
+		"codex":  {Group: "codex"},
+		"cc":     {Group: "cc"},
+	}
+	for _, item := range items {
+		group := fallbackText(strings.TrimSpace(item.Group), "common")
+		summary, ok := summaries[group]
+		if !ok {
+			summary = &SkillGovernanceGroup{Group: group}
+			summaries[group] = summary
+		}
+		summary.ImplementedCount++
+		if strings.EqualFold(strings.TrimSpace(item.VerificationStatus), "verified") {
+			summary.VerifiedCount++
+		}
+		if !item.LocalizationChecked {
+			summary.LocalizationPending++
+		}
+	}
+
+	order := []string{"common", "codex", "cc"}
+	result := make([]SkillGovernanceGroup, 0, len(summaries))
+	for _, group := range order {
+		if summary, ok := summaries[group]; ok {
+			result = append(result, *summary)
+			delete(summaries, group)
+		}
+	}
+	if len(summaries) > 0 {
+		extras := make([]string, 0, len(summaries))
+		for group := range summaries {
+			extras = append(extras, group)
+		}
+		sort.Strings(extras)
+		for _, group := range extras {
+			result = append(result, *summaries[group])
+		}
+	}
+	return result
+}
+
 func groupTools(items []apiTool) map[string][]string {
 	groups := map[string][]string{}
 	for _, item := range items {
@@ -1622,9 +1716,119 @@ func localToolCatalog() []apiTool {
 		{ID: "workspace.read_file", Name: "Read File", Description: "Read a file from workspace", Permission: "read-only", Source: "runtime", Kind: "workspace.read_file", ReadOnly: true, Executable: true},
 		{ID: "workspace.list_files", Name: "List Files", Description: "List files from workspace", Permission: "read-only", Source: "runtime", Kind: "workspace.list_files", ReadOnly: true, Executable: true},
 		{ID: "workspace.search_text", Name: "Search Text", Description: "Search text in workspace", Permission: "read-only", Source: "runtime", Kind: "workspace.search_text", ReadOnly: true, Executable: true},
+		{ID: "workspace.stat_file", Name: "Stat File", Description: "Inspect workspace file metadata", Permission: "read-only", Source: "runtime", Kind: "workspace.stat_file", ReadOnly: true, Executable: true},
+		{ID: "workspace.read_files_batch", Name: "Read Files Batch", Description: "Read multiple workspace text files", Permission: "read-only", Source: "runtime", Kind: "workspace.read_files_batch", ReadOnly: true, Executable: true},
+		{ID: "workspace.list_files_filtered", Name: "List Files Filtered", Description: "List workspace entries filtered by glob", Permission: "read-only", Source: "runtime", Kind: "workspace.list_files_filtered", ReadOnly: true, Executable: true},
+		{ID: "workspace.search_text_detailed", Name: "Search Text Detailed", Description: "Search workspace text with file and line details", Permission: "read-only", Source: "runtime", Kind: "workspace.search_text_detailed", ReadOnly: true, Executable: true},
 		{ID: "workspace.apply_patch", Name: "Apply Patch", Description: "Apply an approved text patch inside the workspace", Permission: "ask-user", Source: "runtime", Kind: "workspace.apply_patch", ReadOnly: false, Executable: true},
+		{ID: "workspace.apply_patch.rollback", Name: "Rollback Patch", Description: "Rollback the latest approved text patch inside the workspace", Permission: "ask-user", Source: "runtime", Kind: "workspace.apply_patch.rollback", ReadOnly: false, Executable: true},
 		{ID: "thread.message.append", Name: "Append Message", Description: "Append a thread-local message", Permission: "workspace-write", Source: "runtime", Kind: "thread.message.append", ReadOnly: false, Executable: true},
+		{ID: "agent.run", Name: "Agent Run", Description: "Run the minimal thread agent loop", Permission: "ask-user", Source: "runtime", Kind: "agent.run", ReadOnly: false, Executable: true},
+		{ID: "model.response.create", Name: "Model Response Create", Description: "Create a single non-streaming model response", Permission: "ask-user", Source: "runtime", Kind: "model.response.create", ReadOnly: false, Executable: true},
+		{ID: "skills.list", Name: "Skills List", Description: "List runtime-visible skills", Permission: "read-only", Source: "runtime", Kind: "runtime.discovery", ReadOnly: true, Executable: false},
+		{ID: "mcp.servers.list", Name: "MCP Servers List", Description: "List configured MCP servers", Permission: "read-only", Source: "runtime", Kind: "runtime.discovery", ReadOnly: true, Executable: false},
+		{ID: "bridge.check", Name: "Bridge Check", Description: "Verify the desktop/runtime bridge", Permission: "ask-user", Source: "runtime", Kind: "bridge", ReadOnly: true, Executable: false},
 	}
+}
+
+func localSkillCatalog(workspaceRoot string) []apiSkill {
+	parentRoot := filepath.Dir(workspaceRoot)
+	roots := []struct {
+		root   string
+		group  string
+		source string
+	}{
+		{root: filepath.Join(parentRoot, "codex", ".codex", "skills"), group: "codex", source: "codex"},
+		{root: filepath.Join(parentRoot, "CC ibwhale", ".claude", "skills"), group: "cc", source: "cc"},
+		{root: filepath.Join(parentRoot, "CC ibwhale", "ibwhale", ".claude", "skills"), group: "cc", source: "cc"},
+	}
+	items := []apiSkill{
+		{
+			ID:                  "common.browser",
+			Group:               "common",
+			Name:                "Browser",
+			Description:         "Common browser automation skill",
+			Source:              "common",
+			VerificationStatus:  "implemented",
+			LocalizationChecked: false,
+		},
+	}
+	seen := map[string]struct{}{
+		"common:common.browser": {},
+	}
+	for _, candidate := range roots {
+		entries, err := os.ReadDir(candidate.root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			id, ok := localSkillIDFromEntry(entry)
+			if !ok || strings.TrimSpace(id) == "" {
+				continue
+			}
+			key := candidate.group + ":" + id
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			items = append(items, apiSkill{
+				ID:                  id,
+				Group:               candidate.group,
+				Name:                humanizeLabel(id),
+				Description:         localSkillGroupDescription(candidate.group),
+				Source:              candidate.source,
+				VerificationStatus:  "implemented",
+				LocalizationChecked: false,
+			})
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Group == items[j].Group {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].Group < items[j].Group
+	})
+	return items
+}
+
+func localSkillIDFromEntry(entry os.DirEntry) (string, bool) {
+	switch {
+	case entry.IsDir():
+		return entry.Name(), true
+	case strings.EqualFold(filepath.Ext(entry.Name()), ".md"):
+		return strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name())), true
+	default:
+		return "", false
+	}
+}
+
+func localSkillGroupDescription(group string) string {
+	switch strings.ToLower(strings.TrimSpace(group)) {
+	case "codex":
+		return "Discovered from codex skills"
+	case "cc":
+		return "Discovered from cc skills"
+	default:
+		return "Shared runtime skill"
+	}
+}
+
+func humanizeLabel(value string) string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '-' || r == '_' || unicode.IsSpace(r)
+	})
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		runes := []rune(strings.ToLower(part))
+		runes[0] = unicode.ToUpper(runes[0])
+		parts[i] = string(runes)
+	}
+	return strings.Join(parts, " ")
 }
 
 func groupMCPServers(items []apiMCPServer) map[string][]string {
@@ -2406,7 +2610,14 @@ func (s *localRuntimeStore) snapshotLocked(base RuntimeStatus) (RuntimeStatus, e
 	status.Events = toEventSummaries(events)
 	status.Approvals = toApprovalSummaries(approvals)
 	status.WriteExecutions = toWriteExecutionSummaries(writeExecutions)
+	localSkills := localSkillCatalog(base.WorkspaceRoot)
+	status.Skills = mapSkills(localSkills)
+	status.SkillGovernance = summarizeSkillGovernance(status.Skills)
+	status.SkillsByGroup = groupSkills(localSkills)
 	status.ToolsByGroup = groupTools(localToolCatalog())
+	status.MCPByGroup = map[string][]string{
+		"builtin": {"local-files (enabled, tools:1 resources:1)"},
+	}
 	status.Providers = localProviderCatalog()
 	status.RuntimeState = "fallback"
 	status.RuntimeReady = true
