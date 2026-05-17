@@ -104,11 +104,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 - 只跑 smoke lane
 - 通过自举脚本拉起 API 与前端
 - 作为 canonical remote `5174 + 10008` 的默认 desktop smoke gate
+- 失败时自动上传 smoke 日志产物，便于排查前后端启动或页面验收问题
+- 成功时上传 smoke summary JSON，失败时额外上传失败 JSON 与页面截图
 
 ## 相关文档
 
 - [Desktop 文案编码与运行态一致性验收报告](/D:/GOWorks/gen-code-heji/gen-code/docs/superpowers/plans/2026-05-17-desktop-copy-encoding-acceptance-report.md)
 - [Desktop Copy Encoding And Runtime Alignment Implementation Plan](/D:/GOWorks/gen-code-heji/gen-code/docs/superpowers/plans/2026-05-17-desktop-copy-encoding-and-runtime-alignment-plan.md)
+- [Desktop Smoke Gate 首次真实运行手册](/D:/GOWorks/gen-code-heji/gen-code/docs/superpowers/plans/2026-05-18-desktop-smoke-first-run-playbook.md)
 
 ## 下一步建议
 

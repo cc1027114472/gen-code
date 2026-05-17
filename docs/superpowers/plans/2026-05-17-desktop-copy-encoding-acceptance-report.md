@@ -65,6 +65,8 @@
 - 这条自动化链当前覆盖 canonical remote `5174 + 10008`，并区分：
   - smoke：首屏文案、runtime lane、刷新方式
   - full：任务流、审批与写执行可见性
+- smoke gate 在 CI 失败时会上传前后端日志产物，便于定位启动或验收失败原因。
+- smoke gate 会稳定产出 `desktop-smoke-summary.json`；失败时还会补 `desktop-smoke-failure.json` 与失败截图。
 - fallback lane 仍不作为同级 browser 自动化通过条件，继续以手工验收和 Go 测试证据为主。
 
 当前验证结论补充：
@@ -73,6 +75,7 @@
 - `powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-with-bootstrap.ps1` 是默认 smoke gate 的本地对等入口。
 - smoke lane 适合作为本地快速预检和默认 CI smoke gate。
 - full lane 仍保留为更重的完整链路验收，当前更适合作为手动触发或发布前检查。
+- smoke summary 中的 `refreshMode` 已从不稳定的 `unknown` 收敛为可用的连接态信号，例如 `SSE 已连接`。
 
 ## 通过标准
 

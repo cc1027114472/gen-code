@@ -15,6 +15,7 @@ API_BASE_URL = os.environ.get("GEN_CODE_API_BASE_URL", "http://127.0.0.1:10008")
 API_RETRIES = int(os.environ.get("GEN_CODE_API_RETRIES", "5"))
 API_RETRY_DELAY = float(os.environ.get("GEN_CODE_API_RETRY_DELAY", "0.5"))
 ACCEPTANCE_MODE = os.environ.get("GEN_CODE_ACCEPTANCE_MODE", "full").strip().lower() or "full"
+ARTIFACT_DIR = os.environ.get("GEN_CODE_ARTIFACT_DIR", os.path.join("tmp", "desktop-smoke-artifacts"))
 
 SECOND_BATCH_TOOL_KINDS = {
     "workspace.stat_file",
@@ -62,6 +63,22 @@ def summarize_refresh_mode(page) -> dict:
             "sseConnected": False,
             "evidence": "SSE 重连中",
         }
+    if "SSE 已连接" in body_text:
+        return {
+            "label": "SSE 已连接",
+            "detail": "UI reported active SSE connection in status detail",
+            "supportsSSE": True,
+            "sseConnected": True,
+            "evidence": "SSE 已连接",
+        }
+    if "SSE 已断开" in body_text:
+        return {
+            "label": "SSE 已断开",
+            "detail": "UI reported SSE disconnect and fallback to manual refresh",
+            "supportsSSE": True,
+            "sseConnected": False,
+            "evidence": "SSE 已断开",
+        }
     if "手动刷新" in body_text:
         return {
             "label": "手动刷新",
@@ -69,6 +86,14 @@ def summarize_refresh_mode(page) -> dict:
             "supportsSSE": False,
             "sseConnected": False,
             "evidence": "手动刷新",
+        }
+    if "刷新方式" in body_text and "当前未接入 SSE" in body_text:
+        return {
+            "label": "手动刷新",
+            "detail": "UI reported no SSE endpoint and manual refresh mode",
+            "supportsSSE": False,
+            "sseConnected": False,
+            "evidence": "当前未接入 SSE",
         }
     return {
         "label": "unknown",
@@ -152,6 +177,27 @@ def fail(message: str, *, category: str, details=None):
     if details is not None:
         payload["details"] = details
     raise RuntimeError(json.dumps(payload, ensure_ascii=False))
+
+
+def ensure_artifact_dir() -> str:
+    os.makedirs(ARTIFACT_DIR, exist_ok=True)
+    return ARTIFACT_DIR
+
+
+def write_json_artifact(name: str, payload: dict) -> str:
+    artifact_dir = ensure_artifact_dir()
+    path = os.path.join(artifact_dir, name)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+    return path
+
+
+def write_png_artifact(name: str, payload: bytes) -> str:
+    artifact_dir = ensure_artifact_dir()
+    path = os.path.join(artifact_dir, name)
+    with open(path, "wb") as handle:
+        handle.write(payload)
+    return path
 
 
 def api(method: str, path: str, data=None):
@@ -581,6 +627,14 @@ def run_smoke_acceptance(page, runtime_status: dict, thread_id: str) -> dict:
     }
 
 
+def write_failure_screenshot(page) -> str | None:
+    try:
+      screenshot = page.screenshot(full_page=True)
+      return write_png_artifact("desktop-smoke-failure.png", screenshot)
+    except Exception:
+      return None
+
+
 def main() -> int:
     run_id = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
     thread_name = f"Playwright Acceptance {run_id}"
@@ -613,6 +667,7 @@ def main() -> int:
                     **run_smoke_acceptance(page, runtime_status, thread_id),
                 }
                 emit_release_baseline(result)
+                write_json_artifact("desktop-smoke-summary.json", result)
                 print(json.dumps(result, ensure_ascii=False))
                 return 0
 
@@ -990,6 +1045,7 @@ def main() -> int:
                 "acceptanceReport": acceptance_report,
             }
             emit_release_baseline(result)
+            write_json_artifact("desktop-full-summary.json", result)
             print(json.dumps(result, ensure_ascii=False))
             return 0
         finally:
@@ -1045,6 +1101,7 @@ def emit_release_baseline(result: dict) -> None:
 
 
 if __name__ == "__main__":
+    failure_page = None
     try:
         raise SystemExit(main())
     except Exception as exc:
@@ -1052,5 +1109,11 @@ if __name__ == "__main__":
             parsed = json.loads(str(exc))
         except json.JSONDecodeError:
             parsed = {"ok": False, "category": "unknown", "error": str(exc)}
+        write_json_artifact("desktop-smoke-failure.json", parsed)
+        if "page" in globals():
+            try:
+                write_failure_screenshot(globals()["page"])
+            except Exception:
+                pass
         print(json.dumps(parsed, ensure_ascii=False), file=sys.stderr)
         raise

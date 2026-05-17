@@ -30,10 +30,16 @@ if (-not $goCommand) {
 }
 
 $frontendRoot = Join-Path $projectRoot "desktop\frontend"
+$artifactRoot = Join-Path $projectRoot "tmp\desktop-smoke-artifacts"
 $frontendStdout = Join-Path $projectRoot "desktop\frontend\vite-smoke.stdout.log"
 $frontendStderr = Join-Path $projectRoot "desktop\frontend\vite-smoke.stderr.log"
 $serverStdout = Join-Path $projectRoot "server-smoke.stdout.log"
 $serverStderr = Join-Path $projectRoot "server-smoke.stderr.log"
+
+if (-not (Test-Path $artifactRoot)) {
+  New-Item -ItemType Directory -Path $artifactRoot | Out-Null
+}
+$env:GEN_CODE_ARTIFACT_DIR = $artifactRoot
 
 function Wait-HttpOk {
   param(

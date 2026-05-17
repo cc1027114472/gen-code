@@ -63,3 +63,35 @@ jobs:
       - name: Run desktop smoke acceptance
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-with-bootstrap.ps1
+
+      - name: Upload smoke logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-logs
+          if-no-files-found: ignore
+          path: |
+            server-smoke.stdout.log
+            server-smoke.stderr.log
+            desktop/frontend/vite-smoke.stdout.log
+            desktop/frontend/vite-smoke.stderr.log
+
+      - name: Upload smoke summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-summary
+          if-no-files-found: ignore
+          path: |
+            tmp/desktop-smoke-artifacts/desktop-smoke-summary.json
+            tmp/desktop-smoke-artifacts/desktop-full-summary.json
+            tmp/desktop-smoke-artifacts/desktop-smoke-failure.json
+
+      - name: Upload smoke screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-screenshot
+          if-no-files-found: ignore
+          path: |
+            tmp/desktop-smoke-artifacts/desktop-smoke-failure.png
