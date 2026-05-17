@@ -46,6 +46,7 @@ func TestDiscoverMCPServers(t *testing.T) {
 	items := discoverMCPServers(root)
 	require.Len(t, items, 1)
 	require.Equal(t, "@modelcontextprotocol", items[0].ID)
+	require.Equal(t, "degraded", items[0].Status)
 }
 
 func TestDiscoverSiblingRuntimeContentUsesExpectedSiblingPaths(t *testing.T) {
@@ -103,6 +104,7 @@ func TestDiscoverSiblingRuntimeContentUsesExpectedSiblingPaths(t *testing.T) {
 		Enabled:       true,
 		ToolCount:     0,
 		ResourceCount: 0,
+		Status:        "degraded",
 	})
 }
 

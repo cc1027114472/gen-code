@@ -412,8 +412,10 @@ type apiProvider struct {
 type apiMCPServer struct {
 	ID            string `json:"id"`
 	Source        string `json:"source"`
+	Enabled       bool   `json:"enabled"`
 	ToolCount     int    `json:"toolCount"`
 	ResourceCount int    `json:"resourceCount"`
+	Status        string `json:"status"`
 }
 
 type apiBridgeCheck struct {
@@ -1629,7 +1631,8 @@ func groupMCPServers(items []apiMCPServer) map[string][]string {
 	groups := map[string][]string{}
 	for _, item := range items {
 		group := fallbackText(strings.TrimSpace(item.Source), "runtime")
-		label := fmt.Sprintf("%s (tools:%d resources:%d)", item.ID, item.ToolCount, item.ResourceCount)
+		status := fallbackText(strings.TrimSpace(item.Status), "unknown")
+		label := fmt.Sprintf("%s (%s, tools:%d resources:%d)", item.ID, status, item.ToolCount, item.ResourceCount)
 		groups[group] = append(groups[group], label)
 	}
 	return normalizeGroups(groups)

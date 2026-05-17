@@ -82,12 +82,18 @@
 | Full 1:1 Chinese localization audit for copied skills | not implemented | not yet documented as completed | Required by `AGENTS.md`; needs a dedicated audit pass. |
 | Capability-level verification for each grouped skill | not implemented | no matrix before this doc | This document starts the inventory but does not verify each skill individually. |
 
+### Skill Governance Boundary
+
+- `implemented` for skill grouping does not mean each discovered skill is individually `verified`.
+- The minimum governance baseline is: group ownership, discovery source, localization check status, and verification status.
+- Phase B acceptance verifies runtime and desktop behavior first; grouped skill inventory remains a separately tracked governance surface.
+
 ## 6. MCP Surface
 
 | Capability | Status | Evidence | Notes |
 | --- | --- | --- | --- |
 | MCP server metadata listing | implemented | `runtimecontract.MCPServer`, runtime discovery | Tool/resource counts and enabled state are exposed. |
-| MCP server health and degraded diagnostics | not implemented | roadmap only | No strong health or probe UX yet. |
+| MCP server health status contract | partial | `internal/core/mcp/manager.go`, `internal/core/runtime/status.go`, runtime tests | Minimal `enabled/disabled/degraded/unreachable` status contract is now exposed, but still metadata-level only. |
 | End-to-end MCP execution acceptance lane | not implemented | none | Still a future milestone. |
 
 ## 7. Desktop Product Surface

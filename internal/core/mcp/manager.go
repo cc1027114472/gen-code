@@ -9,6 +9,7 @@ type ServerDescriptor struct {
 	Enabled       bool   `json:"enabled"`
 	ToolCount     int    `json:"tool_count"`
 	ResourceCount int    `json:"resource_count"`
+	Status        string `json:"status,omitempty"`
 }
 
 // Manager stores MCP server metadata.
