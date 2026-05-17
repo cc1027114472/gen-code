@@ -156,6 +156,22 @@ type WriteExecutionViewModel = {
   updatedAt: string;
 };
 
+type SkillGovernanceViewModel = {
+  group: string;
+  implementedCount: number;
+  verifiedCount: number;
+  localizationPending: number;
+  skillIDs: string[];
+  summary: string;
+};
+
+type SkillGovernanceRollup = {
+  implementedCount: number;
+  verifiedCount: number;
+  localizationPending: number;
+  summary: string;
+};
+
 const defaultDraft: Draft = {
   title: "",
   kind: "agent.run",
@@ -324,6 +340,8 @@ export default function App() {
   const toolCalls = runtimeStatus?.toolCalls ?? [];
   const artifacts = runtimeStatus?.artifacts ?? [];
   const events = runtimeStatus?.events ?? [];
+  const skills = runtimeStatus?.skills ?? [];
+  const skillGovernance = runtimeStatus?.skillGovernance ?? [];
 
   const latestTask = useMemo(() => newestBy(tasks, (item) => item.updatedAt || item.createdAt), [tasks]);
   const latestToolCall = useMemo(
@@ -368,13 +386,50 @@ export default function App() {
     () => writeExecutionViewModels.find((item) => item.operation === "apply" && item.status === "completed") ?? null,
     [writeExecutionViewModels],
   );
+  const skillGovernanceViewModels = useMemo<SkillGovernanceViewModel[]>(() => {
+    const skillIDsByGroup = new Map<string, string[]>();
+    for (const skill of skills) {
+      const group = (skill.group || "common").trim() || "common";
+      const current = skillIDsByGroup.get(group) ?? [];
+      current.push(skill.id);
+      current.sort((left, right) => left.localeCompare(right));
+      skillIDsByGroup.set(group, current);
+    }
+    return skillGovernance.map((item) => {
+      const skillIDs = skillIDsByGroup.get(item.group) ?? [];
+      return {
+        group: item.group,
+        implementedCount: item.implementedCount,
+        verifiedCount: item.verifiedCount,
+        localizationPending: item.localizationPending,
+        skillIDs,
+        summary: `${item.group}: implemented=${item.implementedCount} verified=${item.verifiedCount} localization-pending=${item.localizationPending}`,
+      };
+    });
+  }, [skillGovernance, skills]);
+  const skillGovernanceRollup = useMemo<SkillGovernanceRollup>(() => {
+    const rollup = skillGovernanceViewModels.reduce(
+      (acc, item) => {
+        acc.implementedCount += item.implementedCount;
+        acc.verifiedCount += item.verifiedCount;
+        acc.localizationPending += item.localizationPending;
+        return acc;
+      },
+      { implementedCount: 0, verifiedCount: 0, localizationPending: 0, summary: "" },
+    );
+    rollup.summary =
+      rollup.implementedCount > 0
+        ? `implemented=${rollup.implementedCount} verified=${rollup.verifiedCount} localization-pending=${rollup.localizationPending}`
+        : "当前未发现可汇总的 skill 治理数据";
+    return rollup;
+  }, [skillGovernanceViewModels]);
 
   const workflowHighlights = useMemo(
     () => [
-      { label: "Waiting", value: String(activeThreadWorkflow?.waitingTaskCount ?? workspaceSummary?.waitingTaskCount ?? 0), detail: "Tasks blocked on child work or approvals" },
-      { label: "Approval", value: String(activeThreadWorkflow?.pendingApprovalCount ?? workspaceSummary?.pendingApprovalCount ?? 0), detail: "Pending approvals needing a decision" },
-      { label: "Writes", value: String(activeThreadWorkflow?.writeExecutionCount ?? workspaceSummary?.writeExecutionCount ?? 0), detail: "Completed write executions in view" },
-      { label: "Failed", value: String(activeThreadWorkflow?.failedTaskCount ?? workspaceSummary?.failedTaskCount ?? 0), detail: "Tasks that need attention or rerun" },
+      { label: "等待中", value: String(activeThreadWorkflow?.waitingTaskCount ?? workspaceSummary?.waitingTaskCount ?? 0), detail: "因子任务或审批而阻塞的任务数" },
+      { label: "待审批", value: String(activeThreadWorkflow?.pendingApprovalCount ?? workspaceSummary?.pendingApprovalCount ?? 0), detail: "等待用户决策的审批项数" },
+      { label: "写执行", value: String(activeThreadWorkflow?.writeExecutionCount ?? workspaceSummary?.writeExecutionCount ?? 0), detail: "当前视图内已完成的写执行数" },
+      { label: "失败", value: String(activeThreadWorkflow?.failedTaskCount ?? workspaceSummary?.failedTaskCount ?? 0), detail: "需要关注或重跑的任务数" },
     ],
     [activeThreadWorkflow, workspaceSummary],
   );
@@ -484,12 +539,12 @@ export default function App() {
   const fallbackNote = formatFallbackNote(runtimeStatus ?? undefined);
   const statusTone = error ? "warning" : runtimeStatus?.runtimeReady || bridgeResult?.ok ? "good" : "muted";
   const projectName = runtimeStatus?.projectRoot?.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "gen-code";
-  const contextSummary = `messages ${messages.length} / tool calls ${toolCalls.length} / write executions ${writeExecutions.length}`;
+  const contextSummary = `消息 ${messages.length} / 工具调用 ${toolCalls.length} / 写执行 ${writeExecutions.length}`;
   const activeThreadRememberedURL = activeThread ? threadPreviewMemory.current[activeThread.id] || "" : "";
   const preferredProvider = runtimeStatus?.providers.find((item) => item.recommended) ?? runtimeStatus?.providers[0] ?? null;
   const providerSummary = preferredProvider
     ? `${preferredProvider.kind} / ${preferredProvider.preferredApiStyle || "unknown"} / ${preferredProvider.defaultModel || "no-model"}`
-    : "暂无 provider";
+    : "暂无 Provider";
 
   const threadPreviewSeed = (threadID: string, rawURL?: string) => {
     const candidate = rawURL?.trim();
@@ -736,7 +791,7 @@ export default function App() {
             </div>
             <div>
               <p className="topbar__eyebrow">Gen Code / Codex-style Desktop</p>
-              <h1>Thread 工作台</h1>
+              <h1>线程工作台</h1>
             </div>
           </div>
 
@@ -760,8 +815,8 @@ export default function App() {
                 <h2>{projectName}</h2>
                 <p className="project-card__lead">{runtimeStatus?.projectRoot || "正在加载项目路径..."}</p>
                 <div className="project-card__meta">
-                  <span className="mini-chip">{`workspace ${runtimeStatus?.workspaceId || "loading"}`}</span>
-                  <span className="mini-chip">{`threads ${runtimeStatus?.threadCount || 0}`}</span>
+                  <span className="mini-chip">{`工作区 ${runtimeStatus?.workspaceId || "加载中"}`}</span>
+                  <span className="mini-chip">{`线程 ${runtimeStatus?.threadCount || 0}`}</span>
                 </div>
                 {workspaceSummary?.summary ? <p className="sidebar-note sidebar-note--strong">{workspaceSummary.summary}</p> : null}
               </section>
@@ -770,16 +825,16 @@ export default function App() {
                 <div className="section-header">
                   <div>
                     <p className="section-title">线程导航</p>
-                    <h3>Workspace Threads</h3>
+                    <h3>工作区线程</h3>
                   </div>
                   <button className="secondary-action" onClick={handleCreateThread} disabled={loading} type="button">
-                    新建 thread
+                    新建线程
                   </button>
                 </div>
 
                 <div className="thread-stack">
                   {(runtimeStatus?.threads ?? []).length === 0 ? (
-                    <div className="thread-empty">当前还没有 thread</div>
+                    <div className="thread-empty">当前还没有线程</div>
                   ) : (
                     runtimeStatus?.threads.map((thread) => (
                       <button
@@ -796,7 +851,7 @@ export default function App() {
                         type="button"
                       >
                         <div className="thread-card__head">
-                          <span className={`chip chip--${thread.isActive ? "good" : "muted"}`}>{thread.isActive ? "Active" : "Idle"}</span>
+                          <span className={`chip chip--${thread.isActive ? "good" : "muted"}`}>{thread.isActive ? "当前" : "空闲"}</span>
                           <span className="thread-card__status">{thread.status}</span>
                         </div>
                         <strong>{thread.name}</strong>
@@ -821,8 +876,8 @@ export default function App() {
               <section className="left-panel left-panel--muted">
                 <p className="section-title">能力摘要</p>
                 <p className="sidebar-note">右侧预览区首轮只服务本地联调，不扩成公网通用浏览器。</p>
-                <p className="sidebar-note">当前 active thread 会驱动本地预览 URL 自动携带 thread 参数，并记住各自的预览地址。</p>
-                <p className="sidebar-note sidebar-note--strong">可执行 kind: {executableKinds.join(" / ")}</p>
+                <p className="sidebar-note">当前活动线程会驱动本地预览 URL 自动携带 thread 参数，并记住各自的预览地址。</p>
+                <p className="sidebar-note sidebar-note--strong">可执行类型：{executableKinds.join(" / ")}</p>
               </section>
             </aside>
 
@@ -830,16 +885,16 @@ export default function App() {
               <section className="stage-header card">
                 <div>
                   <p className="section-title">当前线程</p>
-                  <h2>{activeThread?.name || "等待 active thread"}</h2>
+                  <h2>{activeThread?.name || "等待活动线程"}</h2>
                   <p className="stage-header__lead">
-                    {activeThreadWorkflow?.summary || (activeThread ? "这里展示当前 thread 的消息流、任务进度、工具调用和实时事件。" : "请先创建或激活一个 thread。")}
+                    {activeThreadWorkflow?.summary || (activeThread ? "这里展示当前线程的消息流、任务进度、工具调用和实时事件。" : "请先创建或激活一个线程。")}
                   </p>
                 </div>
                 <div className="stage-header__meta">
                   <span className="chip chip--soft">{activeThread?.permissionMode || "ask-user"}</span>
                   <span className={`chip ${runtimeStatus?.runtimeSource === "local-fallback" ? "chip--warning" : "chip--soft"}`}>{runtimeLaneLabel}</span>
                   <span className={`chip ${runtimeStatus?.supportsSSE ? "chip--good" : "chip--warning"}`}>{refreshModeLabel}</span>
-                  {activeThreadWorkflow?.latestTaskId ? <span className="chip chip--soft">{`latest task ${activeThreadWorkflow.latestTaskId}`}</span> : null}
+                  {activeThreadWorkflow?.latestTaskId ? <span className="chip chip--soft">{`最新任务 ${activeThreadWorkflow.latestTaskId}`}</span> : null}
                 </div>
               </section>
 
@@ -847,7 +902,7 @@ export default function App() {
                 <div className="section-header">
                   <div>
                     <p className="section-title">工作流概览</p>
-                    <h3>Workspace 与 active thread 的显式运行摘要</h3>
+                    <h3>工作区与活动线程的显式运行摘要</h3>
                   </div>
                 </div>
                 <div className="results-grid">
@@ -858,24 +913,24 @@ export default function App() {
                 <div className="flow-list">
                   <article className="flow-item flow-item--neutral">
                     <div className="flow-item__header">
-                      <span className="mini-chip">Workspace</span>
-                      <span className="flow-item__meta">{workspaceSummary?.activeThreadName || "no active thread"}</span>
+                      <span className="mini-chip">工作区</span>
+                      <span className="flow-item__meta">{workspaceSummary?.activeThreadName || "暂无活动线程"}</span>
                     </div>
-                    <h4>{workspaceSummary?.id || runtimeStatus?.workspaceId || "workspace"}</h4>
-                    <p>{workspaceSummary?.summary || runtimeStatus?.projectRoot || "No workspace summary available."}</p>
+                    <h4>{workspaceSummary?.id || runtimeStatus?.workspaceId || "工作区"}</h4>
+                    <p>{workspaceSummary?.summary || runtimeStatus?.projectRoot || "暂无工作区摘要。"}</p>
                   </article>
                   <article className="flow-item flow-item--neutral">
                     <div className="flow-item__header">
-                      <span className="mini-chip">Thread</span>
-                      <span className="flow-item__meta">{activeThreadWorkflow?.status || activeThread?.status || "idle"}</span>
+                      <span className="mini-chip">线程</span>
+                      <span className="flow-item__meta">{activeThreadWorkflow?.status || activeThread?.status || "空闲"}</span>
                     </div>
-                    <h4>{activeThreadWorkflow?.name || activeThread?.name || "No active thread"}</h4>
-                    <p>{activeThreadWorkflow?.summary || "Activate a thread to inspect task and approval relationships."}</p>
+                    <h4>{activeThreadWorkflow?.name || activeThread?.name || "暂无活动线程"}</h4>
+                    <p>{activeThreadWorkflow?.summary || "激活一个线程后，可以查看任务、审批和写执行关系。"}</p>
                   </article>
                   <article className={`flow-item flow-item--neutral ${latestAgentTask ? "flow-item--agent-parent" : ""}`}>
                     <div className="flow-item__header">
-                      <span className="mini-chip">Agent Workflow</span>
-                      <span className="flow-item__meta">{latestAgentTask ? formatTaskStatus(latestAgentTask.status) : "ready"}</span>
+                      <span className="mini-chip">Agent 闭环</span>
+                      <span className="flow-item__meta">{latestAgentTask ? formatTaskStatus(latestAgentTask.status) : "就绪"}</span>
                     </div>
                     <h4>{latestAgentTask ? formatTaskHeadline(latestAgentTask) : "默认目标工作流"}</h4>
                     <p>{formatAgentWorkflowOverview(latestAgentTask)}</p>
@@ -887,9 +942,9 @@ export default function App() {
                 <div className="section-header">
                   <div>
                     <p className="section-title">任务输入</p>
-                    <h3>给 active thread 追加一个真实任务</h3>
+                  <h3>给活动线程追加一条真实任务</h3>
                   </div>
-                  <span className="mini-chip">{runtimeStatus?.activeThreadId ? "active thread ready" : "no active thread"}</span>
+                  <span className="mini-chip">{runtimeStatus?.activeThreadId ? "活动线程已就绪" : "暂无活动线程"}</span>
                 </div>
 
                 <div className="composer-grid">
@@ -904,7 +959,7 @@ export default function App() {
                   </label>
 
                   <label className="field field--compact">
-                    <span className="field__label">kind</span>
+                    <span className="field__label">类型</span>
                     <select
                       data-testid="task-kind-select"
                       value={draft.kind}
@@ -920,7 +975,7 @@ export default function App() {
                 </div>
 
                 <label className="field">
-                  <span className="field__label">input</span>
+                  <span className="field__label">输入</span>
                   <textarea
                     data-testid="task-input-textarea"
                     value={draft.input}
@@ -1029,12 +1084,12 @@ export default function App() {
                     {approvalRequiredTasks.slice(0, 4).map((task) => (
                       <article className="flow-item flow-item--warning" key={task.id}>
                         <div className="flow-item__header">
-                          <span className="mini-chip">Task Relationship</span>
+                          <span className="mini-chip">任务关系</span>
                           <span className="flow-item__meta">{task.kind}</span>
                         </div>
                         <h4>{task.title}</h4>
-                        <p>{task.approvalSummary || task.workflowLabel || "Approval relationship available."}</p>
-                        <p>{task.writeExecutionSummary || (task.writeExecutionId ? `write ${task.writeExecutionId}` : "no write execution yet")}</p>
+                        <p>{task.approvalSummary || task.workflowLabel || "已检测到审批关系。"}</p>
+                        <p>{task.writeExecutionSummary || (task.writeExecutionId ? `写执行 ${task.writeExecutionId}` : "暂无写执行记录")}</p>
                       </article>
                     ))}
                   </div>
@@ -1065,7 +1120,7 @@ export default function App() {
                     <p className="section-title">结果抽屉</p>
                     <h3>当前线程的关键结果、审批状态与写执行摘要</h3>
                   </div>
-                  <span className="mini-chip">{activeThread?.id || "no-thread"}</span>
+                  <span className="mini-chip">{activeThread?.id || "暂无线程"}</span>
                 </div>
 
                 <div className={`fallback-note ${runtimeStatus?.runtimeSource === "local-fallback" ? "fallback-note--warning" : ""}`}>
@@ -1114,8 +1169,24 @@ export default function App() {
                     value={writeExecutionViewModels.length > 0 ? `${writeExecutionViewModels.length} 条记录` : "暂无记录"}
                     detail={latestWriteExecution ? `${latestWriteExecution.patchSummary} / ${latestWriteExecution.afterSummary}` : "通过审批并完成 patch 后，会在这里显示最近一次审计摘要"}
                   />
-                  <InfoCard label="Provider" value={preferredProvider?.kind || "暂无 provider"} detail={providerSummary} />
-                  <InfoCard label="状态存储" value={runtimeStatus?.stateStore || "sqlite"} detail={runtimeStatus?.statePath || "project-local state store"} />
+                  <InfoCard
+                    label="Skill 治理"
+                    value={skillGovernanceRollup.implementedCount > 0 ? `${skillGovernanceRollup.implementedCount} 个已发现` : "暂无技能清单"}
+                    detail={skillGovernanceRollup.summary}
+                  />
+                  <ResultCard
+                    label="Skill 分组"
+                    title={skillGovernanceViewModels[0] ? `${skillGovernanceViewModels[0].group} / ${skillGovernanceViewModels.length} 组` : "暂无分组"}
+                    body={
+                      skillGovernanceViewModels.length > 0
+                        ? skillGovernanceViewModels
+                            .map((item) => `${item.summary}${item.skillIDs.length > 0 ? ` / ${item.skillIDs.slice(0, 3).join(", ")}` : ""}`)
+                            .join(" | ")
+                        : "当前运行态还没有可展示的 Skill 治理摘要"
+                    }
+                  />
+                  <InfoCard label="Provider" value={preferredProvider?.kind || "暂无 Provider"} detail={providerSummary} />
+                  <InfoCard label="状态存储" value={runtimeStatus?.stateStore || "sqlite"} detail={runtimeStatus?.statePath || "项目本地状态存储"} />
                 </div>
               </section>
             </section>
@@ -1199,16 +1270,16 @@ export default function App() {
                   <span className="browser-statusbar__title" data-testid="browser-status-title">
                     {activeBrowserTab?.title || "本地预览"}
                   </span>
-                  <span className="mini-chip">{activeBrowserTab?.status || "ready"}</span>
+                  <span className="mini-chip">{activeBrowserTab?.status || "就绪"}</span>
                 </div>
 
                 {showPreviewDebug ? (
                   <div className="left-panel left-panel--muted" data-testid="browser-debug-panel">
-                    <p className="section-title">Preview Debug</p>
-                    <p className="sidebar-note">{`submitted: ${lastSubmittedPreviewURL || "none"}`}</p>
-                    <p className="sidebar-note">{`tab url: ${activeBrowserTab?.url || "none"}`}</p>
-                    <p className="sidebar-note">{`owner: ${previewOwnerThreadID.current || "none"}`}</p>
-                    <p className="sidebar-note">{`memory: ${activeThreadRememberedURL || "none"}`}</p>
+                    <p className="section-title">预览调试</p>
+                    <p className="sidebar-note">{`提交地址：${lastSubmittedPreviewURL || "无"}`}</p>
+                    <p className="sidebar-note">{`标签地址：${activeBrowserTab?.url || "无"}`}</p>
+                    <p className="sidebar-note">{`归属线程：${previewOwnerThreadID.current || "无"}`}</p>
+                    <p className="sidebar-note">{`线程记忆：${activeThreadRememberedURL || "无"}`}</p>
                   </div>
                 ) : null}
 
@@ -1411,14 +1482,14 @@ function formatTaskWaitingStatusLabel(task: ExtendedRuntimeTask) {
 }
 
 function formatTaskHeadline(task: ExtendedRuntimeTask, parentTask?: ExtendedRuntimeTask) {
-  const base = task.title || task.kind || "untitled task";
+  const base = task.title || task.kind || "未命名任务";
   if (isAgentParentTask(task)) {
     return `${base} / agent.run`;
   }
   if (parentTask) {
-    return `${base} / ${task.kind || "task"} / 父任务 ${parentTask.title || parentTask.id}`;
+    return `${base} / ${task.kind || "任务"} / 父任务 ${parentTask.title || parentTask.id}`;
   }
-  return `${base} / ${task.kind || "task"}`;
+  return `${base} / ${task.kind || "任务"}`;
 }
 
 function formatTaskLinkSummary(task: ExtendedRuntimeTask) {
@@ -1473,10 +1544,10 @@ function formatWaitingStatus(status: string) {
 function formatAgentMeta(task: RuntimeTask) {
   const parts: string[] = [];
   if (task.agentStep > 0 && task.agentMaxSteps > 0) {
-    parts.push(`step ${task.agentStep}/${task.agentMaxSteps}`);
+    parts.push(`步骤 ${task.agentStep}/${task.agentMaxSteps}`);
   }
   if (task.latestChildTaskId) {
-    parts.push(`child ${task.latestChildTaskId}`);
+    parts.push(`子任务 ${task.latestChildTaskId}`);
   }
   if (task.waitingStatus) {
     parts.push(formatWaitingStatus(task.waitingStatus));
@@ -1487,19 +1558,19 @@ function formatAgentMeta(task: RuntimeTask) {
 function formatAgentDetails(task: RuntimeTask) {
   const parts: string[] = [];
   if (task.agentPlanSummary) {
-    parts.push(`plan: ${task.agentPlanSummary}`);
+    parts.push(`计划：${task.agentPlanSummary}`);
   }
   if (task.agentPlanMode) {
-    parts.push(`mode: ${task.agentPlanMode}`);
+    parts.push(`模式：${task.agentPlanMode}`);
   }
   if (task.agentCurrentStepTitle) {
-    parts.push(`current: ${task.agentCurrentStepTitle}`);
+    parts.push(`当前步骤：${task.agentCurrentStepTitle}`);
   }
   if (task.agentLastReasoning) {
-    parts.push(`reasoning: ${task.agentLastReasoning}`);
+    parts.push(`思路摘要：${task.agentLastReasoning}`);
   }
   if (task.resultSummary) {
-    parts.push(`result: ${task.resultSummary}`);
+    parts.push(`结果：${task.resultSummary}`);
   }
   return parts.join("\n");
 }
@@ -1579,7 +1650,7 @@ function FlowBodyText({ text }: { text: string }) {
 
 function formatTaskDisplaySummary(task: ExtendedRuntimeTask, parentTask?: ExtendedRuntimeTask) {
   if (isAgentParentTask(task)) {
-    return formatAgentDetails(task) || task.waitingSummary || task.resultSummary || task.input || "等待 agent 执行";
+    return formatAgentDetails(task) || task.waitingSummary || task.resultSummary || task.input || "等待 Agent 执行";
   }
 
   const parts = [task.workflowLabel, task.waitingSummary, task.resultSummary].filter(Boolean) as string[];
@@ -1872,7 +1943,7 @@ function EmbeddedPreviewPage({
   threadName: string;
 }) {
   const paneTitle =
-    pane === "thread-one" ? "Thread One Preview" : pane === "thread-two" ? "Thread Two Preview" : "Local Preview";
+    pane === "thread-one" ? "线程一预览" : pane === "thread-two" ? "线程二预览" : "本地预览";
 
   return (
     <main className="shell shell--embedded-preview" data-testid="embedded-preview-root">
@@ -1880,13 +1951,13 @@ function EmbeddedPreviewPage({
         <header className="workspace-topbar workspace-topbar--embedded-preview">
           <div className="workspace-topbar__title">
             <div>
-              <p className="topbar__eyebrow">Gen Code / Local Preview</p>
+              <p className="topbar__eyebrow">Gen Code / 本地预览</p>
               <h1>{paneTitle}</h1>
             </div>
           </div>
           <div className="workspace-topbar__meta">
-            <span className="chip chip--soft">{threadID || "no thread"}</span>
-            <span className="chip chip--soft">{threadName || "preview mode"}</span>
+            <span className="chip chip--soft">{threadID || "暂无线程"}</span>
+            <span className="chip chip--soft">{threadName || "嵌入预览模式"}</span>
           </div>
         </header>
 
@@ -1895,12 +1966,12 @@ function EmbeddedPreviewPage({
             <section className="stage-header card">
               <div>
                 <p className="section-title">本地预览</p>
-                <h2>{threadName || "未命名 thread"}</h2>
+                <h2>{threadName || "未命名线程"}</h2>
                 <p className="stage-header__lead">右侧浏览器已进入轻量嵌入态，避免把整套工作台递归渲染进 iframe。</p>
               </div>
               <div className="stage-header__meta">
-                <span className="chip chip--soft">{`pane ${pane}`}</span>
-                <span className="chip chip--soft">{threadID || "no-thread"}</span>
+                <span className="chip chip--soft">{`预览面板 ${pane}`}</span>
+                <span className="chip chip--soft">{threadID || "暂无线程"}</span>
               </div>
             </section>
 
@@ -1908,17 +1979,17 @@ function EmbeddedPreviewPage({
               <div className="section-header">
                 <div>
                   <p className="section-title">预览上下文</p>
-                  <h3>当前 thread 的本地预览参数</h3>
+                  <h3>当前线程的本地预览参数</h3>
                 </div>
               </div>
               <div className="flow-list">
                 <article className="flow-item flow-item--good">
                   <div className="flow-item__header">
-                    <span className="mini-chip">preview</span>
-                    <span className="flow-item__meta">embedded</span>
+                    <span className="mini-chip">预览</span>
+                    <span className="flow-item__meta">嵌入态</span>
                   </div>
                   <h4>{paneTitle}</h4>
-                  <p>{`threadId=${threadID || "none"} / threadName=${threadName || "none"} / pane=${pane}`}</p>
+                  <p>{`线程 ID=${threadID || "无"} / 线程名=${threadName || "无"} / 预览面板=${pane}`}</p>
                 </article>
               </div>
             </section>

@@ -151,6 +151,18 @@ type EventDescriptor = {
 type SkillDescriptor = {
   id: string;
   group: string;
+  name?: string;
+  description?: string;
+  source?: string;
+  verificationStatus?: string;
+  localizationChecked?: boolean;
+};
+
+export type SkillGovernanceGroup = {
+  group: string;
+  implementedCount: number;
+  verifiedCount: number;
+  localizationPending: number;
 };
 
 type ToolDescriptor = {
@@ -271,6 +283,8 @@ export type RuntimeStatus = {
   supportsSSE: boolean;
   sseEndpoint: string;
   lastSyncAt: string;
+  skills: SkillDescriptor[];
+  skillGovernance: SkillGovernanceGroup[];
   skillsByGroup: Record<string, string[]>;
   toolsByGroup: Record<string, string[]>;
   mcpByGroup: Record<string, string[]>;
@@ -435,6 +449,38 @@ function groupMCP(items: MCPDescriptor[]) {
   }, {});
 }
 
+function summarizeSkillGovernance(items: SkillDescriptor[]): SkillGovernanceGroup[] {
+  const summaries = new Map<string, SkillGovernanceGroup>([
+    ["common", { group: "common", implementedCount: 0, verifiedCount: 0, localizationPending: 0 }],
+    ["codex", { group: "codex", implementedCount: 0, verifiedCount: 0, localizationPending: 0 }],
+    ["cc", { group: "cc", implementedCount: 0, verifiedCount: 0, localizationPending: 0 }],
+  ]);
+
+  for (const item of items) {
+    const group = item.group?.trim() || "common";
+    const current = summaries.get(group) ?? { group, implementedCount: 0, verifiedCount: 0, localizationPending: 0 };
+    current.implementedCount += 1;
+    if ((item.verificationStatus || "").trim().toLowerCase() === "verified") {
+      current.verifiedCount += 1;
+    }
+    if (!item.localizationChecked) {
+      current.localizationPending += 1;
+    }
+    summaries.set(group, current);
+  }
+
+  const preferredOrder = ["common", "codex", "cc"];
+  const ordered: SkillGovernanceGroup[] = [];
+  for (const group of preferredOrder) {
+    const summary = summaries.get(group);
+    if (summary) {
+      ordered.push(summary);
+      summaries.delete(group);
+    }
+  }
+  return [...ordered, ...[...summaries.values()].sort((left, right) => left.group.localeCompare(right.group))];
+}
+
 function runtimeSourceOrDefault(status?: Partial<RuntimeStatusView>) {
   return status?.runtimeSource || "remote-app-server";
 }
@@ -453,19 +499,19 @@ function runtimeMessageOrDefault(status?: Partial<RuntimeStatusView>) {
     return message;
   }
   if (runtimeSourceOrDefault(status) === "local-fallback") {
-    return "desktop local-fallback active; manual refresh mode";
+    return "desktop local-fallback ?????????????";
   }
-  return "remote app-server runtime connected";
+  return "remote app-server runtime ???";
 }
 
 export function formatRuntimeLaneLabel(status?: Partial<RuntimeStatusView>) {
   switch (runtimeSourceOrDefault(status)) {
     case "remote-app-server":
-      return "远端运行时 / remote-app-server";
+      return "????? / remote-app-server";
     case "local-fallback":
-      return "本地回退 / local-fallback";
+      return "???? / local-fallback";
     default:
-      return status?.runtimeSource || "未知运行时";
+      return status?.runtimeSource || "?????";
   }
 }
 
@@ -476,50 +522,50 @@ export function formatRuntimeLaneDetail(status?: Partial<RuntimeStatusView>) {
     return detail;
   }
   if (source === "local-fallback") {
-    return "canonical app-server 不可用，已切换到项目本地 SQLite fallback。";
+    return "canonical app-server ???????????? SQLite fallback?";
   }
-  return "当前结果来自 canonical app-server shared runtime。";
+  return "?????? canonical app-server shared runtime?";
 }
 
 export function formatRuntimeTrustLabel(status?: Partial<RuntimeStatusView>) {
   switch (runtimeTrustOrDefault(status)) {
     case "canonical":
-      return "可信链路 / canonical";
+      return "???? / canonical";
     case "degraded":
-      return "降级链路 / degraded";
+      return "???? / degraded";
     default:
-      return `链路状态 / ${runtimeTrustOrDefault(status)}`;
+      return `???? / ${runtimeTrustOrDefault(status)}`;
   }
 }
 
 export function formatRefreshMode(status?: Partial<RuntimeStatusView>, sseConnected?: boolean) {
   if (!status?.supportsSSE) {
-    return "手动刷新模式";
+    return "??????";
   }
   if (sseConnected) {
-    return "SSE 实时刷新";
+    return "SSE ????";
   }
-  return "SSE 重连中";
+  return "SSE ???";
 }
 
 export function formatRefreshModeDetail(status?: Partial<RuntimeStatusView>, sseConnected?: boolean) {
   if (!status?.supportsSSE) {
     if (runtimeSourceOrDefault(status) === "local-fallback") {
-      return "本地 fallback 不提供 SSE，请用刷新按钮同步审批、写执行和任务快照。";
+      return "?? fallback ??? SSE?????????????????????";
     }
-    return "当前运行链路暂未提供 SSE，请手动刷新查看最新状态。";
+    return "?????????? SSE?????????????";
   }
   if (sseConnected) {
-    return "SSE 已接通，任务和审批更新会自动同步到工作台。";
+    return "SSE ?????????????????????";
   }
-  return "当前运行时支持 SSE，但事件流正在重连，工作台可能会短暂滞后。";
+  return "??????? SSE?????????????????????";
 }
 
 export function formatFallbackNote(status?: Partial<RuntimeStatusView>) {
   if (runtimeSourceOrDefault(status) !== "local-fallback") {
-    return "当前走远端运行时链路，实时同步应来自共享 app-server。";
+    return "???????????????????? app-server?";
   }
-  return "当前走 desktop local-fallback。这个降级链路会保留本地审批、任务历史和写执行快照，但它不代表 canonical 远端运行时。";
+  return "??? desktop local-fallback??????????????????????????????? canonical ??????";
 }
 
 async function buildRuntimeStatus(): Promise<RuntimeStatus> {
@@ -625,6 +671,13 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
     supportsSSE: activeThreadID !== "",
     sseEndpoint: activeThreadID ? `${runtimeBaseURL()}/api/threads/${encodeURIComponent(activeThreadID)}/events/stream?limit=200` : "",
     lastSyncAt: new Date().toISOString(),
+    skills: [...skillPayload.items].sort((left, right) => {
+      if ((left.group || "") === (right.group || "")) {
+        return left.id.localeCompare(right.id);
+      }
+      return (left.group || "").localeCompare(right.group || "");
+    }),
+    skillGovernance: summarizeSkillGovernance(skillPayload.items),
     skillsByGroup: groupItems(skillPayload.items),
     toolsByGroup: groupTools(toolPayload.items),
     mcpByGroup: groupMCP(mcpPayload.items),
@@ -638,7 +691,7 @@ async function buildRuntimeStatus(): Promise<RuntimeStatus> {
     stateStore: status.stateStore || "sqlite",
     statePath: status.statePath || "",
     usesProjectLocalStore: (status.stateStore || "").toLowerCase() === "sqlite",
-    recoverySummary: `Browser bridge connected. Active thread: ${activeThreadID || "none"}, tasks: ${tasks.items.length}, messages: ${messages.items.length}, tool calls: ${toolCalls.items.length}, artifacts: ${artifacts.items.length}.`,
+    recoverySummary: `浏览器桥接已连接。活动线程：${activeThreadID || "无"}，任务：${tasks.items.length}，消息：${messages.items.length}，工具调用：${toolCalls.items.length}，产物：${artifacts.items.length}。`,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -647,7 +700,7 @@ export async function GetAppInfo(): Promise<string> {
   if (hasWailsBridge()) {
     return WailsGetAppInfo();
   }
-  return "gen-code browser bridge ready";
+  return "gen-code 浏览器桥接已就绪";
 }
 
 export async function GetRuntimeStatus(): Promise<RuntimeStatus> {

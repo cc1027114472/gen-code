@@ -102,6 +102,21 @@ func TestDesktopFallbackThreadTaskFlow(t *testing.T) {
 	} else if !strings.Contains(strings.Join(tools, " "), "read-only") {
 		t.Fatalf("expected fallback tool labels to include read-only metadata, got %v", tools)
 	}
+	if len(afterAdvance.Skills) == 0 {
+		t.Fatal("expected fallback skill inventory")
+	}
+	if afterAdvance.Skills[0].VerificationStatus == "" {
+		t.Fatal("expected fallback skills to include verification status")
+	}
+	if len(afterAdvance.SkillGovernance) == 0 {
+		t.Fatal("expected fallback skill governance summary")
+	}
+	if afterAdvance.SkillGovernance[0].Group == "" {
+		t.Fatal("expected non-empty skill governance group")
+	}
+	if !strings.Contains(afterAdvance.RuntimeMessage, "manual refresh") {
+		t.Fatalf("expected fallback runtime message to mention manual refresh, got %q", afterAdvance.RuntimeMessage)
+	}
 }
 
 func TestDesktopFallbackRuntimeStatusShowsManualRefreshMode(t *testing.T) {
