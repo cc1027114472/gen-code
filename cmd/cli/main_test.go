@@ -53,6 +53,7 @@ func TestRuntimeStatusUsesRemoteSourceWhenServerIsAvailable(t *testing.T) {
 	require.Contains(t, output, "canonical runtime target: "+server.URL)
 	require.Contains(t, output, "source trust: canonical")
 	require.Contains(t, output, "source detail: canonical shared runtime served by the app-server entry")
+	require.Contains(t, output, "mcp metadata verification: metadata health only; end-to-end MCP execution is not verified")
 	require.Contains(t, output, "active thread task count: 3")
 	require.Contains(t, output, "active thread event count: 5")
 }
@@ -148,12 +149,14 @@ func TestMCPListPrintsHealthStatusAndTrust(t *testing.T) {
 	})
 
 	require.Contains(t, output, "mcp list")
-	require.Contains(t, output, "source: local-fallback")
-	require.Contains(t, output, "source trust: degraded")
-	require.Contains(t, output, "status=enabled")
-	require.Contains(t, output, "status=disabled")
-	require.Contains(t, output, "status=degraded")
-	require.Contains(t, output, "status=unreachable")
+	require.Contains(t, output, "source: remote-app-server")
+	require.Contains(t, output, "source trust: canonical")
+	require.Contains(t, output, "metadata verification: metadata health only; end-to-end MCP execution is not verified")
+	require.Contains(t, output, "configured servers: 4")
+	require.Contains(t, output, "filesystem (enabled, metadata health: enabled) [source=node_modules, tools=2, resources=1]")
+	require.Contains(t, output, "memory (disabled, metadata health: disabled) [source=builtin, tools=0, resources=0]")
+	require.Contains(t, output, "remote-proxy (enabled, metadata health: degraded) [source=node_modules, tools=0, resources=0]")
+	require.Contains(t, output, "stale-bridge (enabled, metadata health: unreachable) [source=node_modules, tools=1, resources=0]")
 }
 
 func TestTasksListPrintsAgentPlanMetadata(t *testing.T) {

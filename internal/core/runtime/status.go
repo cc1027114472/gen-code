@@ -958,18 +958,7 @@ func groupSource(group skill.Group) string {
 }
 
 func normalizeMCPServerStatus(item mcp.ServerDescriptor) string {
-	status := strings.ToLower(strings.TrimSpace(item.Status))
-	switch status {
-	case "enabled", "disabled", "degraded", "unreachable":
-		return status
-	}
-	if !item.Enabled {
-		return "disabled"
-	}
-	if item.ToolCount == 0 && item.ResourceCount == 0 {
-		return "degraded"
-	}
-	return "enabled"
+	return mcp.NormalizeServerStatus(item)
 }
 
 func toEventDescriptor(item session.Event) runtimecontract.EventDescriptor {

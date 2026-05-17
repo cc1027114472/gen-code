@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/provider"
 	"llmtrace/internal/core/session"
@@ -335,6 +336,53 @@ func TestRunnerExecutesModelResponseTask(t *testing.T) {
 	require.Len(t, toolCalls, 2)
 	require.Equal(t, KindModelResponse, toolCalls[0].ToolID)
 	require.Equal(t, "completed", toolCalls[1].Status)
+}
+
+func TestRunnerExecutesMCPToolInvokeTask(t *testing.T) {
+	registry := session.NewRegistry(t.TempDir())
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "MCP",
+		PermissionMode: policy.ReadOnly,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Invoke synthetic echo",
+		Kind:  KindMCPToolInvoke,
+		Input: `{"serverId":"synthetic","toolName":"echo","arguments":{"message":"hello"}}`,
+	})
+	require.True(t, ok)
+
+	manager := mcp.NewManager([]mcp.ServerDescriptor{{
+		ID:            "synthetic",
+		Source:        "runtime.synthetic",
+		Enabled:       true,
+		ToolCount:     1,
+		ResourceCount: 0,
+		Status:        "enabled",
+	}})
+	manager.RegisterExecutor("synthetic", "echo", func(arguments map[string]any) (mcp.InvocationResult, error) {
+		return mcp.InvocationResult{
+			Content: fmt.Sprintf("echo %v", arguments["message"]),
+		}, nil
+	})
+
+	result, err := New(registry, nil).WithMCP(manager).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "mcp tool synthetic/echo executed")
+
+	toolCalls, ok := registry.ToolCalls(thread.ID)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 2)
+	require.Equal(t, "running", toolCalls[0].Status)
+	require.Equal(t, "completed", toolCalls[1].Status)
+
+	approvals, ok := registry.Approvals(thread.ID)
+	require.True(t, ok)
+	require.Empty(t, approvals)
+
+	writeExecutions, ok := registry.WriteExecutions(thread.ID)
+	require.True(t, ok)
+	require.Empty(t, writeExecutions)
 }
 
 func TestRunnerFailsModelResponseTaskWhenProviderFails(t *testing.T) {

@@ -330,6 +330,24 @@ def run_thread_mutation_scenario(page, thread_id: str, scenario: dict) -> dict:
     }
 
 
+def run_mcp_execution_scenario(page, thread_id: str, scenario: dict) -> dict:
+    scenario_result = run_direct_tool_scenario(page, thread_id, scenario)
+    completed_task = scenario_result["task"]
+    record = wait_for_tool_call(
+        thread_id,
+        lambda item: item["toolId"] == scenario["kind"]
+        and item["status"] == "completed"
+        and scenario["summary_contains"] in item["summary"],
+    )
+    return {
+        "task": completed_task,
+        "record": record,
+        "visibility": scenario_result["visibility"],
+        "serverId": scenario["input"]["serverId"],
+        "toolName": scenario["input"]["toolName"],
+    }
+
+
 def wait_for_new_assistant_message(thread_id: str, baseline_count: int, timeout_seconds: float = 60.0) -> dict:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
@@ -533,6 +551,19 @@ def main() -> int:
                         "kind": "workspace.search_text_detailed",
                         "input": {"query": "KindWorkspaceStat", "path": "internal/core/runner", "limit": 20},
                         "summary_contains": "detailed matches",
+                    },
+                )
+            )
+            mcp_execution_results = []
+            mcp_execution_results.append(
+                run_mcp_execution_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Invoke MCP echo {run_id}",
+                        "kind": "mcp.tool.invoke",
+                        "input": {"serverId": "synthetic", "toolName": "echo", "arguments": {"message": "hello"}},
+                        "summary_contains": "mcp tool synthetic/echo executed",
                     },
                 )
             )
@@ -748,6 +779,15 @@ def main() -> int:
                             1 for item in direct_results if item["visibility"]["toolKindVisible"]
                         ),
                     },
+                    "mcpExecutionVisibility": {
+                        "scenarioCount": len(mcp_execution_results),
+                        "visibleByTitleCount": sum(
+                            1 for item in mcp_execution_results if item["visibility"]["taskCardVisible"]
+                        ),
+                        "visibleByToolKindFallbackCount": sum(
+                            1 for item in mcp_execution_results if item["visibility"]["toolKindVisible"]
+                        ),
+                    },
                 },
                 "fallback": {
                     "mode": "go-test-evidence",
@@ -785,6 +825,19 @@ def main() -> int:
                         "visibility": item["visibility"],
                     }
                     for item in direct_results
+                ],
+                "mcpExecutionResults": [
+                    {
+                        "taskId": item["task"]["id"],
+                        "title": item["task"]["title"],
+                        "kind": item["task"]["kind"],
+                        "serverId": item["serverId"],
+                        "toolName": item["toolName"],
+                        "resultSummary": item["task"]["resultSummary"],
+                        "record": item["record"],
+                        "visibility": item["visibility"],
+                    }
+                    for item in mcp_execution_results
                 ],
                 "threadMutationTasks": [
                     {

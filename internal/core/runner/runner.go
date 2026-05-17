@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/provider"
 	"llmtrace/internal/core/session"
@@ -24,6 +25,7 @@ const (
 	KindToolCallAppend              = "thread.toolcall.append"
 	KindArtifactAppend              = "thread.artifact.append"
 	KindRuntimeFlagSet              = "thread.runtimeflag.set"
+	KindMCPToolInvoke               = "mcp.tool.invoke"
 	KindWorkspaceRead               = "workspace.read_file"
 	KindWorkspaceList               = "workspace.list_files"
 	KindWorkspaceSearch             = "workspace.search_text"
@@ -71,6 +73,7 @@ type Registry interface {
 type Runner struct {
 	registry Registry
 	models   ModelExecutor
+	mcp      *mcp.Manager
 }
 
 type ModelExecutor interface {
@@ -79,6 +82,15 @@ type ModelExecutor interface {
 
 func New(registry Registry, models ModelExecutor) *Runner {
 	return &Runner{registry: registry, models: models}
+}
+
+// WithMCP attaches an MCP manager to the runner.
+func (r *Runner) WithMCP(manager *mcp.Manager) *Runner {
+	if r == nil {
+		return nil
+	}
+	r.mcp = manager
+	return r
 }
 
 func (r *Runner) RecoverInterruptedTasks() error {
@@ -763,6 +775,23 @@ func (r *Runner) execute(ctx context.Context, threadID string, task session.Task
 			return "", err
 		}
 		return fmt.Sprintf("runtime flag %s updated", input.Key), nil
+	case KindMCPToolInvoke:
+		var input mcp.InvocationRequest
+		if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
+			return "", err
+		}
+		if r.mcp == nil {
+			return "", fmt.Errorf("mcp execution unavailable")
+		}
+		result, err := r.mcp.Invoke(input)
+		if err != nil {
+			return "", err
+		}
+		summary := fmt.Sprintf("mcp tool %s/%s executed", result.ServerID, result.ToolName)
+		if compact := compactSummary(strings.TrimSpace(result.Content), 120); compact != "" {
+			summary = fmt.Sprintf("%s: %s", summary, compact)
+		}
+		return summary, nil
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedTaskKind, task.Kind)
 	}

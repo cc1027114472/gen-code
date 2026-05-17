@@ -55,6 +55,7 @@
 | `bridge.check` | implemented | runtime tests | Read-only runtime probe. |
 | `skills.list` | verified | CLI output tests + runtime discovery surface | Grouped inventory fields are surfaced, but per-skill acceptance is still separate. |
 | `mcp.servers.list` | verified | CLI output tests + runtime discovery surface | Metadata-only lane covers `enabled/disabled/degraded/unreachable` health states. |
+| `mcp.tool.invoke` | verified | runtime tests + CLI invoke + Playwright acceptance | Verified through the synthetic in-process MCP execution lane. |
 
 ## 4. Model And Agent Execution
 
@@ -85,7 +86,7 @@
 | --- | --- | --- | --- |
 | MCP server metadata listing | implemented | `runtimecontract.MCPServer`, runtime discovery | Tool/resource counts and enabled state are exposed. |
 | MCP server health status contract | verified | `internal/core/mcp/manager.go`, `internal/core/runtime/status.go`, runtime tests, CLI output tests | `enabled`, `disabled`, `degraded`, and `unreachable` stay explicit. |
-| End-to-end MCP execution acceptance lane | not implemented | none | Still a future milestone. |
+| End-to-end MCP execution acceptance lane | verified | `internal/core/mcp/manager.go`, `internal/core/runner/runner.go`, `cmd/cli/main.go`, `scripts/verify-desktop-live-refresh.py` | Verified through the synthetic/minimal executable lane; this does not claim all external MCP servers are accepted. |
 
 ## 7. Desktop Product Surface
 
@@ -105,7 +106,7 @@
 
 ## 9. Highest-Priority Remaining Gaps
 
-1. Extend MCP from metadata health verification to a real execution acceptance lane.
-2. Audit grouped skill imports against the `AGENTS.md` localization and isolation rules.
-3. Expand explicit primary-lane verification to the remaining read tools that are still only indirectly covered.
-4. Continue desktop UX polish for parent/child task and interrupted-task recovery flows.
+1. Audit grouped skill imports against the `AGENTS.md` localization and isolation rules.
+2. Expand explicit primary-lane verification to the remaining read tools that are still only indirectly covered.
+3. Continue desktop UX polish for parent/child task and interrupted-task recovery flows.
+4. Decide whether to extend MCP beyond the current synthetic execution baseline to real external server execution.

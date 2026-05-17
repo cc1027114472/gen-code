@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"llmtrace/internal/appserver/runtimecontract"
+	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/runtime"
 	"llmtrace/internal/core/skill"
 )
@@ -758,6 +759,7 @@ func printRuntimeStatus(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Printf("  active skill group: %s\n", core.ActiveSkillGroup)
 	fmt.Printf("  permission mode: %s\n", core.PermissionMode)
 	fmt.Printf("  configured mcp server count: %d\n", core.ConfiguredMCPServers)
+	fmt.Printf("  mcp metadata verification: %s\n", mcp.MetadataVerificationNote)
 	fmt.Printf("  skills discovered: %d\n", countSkills(facade.service))
 	fmt.Printf("  tools discovered: %d\n", len(facade.service.ToolDescriptors()))
 	fmt.Printf("  mcp discovered: %d\n", len(facade.service.MCPDescriptors()))
@@ -1367,16 +1369,18 @@ func printTools(ctx context.Context, facade *runtimeFacade) error {
 }
 
 func printMCP(ctx context.Context, facade *runtimeFacade) error {
-	fmt.Println("mcp list")
-	fmt.Printf("  source: %s\n", facade.runtimeSource())
-	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(facade.runtimeSource()))
-	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	items, err := facade.mcp(ctx)
 	if err != nil {
 		return err
 	}
+	fmt.Println("mcp list")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(facade.runtimeSource()))
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  metadata verification: %s\n", mcp.MetadataVerificationNote)
+	fmt.Printf("  configured servers: %d\n", len(items))
 	for _, item := range items {
-		fmt.Printf("  - %s (%s, status=%s, enabled=%t, tools=%d, resources=%d)\n", item.ID, fallbackText(item.Source, "unknown"), fallbackText(item.Status, "unknown"), item.Enabled, item.ToolCount, item.ResourceCount)
+		fmt.Printf("  - %s [source=%s, tools=%d, resources=%d]\n", summarizeMCPMetadata(item), fallbackText(item.Source, "unknown"), item.ToolCount, item.ResourceCount)
 	}
 	return nil
 }
@@ -1487,6 +1491,17 @@ func skillGroupSourceLabel(group skill.Group) string {
 	default:
 		return "unknown"
 	}
+}
+
+func summarizeMCPMetadata(item runtimecontract.MCPServer) string {
+	return mcp.MetadataHealthSummary(mcp.ServerDescriptor{
+		ID:            item.ID,
+		Source:        item.Source,
+		Enabled:       item.Enabled,
+		ToolCount:     item.ToolCount,
+		ResourceCount: item.ResourceCount,
+		Status:        item.Status,
+	})
 }
 
 func resolveTaskCreateInput(kind string, options taskCreateInputOptions) (string, string, error) {

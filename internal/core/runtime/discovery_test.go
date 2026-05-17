@@ -47,6 +47,69 @@ func TestDiscoverMCPServers(t *testing.T) {
 	require.Len(t, items, 1)
 	require.Equal(t, "@modelcontextprotocol", items[0].ID)
 	require.Equal(t, "degraded", items[0].Status)
+	require.Equal(t, "@modelcontextprotocol (enabled, metadata health: degraded)", mcp.MetadataHealthSummary(items[0]))
+}
+
+func TestMCPMetadataHealthSummaryUsesStableLabels(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		server      mcp.ServerDescriptor
+		wantStatus  string
+		wantSummary string
+	}{
+		{
+			name: "enabled server stays enabled",
+			server: mcp.ServerDescriptor{
+				ID:            "filesystem",
+				Enabled:       true,
+				ToolCount:     2,
+				ResourceCount: 1,
+				Status:        "enabled",
+			},
+			wantStatus:  "enabled",
+			wantSummary: "filesystem (enabled, metadata health: enabled)",
+		},
+		{
+			name: "disabled server stays disabled",
+			server: mcp.ServerDescriptor{
+				ID:     "memory",
+				Status: "enabled",
+			},
+			wantStatus:  "disabled",
+			wantSummary: "memory (disabled, metadata health: disabled)",
+		},
+		{
+			name: "zero inventory degrades enabled server",
+			server: mcp.ServerDescriptor{
+				ID:      "remote-proxy",
+				Enabled: true,
+			},
+			wantStatus:  "degraded",
+			wantSummary: "remote-proxy (enabled, metadata health: degraded)",
+		},
+		{
+			name: "unreachable is preserved",
+			server: mcp.ServerDescriptor{
+				ID:            "stale-bridge",
+				Enabled:       true,
+				ToolCount:     1,
+				ResourceCount: 0,
+				Status:        "unreachable",
+			},
+			wantStatus:  "unreachable",
+			wantSummary: "stale-bridge (enabled, metadata health: unreachable)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mcp.NormalizeServerDescriptor(tt.server)
+			require.Equal(t, tt.wantStatus, got.Status)
+			require.Equal(t, tt.wantSummary, mcp.MetadataHealthSummary(tt.server))
+		})
+	}
 }
 
 func TestDiscoverSiblingRuntimeContentUsesExpectedSiblingPaths(t *testing.T) {
@@ -97,6 +160,17 @@ func TestDiscoverSiblingRuntimeContentUsesExpectedSiblingPaths(t *testing.T) {
 		Kind:               "external",
 		ReadOnly:           false,
 		Executable:         false,
+	})
+	require.Contains(t, discovered.tools, tool.Descriptor{
+		ID:                 "mcp.tool.invoke",
+		Name:               "MCP Tool Invoke",
+		Description:        "Invoke a synthetic runtime MCP tool",
+		InputSchemaSummary: `{"serverId":"synthetic","toolName":"echo","arguments":{"message":"hello"}}`,
+		PermissionMode:     policy.ReadOnly,
+		Source:             "runtime",
+		Kind:               "mcp.tool.invoke",
+		ReadOnly:           true,
+		Executable:         true,
 	})
 	require.Contains(t, discovered.mcp, mcp.ServerDescriptor{
 		ID:            "@modelcontextprotocol",

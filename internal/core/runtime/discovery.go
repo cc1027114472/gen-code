@@ -180,14 +180,14 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 
 	discoveredMCP := discoverMCPServers(ccNodeModulesRoot)
 	if len(discoveredMCP) == 0 {
-		discoveredMCP = append(discoveredMCP, mcp.ServerDescriptor{
+		discoveredMCP = append(discoveredMCP, mcp.NormalizeServerDescriptor(mcp.ServerDescriptor{
 			ID:            "local-files",
 			Source:        "builtin",
 			Enabled:       true,
 			ToolCount:     1,
 			ResourceCount: 1,
 			Status:        "enabled",
-		})
+		}))
 	}
 
 	return discoverySet{
@@ -262,14 +262,14 @@ func discoverMCPServers(root string) []mcp.ServerDescriptor {
 		if !strings.Contains(strings.ToLower(name), "modelcontextprotocol") {
 			continue
 		}
-		items = append(items, mcp.ServerDescriptor{
+		items = append(items, mcp.NormalizeServerDescriptor(mcp.ServerDescriptor{
 			ID:            name,
 			Source:        "node_modules",
 			Enabled:       true,
 			ToolCount:     0,
 			ResourceCount: 0,
 			Status:        "degraded",
-		})
+		}))
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].ID < items[j].ID
@@ -314,7 +314,7 @@ func dedupeToolDescriptors(items []tool.Descriptor) []tool.Descriptor {
 func dedupeMCPDescriptors(items []mcp.ServerDescriptor) []mcp.ServerDescriptor {
 	seen := map[string]mcp.ServerDescriptor{}
 	for _, item := range items {
-		seen[item.ID] = item
+		seen[item.ID] = mcp.NormalizeServerDescriptor(item)
 	}
 	result := make([]mcp.ServerDescriptor, 0, len(seen))
 	for _, item := range seen {

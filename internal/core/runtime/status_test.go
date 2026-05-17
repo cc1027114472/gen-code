@@ -42,6 +42,15 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	sessions, err := session.NewRegistryWithStore(projectRoot, store)
 	require.NoError(t, err)
 
+	mcpManager := mcp.NewManager([]mcp.ServerDescriptor{{
+		ID:            "server-1",
+		Source:        "node_modules",
+		Enabled:       true,
+		ToolCount:     2,
+		ResourceCount: 3,
+		Status:        "enabled",
+	}})
+
 	service := NewService(
 		"0.1.0",
 		skill.Codex,
@@ -53,14 +62,7 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 			{ID: "codex.review", Group: skill.Codex, Name: "Review", Description: "Codex review skill"},
 			{ID: "cc.swarm", Group: skill.CC, Name: "Swarm", Description: "CC swarm skill"},
 		}),
-		mcp.NewManager([]mcp.ServerDescriptor{{
-			ID:            "server-1",
-			Source:        "node_modules",
-			Enabled:       true,
-			ToolCount:     2,
-			ResourceCount: 3,
-			Status:        "enabled",
-		}}),
+		mcpManager,
 		provider.NewRegistry(""),
 		sessions,
 	)

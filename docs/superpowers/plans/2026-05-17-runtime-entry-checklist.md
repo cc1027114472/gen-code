@@ -48,7 +48,7 @@ Pass standard:
 - `refreshMode` and `fallbackEvidenceMode` are recorded in the verifier output
 - `fallback` is supporting evidence only, not a second browser gate
 - `canonicalRuntimeUrl`, when present, matches the API target used for the run
-- all direct read-tool, agent, apply, and rollback checks pass
+- all direct read-tool, MCP execution, agent, apply, and rollback checks pass
 
 ## Fallback Interpretation Rules
 
@@ -67,5 +67,6 @@ Pass standard:
 - thread ID
 - apply write execution ID
 - rollback write execution ID
+- MCP execution task ID and summary
 - any intentional port override
 - any skipped MCP or skill-governance assertion, with reason
