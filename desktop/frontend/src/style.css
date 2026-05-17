@@ -424,6 +424,7 @@ select {
 .summary-list,
 .flow-list,
 .approval-panel,
+.write-execution-panel,
 .info-grid,
 .context-grid {
   display: grid;
@@ -598,6 +599,16 @@ select {
   background: rgba(189, 98, 53, 0.22);
 }
 
+.flow-item--agent-parent {
+  border-color: rgba(12, 116, 129, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(233, 245, 247, 0.92));
+}
+
+.flow-item--agent-child {
+  border-color: rgba(39, 52, 76, 0.1);
+  background: rgba(248, 249, 250, 0.98);
+}
+
 .flow-item__header,
 .flow-item h4,
 .flow-item p,
@@ -719,6 +730,15 @@ select {
 
 .result-card strong {
   font-size: 15px;
+}
+
+.result-card--agent-parent {
+  border-color: rgba(12, 116, 129, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(233, 245, 247, 0.9));
+}
+
+.result-card--agent-child {
+  border-color: rgba(39, 52, 76, 0.1);
 }
 
 .right-section--console .section-title {

@@ -651,17 +651,13 @@ func (s *Service) MCPServers(context.Context) ([]runtimecontract.MCPServer, erro
 	items := s.mcp.List()
 	result := make([]runtimecontract.MCPServer, 0, len(items))
 	for _, item := range items {
-		status := "disabled"
-		if item.Enabled {
-			status = "enabled"
-		}
 		result = append(result, runtimecontract.MCPServer{
 			ID:            item.ID,
 			Source:        item.Source,
 			Enabled:       item.Enabled,
 			ToolCount:     item.ToolCount,
 			ResourceCount: item.ResourceCount,
-			Status:        status,
+			Status:        normalizeMCPServerStatus(item),
 		})
 	}
 	return result, nil
@@ -734,8 +730,51 @@ func toTaskDescriptor(item session.Task) runtimecontract.TaskDescriptor {
 			descriptor.AgentCurrentStepTitle = state.CurrentStepTitle
 			descriptor.AgentLastReasoning = state.LastReasoning
 		}
+		descriptor.ResultSummary = summarizeAgentTaskDescriptor(descriptor)
 	}
 	return descriptor
+}
+
+func summarizeAgentTaskDescriptor(task runtimecontract.TaskDescriptor) string {
+	if strings.TrimSpace(task.ResultSummary) != "" {
+		return strings.TrimSpace(task.ResultSummary)
+	}
+
+	progress := func() string {
+		if task.AgentStep > 0 && task.AgentMaxSteps > 0 {
+			return fmt.Sprintf("agent step %d/%d", task.AgentStep, task.AgentMaxSteps)
+		}
+		if task.AgentMaxSteps > 0 {
+			return fmt.Sprintf("agent step 0/%d", task.AgentMaxSteps)
+		}
+		return "agent"
+	}
+
+	switch task.WaitingStatus {
+	case "waiting_for_approval":
+		if task.LatestChildTaskID != "" {
+			return fmt.Sprintf("%s: waiting for approval for child task %s", progress(), task.LatestChildTaskID)
+		}
+		return fmt.Sprintf("%s: waiting for approval", progress())
+	case "waiting_for_task":
+		if task.LatestChildTaskID != "" {
+			return fmt.Sprintf("%s: waiting for child task %s", progress(), task.LatestChildTaskID)
+		}
+		return fmt.Sprintf("%s: waiting for child task", progress())
+	}
+
+	switch task.Status {
+	case "queued":
+		return "agent queued"
+	case "running":
+		return fmt.Sprintf("%s: running", progress())
+	case "completed":
+		return "agent completed"
+	case "failed":
+		return "agent failed"
+	default:
+		return ""
+	}
 }
 
 // Messages returns the message descriptors under the given thread.
@@ -916,6 +955,21 @@ func groupSource(group skill.Group) string {
 	default:
 		return "common"
 	}
+}
+
+func normalizeMCPServerStatus(item mcp.ServerDescriptor) string {
+	status := strings.ToLower(strings.TrimSpace(item.Status))
+	switch status {
+	case "enabled", "disabled", "degraded", "unreachable":
+		return status
+	}
+	if !item.Enabled {
+		return "disabled"
+	}
+	if item.ToolCount == 0 && item.ResourceCount == 0 {
+		return "degraded"
+	}
+	return "enabled"
 }
 
 func toEventDescriptor(item session.Event) runtimecontract.EventDescriptor {

@@ -23,6 +23,41 @@ SECOND_BATCH_TOOL_KINDS = {
 }
 
 
+def summarize_refresh_mode(page) -> dict:
+    body_text = page.locator("body").inner_text(timeout=5000)
+    if "SSE 实时刷新" in body_text:
+        return {
+            "label": "SSE 实时刷新",
+            "detail": "UI reported active SSE live refresh",
+            "supportsSSE": True,
+            "sseConnected": True,
+            "evidence": "SSE 实时刷新",
+        }
+    if "SSE 重连中" in body_text:
+        return {
+            "label": "SSE 重连中",
+            "detail": "UI reported SSE support but no active connection",
+            "supportsSSE": True,
+            "sseConnected": False,
+            "evidence": "SSE 重连中",
+        }
+    if "手动刷新" in body_text:
+        return {
+            "label": "手动刷新",
+            "detail": "UI reported manual refresh fallback",
+            "supportsSSE": False,
+            "sseConnected": False,
+            "evidence": "手动刷新",
+        }
+    return {
+        "label": "unknown",
+        "detail": "UI refresh mode text was not detected",
+        "supportsSSE": None,
+        "sseConnected": None,
+        "evidence": "",
+    }
+
+
 def fail(message: str, *, category: str, details=None):
     payload = {
         "ok": False,
@@ -246,15 +281,26 @@ def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
         thread_id,
         lambda item: item["toolId"] == scenario["kind"] and item["status"] == "completed" and expected_summary in item["summary"],
     )
+    visibility = {
+        "taskCardVisible": False,
+        "toolKindVisible": False,
+    }
     try:
         assert_article_contains(page, scenario["title"])
+        visibility["taskCardVisible"] = True
     except Exception:
         assert_article_contains(page, tool_call["toolId"])
-    return completed_task
+        visibility["toolKindVisible"] = True
+    return {
+        "task": completed_task,
+        "toolCall": tool_call,
+        "visibility": visibility,
+    }
 
 
 def run_thread_mutation_scenario(page, thread_id: str, scenario: dict) -> dict:
-    completed_task = run_direct_tool_scenario(page, thread_id, scenario)
+    scenario_result = run_direct_tool_scenario(page, thread_id, scenario)
+    completed_task = scenario_result["task"]
     kind = scenario["kind"]
 
     if kind == "thread.toolcall.append":
@@ -280,6 +326,7 @@ def run_thread_mutation_scenario(page, thread_id: str, scenario: dict) -> dict:
     return {
         "task": completed_task,
         "record": record,
+        "visibility": scenario_result["visibility"],
     }
 
 
@@ -364,19 +411,23 @@ def run_agent_scenario(page, thread_id: str, scenario: dict) -> dict:
     except Exception:
         refresh_thread_view(page, thread_id)
     child_visible = False
+    child_visibility_mode = ""
     for child in visible_children[: min(3, len(visible_children))]:
         try:
             assert_article_contains(page, child["title"], child["resultSummary"], timeout=10000)
             child_visible = True
+            child_visibility_mode = "title+summary"
         except Exception:
             fallback_signal = child["kind"].replace("workspace.", "").replace("_", " ")
             try:
                 assert_article_contains(page, child["title"], fallback_signal, timeout=10000)
                 child_visible = True
+                child_visibility_mode = "title+kind"
             except Exception:
                 try:
                     assert_article_contains(page, child["title"], timeout=10000)
                     child_visible = True
+                    child_visibility_mode = "title-only"
                 except Exception:
                     continue
     if not child_visible:
@@ -385,6 +436,7 @@ def run_agent_scenario(page, thread_id: str, scenario: dict) -> dict:
             try:
                 assert_article_contains(page, child["title"], timeout=8000)
                 child_visible = True
+                child_visibility_mode = "title-only-after-refresh"
                 break
             except Exception:
                 continue
@@ -400,6 +452,12 @@ def run_agent_scenario(page, thread_id: str, scenario: dict) -> dict:
         "task": parent_task,
         "childTasks": visible_children,
         "message": latest_message,
+        "visibility": {
+            "parentVisible": True,
+            "childVisible": child_visible,
+            "childVisibilityMode": child_visibility_mode,
+            "assistantMessageVisible": True,
+        },
     }
 
 
@@ -427,6 +485,7 @@ def main() -> int:
             page.goto(UI_BASE_URL, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(3000)
             wait_for_active_thread(page, thread_id)
+            refresh_mode = summarize_refresh_mode(page)
 
             direct_results = []
             direct_results.append(
@@ -597,6 +656,7 @@ def main() -> int:
 
             pending_card = page.locator("article").filter(has_text=task_title).filter(has_text="approval required").first
             expect(pending_card).to_be_visible(timeout=15000)
+            approval_visible_before_approve = pending_card.is_visible()
 
             approved_task = api("POST", f"/api/threads/{thread_id}/tasks/{created_task_id}/approve", {})
 
@@ -608,6 +668,7 @@ def main() -> int:
             write_execution_panel = page.get_by_test_id("write-execution-panel")
             expect(write_execution_panel).to_contain_text("applied patch", timeout=15000)
             expect(write_execution_panel).to_contain_text(patch_path, timeout=15000)
+            write_execution_apply_visible = True
 
             rollback_button = page.get_by_test_id(f'rollback-latest-{apply_execution["id"]}')
             expect(rollback_button).to_be_visible(timeout=15000)
@@ -617,6 +678,7 @@ def main() -> int:
             rollback_pending = page.locator("article").filter(has_text=rollback_task_title).filter(has_text="approval required for rollback").first
             expect(rollback_pending).to_be_visible(timeout=15000)
             expect(rollback_pending).to_contain_text(patch_path, timeout=15000)
+            rollback_approval_visible = rollback_pending.is_visible()
 
             rollback_task = wait_for_task(
                 thread_id,
@@ -635,9 +697,71 @@ def main() -> int:
 
             rollback_completed = page.locator("article").filter(has_text=rollback_task_title).first
             expect(rollback_completed).to_be_visible(timeout=15000)
+            rollback_task_visible = rollback_completed.is_visible()
 
             expect(write_execution_panel).to_contain_text("rolled back patch", timeout=15000)
             expect(write_execution_panel).to_contain_text(patch_path, timeout=15000)
+            write_execution_rollback_visible = True
+
+            acceptance_report = {
+                "remote": {
+                    "mode": "browser-live",
+                    "runtimeSource": runtime_status.get("runtimeSource", ""),
+                    "runtimeTrust": runtime_status.get("runtimeTrust", ""),
+                    "canonicalRuntimeUrl": runtime_status.get("canonicalRuntimeUrl", ""),
+                    "uiBaseUrl": UI_BASE_URL,
+                    "apiBaseUrl": API_BASE_URL,
+                    "refreshMode": refresh_mode,
+                    "parentChildVisibility": {
+                        "agentScenarioCount": len(agent_results),
+                        "allParentsVisible": all(item["visibility"]["parentVisible"] for item in agent_results),
+                        "allAssistantMessagesVisible": all(
+                            item["visibility"]["assistantMessageVisible"] for item in agent_results
+                        ),
+                        "childVisibleScenarioCount": sum(1 for item in agent_results if item["visibility"]["childVisible"]),
+                        "scenarios": [
+                            {
+                                "taskId": item["task"]["id"],
+                                "planMode": item["task"].get("agentPlanMode", ""),
+                                "childVisible": item["visibility"]["childVisible"],
+                                "childVisibilityMode": item["visibility"]["childVisibilityMode"],
+                                "childTaskKinds": [child["kind"] for child in item["childTasks"]],
+                            }
+                            for item in agent_results
+                        ],
+                    },
+                    "approvalVisibility": {
+                        "applyApprovalVisible": approval_visible_before_approve,
+                        "rollbackApprovalVisible": rollback_approval_visible,
+                        "approvalPanelExpected": True,
+                    },
+                    "writeExecutionVisibility": {
+                        "applyVisible": write_execution_apply_visible,
+                        "rollbackVisible": write_execution_rollback_visible,
+                        "rollbackTaskVisible": rollback_task_visible,
+                        "panelTestId": "write-execution-panel",
+                    },
+                    "directToolVisibility": {
+                        "scenarioCount": len(direct_results),
+                        "visibleByTitleCount": sum(1 for item in direct_results if item["visibility"]["taskCardVisible"]),
+                        "visibleByToolKindFallbackCount": sum(
+                            1 for item in direct_results if item["visibility"]["toolKindVisible"]
+                        ),
+                    },
+                },
+                "fallback": {
+                    "mode": "go-test-evidence",
+                    "browserAutomation": "not attempted",
+                    "reason": "desktop local-fallback does not provide the same stable browser automation and SSE lane as the canonical remote app-server path",
+                    "evidenceTests": [
+                        "TestDesktopFallbackPersistsAcrossAppRestart",
+                        "TestDesktopFallbackTaskSummariesKeepParentAndWaitingFields",
+                        "TestDesktopFallbackAgentWaitingForApprovalPersistsAcrossRestart",
+                        "TestDesktopFallbackAgentWaitingForTaskPersistsAcrossRestart",
+                        "TestDesktopFallbackWriteExecutionsPersistAcrossRestart",
+                    ],
+                },
+            }
 
             print(
                 json.dumps(
@@ -655,7 +779,13 @@ def main() -> int:
                         "rollbackStatus": rollback_approved["status"],
                         "rollbackWriteExecutionId": rollback_execution["id"],
                         "directToolTasks": [
-                            {"id": item["id"], "title": item["title"], "kind": item["kind"], "resultSummary": item["resultSummary"]}
+                            {
+                                "id": item["task"]["id"],
+                                "title": item["task"]["title"],
+                                "kind": item["task"]["kind"],
+                                "resultSummary": item["task"]["resultSummary"],
+                                "visibility": item["visibility"],
+                            }
                             for item in direct_results
                         ],
                         "threadMutationTasks": [
@@ -665,6 +795,7 @@ def main() -> int:
                                 "kind": item["task"]["kind"],
                                 "resultSummary": item["task"]["resultSummary"],
                                 "record": item["record"],
+                                "visibility": item["visibility"],
                             }
                             for item in thread_mutation_results
                         ],
@@ -677,6 +808,7 @@ def main() -> int:
                                 "childTaskKinds": [child["kind"] for child in item["childTasks"]],
                                 "messageId": item["message"]["id"],
                                 "message": item["message"]["content"],
+                                "visibility": item["visibility"],
                             }
                             for item in agent_results
                         ],
@@ -685,6 +817,7 @@ def main() -> int:
                         "canonicalRuntimeUrl": runtime_status.get("canonicalRuntimeUrl", ""),
                         "uiBaseUrl": UI_BASE_URL,
                         "apiBaseUrl": API_BASE_URL,
+                        "acceptanceReport": acceptance_report,
                     },
                     ensure_ascii=False,
                 )

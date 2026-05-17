@@ -31,6 +31,7 @@ type Draft = {
 type FlowItem = {
   id: string;
   tone: "neutral" | "good" | "warning";
+  className?: string;
   badge: string;
   title: string;
   body: ReactNode;
@@ -42,6 +43,70 @@ type FlowItem = {
 type RuntimeTask = RuntimeStatus["tasks"][number];
 type RuntimeApproval = RuntimeStatus["approvals"][number];
 type RuntimeWriteExecution = RuntimeStatus["writeExecutions"][number];
+type RuntimeThread = RuntimeStatus["threads"][number];
+
+type WorkspaceWorkflowSummary = {
+  id: string;
+  root: string;
+  projectRoot: string;
+  activeThreadId: string;
+  activeThreadName: string;
+  threadCount: number;
+  taskCount: number;
+  waitingTaskCount: number;
+  approvalRequiredCount: number;
+  pendingApprovalCount: number;
+  completedTaskCount: number;
+  failedTaskCount: number;
+  writeExecutionCount: number;
+  summary: string;
+};
+
+type ThreadWorkflowSummary = {
+  id: string;
+  name: string;
+  status: string;
+  permissionMode: string;
+  activeModel: string;
+  taskCount: number;
+  waitingTaskCount: number;
+  waitingForTaskCount: number;
+  waitingForApprovalCount: number;
+  approvalRequiredCount: number;
+  pendingApprovalCount: number;
+  completedTaskCount: number;
+  failedTaskCount: number;
+  childTaskCount: number;
+  writeExecutionCount: number;
+  latestTaskId: string;
+  latestApprovalTaskId: string;
+  latestWriteTaskId: string;
+  summary: string;
+};
+
+type ExtendedRuntimeTask = RuntimeTask & {
+  waitingTaskId?: string;
+  waitingSummary?: string;
+  workflowLabel?: string;
+  childTaskIds?: string[];
+  latestChildTaskId?: string;
+  approvalId?: string;
+  approvalSummary?: string;
+  writeExecutionId?: string;
+  writeExecutionSummary?: string;
+};
+
+type ExtendedRuntimeStatus = RuntimeStatus & {
+  workspaceSummary?: WorkspaceWorkflowSummary;
+  activeThreadSummary?: ThreadWorkflowSummary;
+  tasks: ExtendedRuntimeTask[];
+};
+
+type TaskGroup = {
+  title: string;
+  tone: "neutral" | "good" | "warning";
+  tasks: ExtendedRuntimeTask[];
+};
 
 type PatchStats = {
   added: number;
@@ -87,7 +152,7 @@ type WriteExecutionViewModel = {
 
 const defaultDraft: Draft = {
   title: "",
-  kind: "model.response.create",
+  kind: "agent.run",
   input: "",
 };
 
@@ -119,7 +184,7 @@ export default function App() {
     return <EmbeddedPreviewPage pane={embeddedPreview.pane} threadID={embeddedPreview.threadID} threadName={embeddedPreview.threadName} />;
   }
 
-  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
+  const [runtimeStatus, setRuntimeStatus] = useState<ExtendedRuntimeStatus | null>(null);
   const [browserState, setBrowserState] = useState<BrowserWorkspaceState | null>(null);
   const [bridgeResult, setBridgeResult] = useState<BridgeCheckResult | null>(null);
   const [statusMessage, setStatusMessage] = useState("正在加载桌面状态...");
@@ -151,7 +216,7 @@ export default function App() {
       ]);
 
       setAppInfo(info);
-      setRuntimeStatus(runtime);
+      setRuntimeStatus(runtime as ExtendedRuntimeStatus);
       setBrowserState(browser);
       setBrowserOpen(browser.isOpen);
 
@@ -223,15 +288,30 @@ export default function App() {
     () => runtimeStatus?.threads.find((thread) => thread.id === runtimeStatus.activeThreadId) ?? null,
     [runtimeStatus],
   );
+  const extendedRuntime = runtimeStatus as ExtendedRuntimeStatus | null;
+  const workspaceSummary = extendedRuntime?.workspaceSummary;
+  const activeThreadWorkflow = extendedRuntime?.activeThreadSummary;
   const activeBrowserTab = useMemo(
     () => browserState?.tabs.find((tab) => tab.id === browserState.activeTabId) ?? browserState?.tabs[0] ?? null,
     [browserState],
   );
 
-  const tasks = runtimeStatus?.tasks ?? [];
+  const tasks: ExtendedRuntimeTask[] = extendedRuntime?.tasks ?? [];
+  const taskMap = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const executableKinds = runtimeStatus?.executableKinds?.length
     ? runtimeStatus.executableKinds
-    : ["model.response.create", "thread.message.append", "workspace.list_files", "workspace.read_file", "workspace.search_text"];
+    : [
+        "agent.run",
+        "model.response.create",
+        "thread.message.append",
+        "workspace.list_files",
+        "workspace.read_file",
+        "workspace.search_text",
+        "workspace.stat_file",
+        "workspace.read_files_batch",
+        "workspace.list_files_filtered",
+        "workspace.search_text_detailed",
+      ];
   const approvals = runtimeStatus?.approvals ?? [];
   const writeExecutions = runtimeStatus?.writeExecutions ?? [];
   const messages = runtimeStatus?.messages ?? [];
@@ -253,12 +333,18 @@ export default function App() {
   const latestArtifact = useMemo(() => newestBy(artifacts, (item) => item.createdAt), [artifacts]);
   const latestEvent = useMemo(() => newestBy(events, (item) => item.createdAt), [events]);
   const latestWriteExecution = useMemo(() => newestBy(writeExecutions, (item) => item.updatedAt || item.createdAt), [writeExecutions]);
+  const latestAgentTask = useMemo(
+    () => newestBy(tasks.filter((task) => isAgentParentTask(task)), (item) => item.updatedAt || item.createdAt),
+    [tasks],
+  );
+
   const approvalViewModels = useMemo(() => {
     const taskMap = new Map(tasks.map((task) => [task.id, task]));
     return approvals
       .map((approval) => createApprovalViewModel(approval, taskMap.get(approval.taskId)))
       .sort((left, right) => toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt));
   }, [approvals, tasks]);
+
   const writeExecutionViewModels = useMemo(() => {
     const taskMap = new Map(tasks.map((task) => [task.id, task]));
     const approvalMap = new Map(approvals.map((approval) => [approval.taskId, approval]));
@@ -266,22 +352,33 @@ export default function App() {
       .map((execution) => createWriteExecutionViewModel(execution, taskMap.get(execution.taskId), approvalMap.get(execution.taskId)))
       .sort((left, right) => toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt));
   }, [approvals, tasks, writeExecutions]);
-  const approvalByTaskID = useMemo(
-    () => new Map(approvalViewModels.map((item) => [item.taskId, item])),
-    [approvalViewModels],
-  );
-  const writeExecutionByTaskID = useMemo(
-    () => new Map(writeExecutionViewModels.map((item) => [item.taskId, item])),
-    [writeExecutionViewModels],
-  );
-  const pendingApprovals = useMemo(
-    () => approvalViewModels.filter((item) => item.approvalStatus === "pending"),
-    [approvalViewModels],
-  );
+
+  const approvalByTaskID = useMemo(() => new Map(approvalViewModels.map((item) => [item.taskId, item])), [approvalViewModels]);
+  const writeExecutionByTaskID = useMemo(() => new Map(writeExecutionViewModels.map((item) => [item.taskId, item])), [writeExecutionViewModels]);
+  const pendingApprovals = useMemo(() => approvalViewModels.filter((item) => item.approvalStatus === "pending"), [approvalViewModels]);
   const recentWriteExecutions = useMemo(() => writeExecutionViewModels.slice(0, 3), [writeExecutionViewModels]);
   const latestRollbackCandidate = useMemo(
     () => writeExecutionViewModels.find((item) => item.operation === "apply" && item.status === "completed") ?? null,
     [writeExecutionViewModels],
+  );
+
+  const workflowHighlights = useMemo(
+    () => [
+      { label: "Waiting", value: String(activeThreadWorkflow?.waitingTaskCount ?? workspaceSummary?.waitingTaskCount ?? 0), detail: "Tasks blocked on child work or approvals" },
+      { label: "Approval", value: String(activeThreadWorkflow?.pendingApprovalCount ?? workspaceSummary?.pendingApprovalCount ?? 0), detail: "Pending approvals needing a decision" },
+      { label: "Writes", value: String(activeThreadWorkflow?.writeExecutionCount ?? workspaceSummary?.writeExecutionCount ?? 0), detail: "Completed write executions in view" },
+      { label: "Failed", value: String(activeThreadWorkflow?.failedTaskCount ?? workspaceSummary?.failedTaskCount ?? 0), detail: "Tasks that need attention or rerun" },
+    ],
+    [activeThreadWorkflow, workspaceSummary],
+  );
+  const waitingTasks = useMemo<ExtendedRuntimeTask[]>(
+    () => tasks.filter((task) => task.waitingStatus || task.status === "waiting_for_task" || task.status === "waiting_for_approval"),
+    [tasks],
+  );
+  const childTasks = useMemo<ExtendedRuntimeTask[]>(() => tasks.filter((task) => task.parentTaskId), [tasks]);
+  const approvalRequiredTasks = useMemo<ExtendedRuntimeTask[]>(
+    () => tasks.filter((task) => task.status === "needs_approval" || task.approvalStatus === "pending"),
+    [tasks],
   );
 
   const flowItems = useMemo(() => {
@@ -291,32 +388,42 @@ export default function App() {
       const approval = approvalByTaskID.get(task.id);
       const writeExecution = writeExecutionByTaskID.get(task.id);
       const taskStatusLabel = formatTaskStatus(task.status);
+      const parentTask = task.parentTaskId ? taskMap.get(task.parentTaskId) : undefined;
+      const agentMeta = task.kind === "agent.run" ? formatAgentMeta(task) : "";
+      const roleLabel = formatTaskRoleLabel(task);
+      const waitingLabel = formatTaskWaitingStatusLabel(task);
+      const toneClass = isAgentParentTask(task)
+        ? "flow-item--agent-parent"
+        : task.parentTaskId
+          ? "flow-item--agent-child"
+          : "";
       items.push({
         id: `task-${task.id}`,
-        tone: task.status === "completed" ? "good" : task.status === "failed" || task.status === "needs_approval" ? "warning" : "neutral",
-        badge: `任务 / ${taskStatusLabel}`,
-        title: `${task.title} / ${task.kind || "prompt"}`,
+        className: toneClass,
+        tone:
+          task.status === "completed"
+            ? "good"
+            : task.status === "failed" || task.status === "needs_approval" || task.status === "waiting_for_approval"
+              ? "warning"
+              : "neutral",
+        badge: `${roleLabel} / ${taskStatusLabel}${waitingLabel ? ` / ${waitingLabel}` : ""}`,
+        title: `${formatTaskHeadline(task, parentTask)}${agentMeta ? ` / ${agentMeta}` : ""}`,
         body: writeExecution ? (
           <WriteExecutionDetails execution={writeExecution} />
         ) : approval ? (
           <ApprovalDetails approval={approval} />
         ) : (
-          <FlowBodyText text={task.resultSummary || task.input || "等待任务输入"} />
+          <FlowBodyText text={formatTaskDisplaySummary(task, parentTask)} />
         ),
         meta: formatTime(task.updatedAt || task.createdAt),
         timestamp: toTimestamp(task.updatedAt || task.createdAt),
         actions:
           task.status === "needs_approval"
             ? (
-                <ApprovalActions
-                  taskId={task.id}
-                  loading={loading}
-                  onApprove={handleApproveTask}
-                  onReject={handleRejectTask}
-                />
+                <ApprovalActions taskId={task.id} loading={loading} onApprove={handleApproveTask} onReject={handleRejectTask} />
               )
             : (
-                <button className="thread-action" onClick={() => void handleRunTask(task.id)} disabled={loading}>
+                <button className="thread-action" onClick={() => void handleRunTask(task.id)} disabled={loading} type="button">
                   运行任务
                 </button>
               ),
@@ -362,12 +469,10 @@ export default function App() {
     return items.sort((left, right) => right.timestamp - left.timestamp).slice(0, 16);
   }, [approvalByTaskID, events, loading, messages, tasks, toolCalls, writeExecutionByTaskID]);
 
-  const runtimeSourceLabel =
-    runtimeStatus?.runtimeSource === "runtime-http"
-      ? "远端 App Server"
-      : runtimeStatus?.runtimeSource === "desktop-local"
-        ? "本地 fallback"
-        : runtimeStatus?.runtimeSource || "未连接";
+  const runtimeSourceLabel = formatRuntimeSourceLabel(runtimeStatus?.runtimeSource);
+  const runtimeSourceDetail = formatRuntimeSourceDetail(runtimeStatus?.runtimeSource);
+  const refreshModeLabel = formatRefreshModeLabel(runtimeStatus?.supportsSSE, sseEnabled);
+  const refreshModeDetail = formatRefreshModeDetail(runtimeStatus?.runtimeSource, runtimeStatus?.supportsSSE, sseEnabled);
   const statusTone = error ? "warning" : runtimeStatus?.runtimeReady || bridgeResult?.ok ? "good" : "muted";
   const projectName = runtimeStatus?.projectRoot?.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "gen-code";
   const contextSummary = `messages ${messages.length} / tool calls ${toolCalls.length} / write executions ${writeExecutions.length}`;
@@ -416,28 +521,15 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
-      const previousIDs = new Set((runtimeStatus?.threads ?? []).map((thread) => thread.id));
-      const next = (await CreateThread("")) as RuntimeStatus;
-      const createdThread =
-        next.threads.find((thread) => !previousIDs.has(thread.id)) ??
-        next.threads[next.threads.length - 1] ??
-        null;
-
-      if (createdThread && !createdThread.isActive) {
-        const activated = (await ActivateThread(createdThread.id)) as RuntimeStatus;
-        setRuntimeStatus(activated);
-        const targetThread = activated.threads.find((thread) => thread.id === createdThread.id) ?? createdThread;
-        await navigatePreviewForThread(targetThread);
-        setLastCheckedAt(formatTime(activated.updatedAt));
-      } else {
-        setRuntimeStatus(next);
-        if (createdThread) {
-          await navigatePreviewForThread(createdThread);
-        }
-        setLastCheckedAt(formatTime(next.updatedAt));
+      const name = `Thread ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
+      const next = (await CreateThread(name)) as RuntimeStatus;
+      const createdThread = next.threads.find((thread) => thread.isActive) ?? next.threads[0];
+      setRuntimeStatus(next as ExtendedRuntimeStatus);
+      if (createdThread) {
+        await navigatePreviewForThread(createdThread);
       }
-
       setStatusMessage("已创建新 thread");
+      setLastCheckedAt(formatTime(next.updatedAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "创建 thread 失败");
     } finally {
@@ -450,7 +542,7 @@ export default function App() {
     setError("");
     try {
       const next = (await ActivateThread(id)) as RuntimeStatus;
-      setRuntimeStatus(next);
+      setRuntimeStatus(next as ExtendedRuntimeStatus);
       const targetThread = next.threads.find((thread) => thread.id === id);
       if (targetThread) {
         await navigatePreviewForThread(targetThread);
@@ -476,7 +568,7 @@ export default function App() {
         input: normalizeTaskInput(draft.kind, draft.input),
       });
       const next = (await CreateTask(runtimeStatus.activeThreadId, payload)) as RuntimeStatus;
-      setRuntimeStatus(next);
+      setRuntimeStatus(next as ExtendedRuntimeStatus);
       setStatusMessage("已创建 task");
       setLastCheckedAt(formatTime(next.updatedAt));
       setDraft((current) => ({ ...current, title: "", input: "" }));
@@ -494,7 +586,7 @@ export default function App() {
     setError("");
     try {
       const next = (await AdvanceTask(taskID)) as RuntimeStatus;
-      setRuntimeStatus(next);
+      setRuntimeStatus(next as ExtendedRuntimeStatus);
       setStatusMessage("task 已触发执行");
       setLastCheckedAt(formatTime(next.updatedAt));
     } catch (err) {
@@ -511,7 +603,7 @@ export default function App() {
     setError("");
     try {
       const next = (await ApproveTask(runtimeStatus.activeThreadId, taskID)) as RuntimeStatus;
-      setRuntimeStatus(next);
+      setRuntimeStatus(next as ExtendedRuntimeStatus);
       setStatusMessage("写任务已批准，正在执行补丁");
       setLastCheckedAt(formatTime(next.updatedAt));
     } catch (err) {
@@ -528,7 +620,7 @@ export default function App() {
     setError("");
     try {
       const next = (await RejectTask(runtimeStatus.activeThreadId, taskID)) as RuntimeStatus;
-      setRuntimeStatus(next);
+      setRuntimeStatus(next as ExtendedRuntimeStatus);
       setStatusMessage("写任务已拒绝，未修改项目文件");
       setLastCheckedAt(formatTime(next.updatedAt));
     } catch (err) {
@@ -662,6 +754,7 @@ export default function App() {
                   <span className="mini-chip">{`workspace ${runtimeStatus?.workspaceId || "loading"}`}</span>
                   <span className="mini-chip">{`threads ${runtimeStatus?.threadCount || 0}`}</span>
                 </div>
+                {workspaceSummary?.summary ? <p className="sidebar-note sidebar-note--strong">{workspaceSummary.summary}</p> : null}
               </section>
 
               <section className="left-panel">
@@ -670,7 +763,7 @@ export default function App() {
                     <p className="section-title">线程导航</p>
                     <h3>Workspace Threads</h3>
                   </div>
-                  <button className="secondary-action" onClick={handleCreateThread} disabled={loading}>
+                  <button className="secondary-action" onClick={handleCreateThread} disabled={loading} type="button">
                     新建 thread
                   </button>
                 </div>
@@ -720,14 +813,53 @@ export default function App() {
                   <p className="section-title">当前线程</p>
                   <h2>{activeThread?.name || "等待 active thread"}</h2>
                   <p className="stage-header__lead">
-                    {activeThread
-                      ? "这里展示当前 thread 的消息流、任务进展、工具调用和实时事件。"
-                      : "请先创建或激活一个 thread。"}
+                    {activeThreadWorkflow?.summary || (activeThread ? "这里展示当前 thread 的消息流、任务进度、工具调用和实时事件。" : "请先创建或激活一个 thread。")}
                   </p>
                 </div>
                 <div className="stage-header__meta">
                   <span className="chip chip--soft">{activeThread?.permissionMode || "ask-user"}</span>
                   <span className="chip chip--soft">{streamState}</span>
+                  {activeThreadWorkflow?.latestTaskId ? <span className="chip chip--soft">{`latest task ${activeThreadWorkflow.latestTaskId}`}</span> : null}
+                </div>
+              </section>
+
+              <section className="card">
+                <div className="section-header">
+                  <div>
+                    <p className="section-title">工作流概览</p>
+                    <h3>Workspace 与 active thread 的显式运行摘要</h3>
+                  </div>
+                </div>
+                <div className="results-grid">
+                  {workflowHighlights.map((item) => (
+                    <InfoCard key={item.label} label={item.label} value={item.value} detail={item.detail} />
+                  ))}
+                </div>
+                <div className="flow-list">
+                  <article className="flow-item flow-item--neutral">
+                    <div className="flow-item__header">
+                      <span className="mini-chip">Workspace</span>
+                      <span className="flow-item__meta">{workspaceSummary?.activeThreadName || "no active thread"}</span>
+                    </div>
+                    <h4>{workspaceSummary?.id || runtimeStatus?.workspaceId || "workspace"}</h4>
+                    <p>{workspaceSummary?.summary || runtimeStatus?.projectRoot || "No workspace summary available."}</p>
+                  </article>
+                  <article className="flow-item flow-item--neutral">
+                    <div className="flow-item__header">
+                      <span className="mini-chip">Thread</span>
+                      <span className="flow-item__meta">{activeThreadWorkflow?.status || activeThread?.status || "idle"}</span>
+                    </div>
+                    <h4>{activeThreadWorkflow?.name || activeThread?.name || "No active thread"}</h4>
+                    <p>{activeThreadWorkflow?.summary || "Activate a thread to inspect task and approval relationships."}</p>
+                  </article>
+                  <article className={`flow-item flow-item--neutral ${latestAgentTask ? "flow-item--agent-parent" : ""}`}>
+                    <div className="flow-item__header">
+                      <span className="mini-chip">Agent Workflow</span>
+                      <span className="flow-item__meta">{latestAgentTask ? formatTaskStatus(latestAgentTask.status) : "ready"}</span>
+                    </div>
+                    <h4>{latestAgentTask ? formatTaskHeadline(latestAgentTask) : "默认目标工作流"}</h4>
+                    <p>{formatAgentWorkflowOverview(latestAgentTask)}</p>
+                  </article>
                 </div>
               </section>
 
@@ -773,16 +905,16 @@ export default function App() {
                     data-testid="task-input-textarea"
                     value={draft.input}
                     onChange={(event) => setDraft((current) => ({ ...current, input: event.target.value }))}
-                    placeholder='模型任务可直接输入 prompt，也可使用 JSON，例如 {"provider":"anthropic","model":"gpt-5.4-A","input":"请总结 README"}'
+                    placeholder='可直接输入 prompt 或 JSON；例如 agent.run 用 {"goal":"请先筛出 *.go，再查 TODO 行号"}，stat 用 {"path":"go.mod"}，batch 用 {"paths":["README.md","go.mod"]}'
                     rows={4}
                   />
                 </label>
 
                 <div className="composer-actions">
-                  <button className="primary-action" data-testid="create-task-button" onClick={handleCreateTask} disabled={loading || !runtimeStatus?.activeThreadId}>
+                  <button className="primary-action" data-testid="create-task-button" onClick={handleCreateTask} disabled={loading || !runtimeStatus?.activeThreadId} type="button">
                     创建 task
                   </button>
-                  <span className="composer-actions__hint">{statusMessage}</span>
+                  <span className="composer-actions__hint">{error || statusMessage}</span>
                 </div>
               </section>
 
@@ -805,12 +937,40 @@ export default function App() {
                         </div>
                         <h4>{approval.title}</h4>
                         <ApprovalDetails approval={approval} />
-                        <ApprovalActions
-                          taskId={approval.taskId}
-                          loading={loading}
-                          onApprove={handleApproveTask}
-                          onReject={handleRejectTask}
-                        />
+                        <ApprovalActions taskId={approval.taskId} loading={loading} onApprove={handleApproveTask} onReject={handleRejectTask} />
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+
+                {waitingTasks.length > 0 ? (
+                  <div className="approval-panel" data-testid="waiting-task-panel">
+                    {waitingTasks.slice(0, 4).map((task) => (
+                      <article className={`flow-item flow-item--warning ${isAgentParentTask(task) ? "flow-item--agent-parent" : task.parentTaskId ? "flow-item--agent-child" : ""}`} key={task.id}>
+                        <div className="flow-item__header">
+                          <span className="mini-chip">{formatTaskWaitingStatusLabel(task)}</span>
+                          <span className="flow-item__meta">{formatTime(task.updatedAt || task.createdAt)}</span>
+                        </div>
+                        <h4>{formatTaskHeadline(task, task.parentTaskId ? taskMap.get(task.parentTaskId) : undefined)}</h4>
+                        <p>{formatTaskDisplaySummary(task, task.parentTaskId ? taskMap.get(task.parentTaskId) : undefined)}</p>
+                        <p>
+                          {formatTaskLinkSummary(task)}
+                        </p>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+
+                {childTasks.length > 0 ? (
+                  <div className="approval-panel" data-testid="child-task-panel">
+                    {childTasks.slice(0, 4).map((task) => (
+                      <article className="flow-item flow-item--neutral flow-item--agent-child" key={task.id}>
+                        <div className="flow-item__header">
+                          <span className="mini-chip">{formatTaskRoleLabel(task)}</span>
+                          <span className="flow-item__meta">{formatTaskStatus(task.status)}</span>
+                        </div>
+                        <h4>{formatTaskHeadline(task, task.parentTaskId ? taskMap.get(task.parentTaskId) : undefined)}</h4>
+                        <p>{formatTaskDisplaySummary(task, task.parentTaskId ? taskMap.get(task.parentTaskId) : undefined)}</p>
                       </article>
                     ))}
                   </div>
@@ -833,6 +993,7 @@ export default function App() {
                               data-testid={`rollback-latest-${execution.id}`}
                               onClick={() => void handleRollbackLatest(execution.id)}
                               disabled={loading}
+                              type="button"
                             >
                               回退最近一次
                             </button>
@@ -843,12 +1004,28 @@ export default function App() {
                   </div>
                 ) : null}
 
+                {approvalRequiredTasks.length > 0 ? (
+                  <div className="approval-panel" data-testid="approval-required-task-panel">
+                    {approvalRequiredTasks.slice(0, 4).map((task) => (
+                      <article className="flow-item flow-item--warning" key={task.id}>
+                        <div className="flow-item__header">
+                          <span className="mini-chip">Task Relationship</span>
+                          <span className="flow-item__meta">{task.kind}</span>
+                        </div>
+                        <h4>{task.title}</h4>
+                        <p>{task.approvalSummary || task.workflowLabel || "Approval relationship available."}</p>
+                        <p>{task.writeExecutionSummary || (task.writeExecutionId ? `write ${task.writeExecutionId}` : "no write execution yet")}</p>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+
                 <div className="flow-list">
                   {flowItems.length === 0 ? (
                     <div className="thread-empty">当前还没有可展示的消息流内容</div>
                   ) : (
                     flowItems.map((item) => (
-                      <article className={`flow-item flow-item--${item.tone}`} key={item.id}>
+                      <article className={`flow-item flow-item--${item.tone}${item.className ? ` ${item.className}` : ""}`} key={item.id}>
                         <div className="flow-item__header">
                           <span className="mini-chip">{item.badge}</span>
                           <span className="flow-item__meta">{item.meta}</span>
@@ -874,31 +1051,29 @@ export default function App() {
                 <div className="context-grid">
                   <ResultCard
                     label="最新任务"
-                    title={latestTask ? `${latestTask.title} / ${formatTaskStatus(latestTask.status)}` : "暂无任务"}
-                    body={latestTask?.resultSummary || latestTask?.input || "暂无结果"}
+                    title={latestTask ? formatLatestTaskTitle(latestTask, latestTask.parentTaskId ? taskMap.get(latestTask.parentTaskId) : undefined) : "暂无任务"}
+                    body={latestTask ? formatLatestTaskBody(latestTask, latestTask.parentTaskId ? taskMap.get(latestTask.parentTaskId) : undefined) : "暂无结果"}
+                    className={latestTask ? getTaskCardClassName(latestTask) : undefined}
                   />
                   <ResultCard
                     label="最新工具调用"
                     title={latestToolCall ? `${latestToolCall.toolId} / ${formatToolCallStatus(latestToolCall.status)}` : "暂无工具调用"}
                     body={latestToolCall?.summary || "暂无摘要"}
                   />
-                  <ResultCard
-                    label="最新消息"
-                    title={latestMessage ? formatMessageRole(latestMessage.role) : "暂无消息"}
-                    body={latestMessage?.content || "暂无消息"}
-                  />
-                  <ResultCard
-                    label="最新事件"
-                    title={latestEvent ? formatEventType(latestEvent.type) : "暂无事件"}
-                    body={latestEvent?.message || "暂无事件"}
-                  />
+                  <ResultCard label="最新消息" title={latestMessage ? formatMessageRole(latestMessage.role) : "暂无消息"} body={latestMessage?.content || "暂无消息"} />
+                  <ResultCard label="最新事件" title={latestEvent ? formatEventType(latestEvent.type) : "暂无事件"} body={latestEvent?.message || "暂无事件"} />
                   <ResultCard
                     label="最近写执行"
                     title={latestWriteExecution ? `${latestWriteExecution.toolKind} / ${formatWriteExecutionStatus(latestWriteExecution.status)}` : "暂无写执行"}
                     body={latestWriteExecution ? summarizeWriteExecution(latestWriteExecution) : "尚未记录 patch 写执行审计"}
                   />
                   <InfoCard label="最新产物" value={latestArtifact ? latestArtifact.kind : "暂无产物"} detail={latestArtifact?.path || "暂无产物"} />
-                  <InfoCard label="桥接 / SSE" value={sseEnabled ? "已连接" : "手动刷新"} detail={`${bridgeResult?.message || "桥接待检查"} / ${streamState}`} />
+                  <InfoCard
+                    label="运行链路"
+                    value={runtimeSourceLabel}
+                    detail={`${runtimeSourceDetail} / ${bridgeResult?.message || runtimeStatus?.runtimeMessage || "桥接状态待检查"}`}
+                  />
+                  <InfoCard label="刷新方式" value={refreshModeLabel} detail={`${refreshModeDetail} / ${streamState}`} />
                   <InfoCard
                     label="审批状态"
                     value={pendingApprovals.length > 0 ? `${pendingApprovals.length} 条待审批` : "无待审批"}
@@ -939,7 +1114,7 @@ export default function App() {
                         }}
                         type="button"
                       >
-                        ×
+                        关
                       </button>
                     </div>
                   ))}
@@ -951,10 +1126,10 @@ export default function App() {
                 <div className="browser-toolbar">
                   <div className="browser-toolbar__actions">
                     <button className="browser-nav" onClick={() => activeBrowserTab && void BrowserBack(activeBrowserTab.id).then(setBrowserState)} type="button">
-                      ←
+                      后退
                     </button>
                     <button className="browser-nav" onClick={() => activeBrowserTab && void BrowserForward(activeBrowserTab.id).then(setBrowserState)} type="button">
-                      →
+                      前进
                     </button>
                     <button className="browser-nav" onClick={() => activeBrowserTab && void BrowserReload(activeBrowserTab.id).then(setBrowserState)} type="button">
                       刷新
@@ -1009,12 +1184,7 @@ export default function App() {
 
                 <div className="browser-surface">
                   {activeBrowserTab ? (
-                    <iframe
-                      className="browser-frame"
-                      data-testid="browser-preview-frame"
-                      src={activeBrowserTab.url}
-                      title={activeBrowserTab.title}
-                    />
+                    <iframe className="browser-frame" data-testid="browser-preview-frame" src={activeBrowserTab.url} title={activeBrowserTab.title} />
                   ) : (
                     <div className="browser-empty">暂无可用标签，点击右上角 + 新建一个本地预览标签。</div>
                   )}
@@ -1045,6 +1215,22 @@ function newestBy<T>(items: T[], getTime: (item: T) => string, tieBreaker?: (lef
       return 0;
     })[0] ?? null
   );
+}
+
+function groupTasksForDisplay(tasks: ExtendedRuntimeTask[]): TaskGroup[] {
+  const waiting = tasks.filter((task) => task.waitingStatus || task.status === "waiting_for_task" || task.status === "waiting_for_approval");
+  const approvals = tasks.filter((task) => task.status === "needs_approval" || task.approvalStatus === "pending");
+  const children = tasks.filter((task) => task.parentTaskId);
+  const finished = tasks.filter((task) => task.status === "completed" || task.status === "failed");
+
+  const groups: TaskGroup[] = [
+    { title: "Waiting", tone: "warning", tasks: waiting },
+    { title: "Approval", tone: "warning", tasks: approvals },
+    { title: "Child", tone: "neutral", tasks: children },
+    { title: "Finished", tone: "good", tasks: finished },
+  ];
+
+  return groups.filter((group) => group.tasks.length > 0);
 }
 
 function toolCallStatusWeight(status: string) {
@@ -1165,9 +1351,61 @@ function createPatchStats(patchPreview: string): PatchStats {
 
 function formatPatchStats(stats: PatchStats) {
   if (!stats.hasPreview) {
-    return "未提供补丁预览";
+    return "无补丁预览";
   }
   return `+${stats.added} / -${stats.removed}`;
+}
+
+function isAgentParentTask(task: ExtendedRuntimeTask) {
+  return task.kind === "agent.run" && !task.parentTaskId;
+}
+
+function formatTaskRoleLabel(task: ExtendedRuntimeTask) {
+  if (isAgentParentTask(task)) {
+    return "Agent 父任务";
+  }
+  if (task.parentTaskId) {
+    return "Agent 子任务";
+  }
+  return "任务";
+}
+
+function formatTaskWaitingStatusLabel(task: ExtendedRuntimeTask) {
+  if (task.waitingStatus) {
+    return formatWaitingStatus(task.waitingStatus);
+  }
+  if (task.status === "waiting_for_task" || task.status === "waiting_for_approval") {
+    return formatWaitingStatus(task.status);
+  }
+  return "";
+}
+
+function formatTaskHeadline(task: ExtendedRuntimeTask, parentTask?: ExtendedRuntimeTask) {
+  const base = task.title || task.kind || "untitled task";
+  if (isAgentParentTask(task)) {
+    return `${base} / agent.run`;
+  }
+  if (parentTask) {
+    return `${base} / ${task.kind || "task"} / 父任务 ${parentTask.title || parentTask.id}`;
+  }
+  return `${base} / ${task.kind || "task"}`;
+}
+
+function formatTaskLinkSummary(task: ExtendedRuntimeTask) {
+  const parts: string[] = [];
+  if (task.waitingTaskId) {
+    parts.push(`关联子任务 ${task.waitingTaskId}`);
+  }
+  if (task.approvalId) {
+    parts.push(`审批 ${task.approvalId}`);
+  }
+  if (task.latestChildTaskId) {
+    parts.push(`最新子任务 ${task.latestChildTaskId}`);
+  }
+  if (parts.length === 0 && task.parentTaskId) {
+    parts.push(`父任务 ${task.parentTaskId}`);
+  }
+  return parts.join(" / ") || "当前没有额外关联信息。";
 }
 
 function formatTaskStatus(status: string) {
@@ -1176,6 +1414,10 @@ function formatTaskStatus(status: string) {
       return "排队中";
     case "running":
       return "执行中";
+    case "waiting_for_task":
+      return "等待子任务";
+    case "waiting_for_approval":
+      return "等待审批后续跑";
     case "completed":
       return "已完成";
     case "failed":
@@ -1185,6 +1427,58 @@ function formatTaskStatus(status: string) {
     default:
       return status || "未知状态";
   }
+}
+
+function formatWaitingStatus(status: string) {
+  switch (status) {
+    case "waiting_for_task":
+      return "等待子任务完成";
+    case "waiting_for_approval":
+      return "等待审批后续跑";
+    default:
+      return status || "等待中";
+  }
+}
+
+function formatAgentMeta(task: RuntimeTask) {
+  const parts: string[] = [];
+  if (task.agentStep > 0 && task.agentMaxSteps > 0) {
+    parts.push(`step ${task.agentStep}/${task.agentMaxSteps}`);
+  }
+  if (task.latestChildTaskId) {
+    parts.push(`child ${task.latestChildTaskId}`);
+  }
+  if (task.waitingStatus) {
+    parts.push(formatWaitingStatus(task.waitingStatus));
+  }
+  return parts.join(" / ");
+}
+
+function formatAgentDetails(task: RuntimeTask) {
+  const parts: string[] = [];
+  if (task.agentPlanSummary) {
+    parts.push(`plan: ${task.agentPlanSummary}`);
+  }
+  if (task.agentPlanMode) {
+    parts.push(`mode: ${task.agentPlanMode}`);
+  }
+  if (task.agentCurrentStepTitle) {
+    parts.push(`current: ${task.agentCurrentStepTitle}`);
+  }
+  if (task.agentLastReasoning) {
+    parts.push(`reasoning: ${task.agentLastReasoning}`);
+  }
+  if (task.resultSummary) {
+    parts.push(`result: ${task.resultSummary}`);
+  }
+  return parts.join("\n");
+}
+
+function formatLatestTaskBody(task: ExtendedRuntimeTask, parentTask?: ExtendedRuntimeTask) {
+  if (task.kind === "agent.run") {
+    return formatAgentDetails(task) || task.resultSummary || task.input || "暂无结果";
+  }
+  return formatTaskDisplaySummary(task, parentTask) || task.resultSummary || task.input || "暂无结果";
 }
 
 function formatApprovalStatus(status: string) {
@@ -1253,6 +1547,104 @@ function FlowBodyText({ text }: { text: string }) {
   return <p>{text || "暂无内容"}</p>;
 }
 
+function formatTaskDisplaySummary(task: ExtendedRuntimeTask, parentTask?: ExtendedRuntimeTask) {
+  if (isAgentParentTask(task)) {
+    return formatAgentDetails(task) || task.waitingSummary || task.resultSummary || task.input || "等待 agent 执行";
+  }
+
+  const parts = [task.workflowLabel, task.waitingSummary, task.resultSummary].filter(Boolean) as string[];
+  if (parts.length > 0) {
+    return parts.join("\n");
+  }
+  if (parentTask) {
+    return `${task.kind || "task"} 正在为父任务 ${parentTask.title || parentTask.id} 提供执行结果。`;
+  }
+  return task.input || "等待任务输入";
+}
+
+function formatLatestTaskTitle(task: ExtendedRuntimeTask, parentTask?: ExtendedRuntimeTask) {
+  return `${formatTaskHeadline(task, parentTask)} / ${formatTaskStatus(task.status)}`;
+}
+
+function getTaskCardClassName(task: ExtendedRuntimeTask) {
+  if (isAgentParentTask(task)) {
+    return "result-card--agent-parent";
+  }
+  if (task.parentTaskId) {
+    return "result-card--agent-child";
+  }
+  return "";
+}
+
+function formatRuntimeSourceLabel(source?: string) {
+  switch (source) {
+    case "remote-app-server":
+      return "远端 App Server";
+    case "local-fallback":
+      return "桌面本地 fallback";
+    default:
+      return source || "未连接";
+  }
+}
+
+function formatRuntimeSourceDetail(source?: string) {
+  switch (source) {
+    case "remote-app-server":
+      return "当前结果来自远端 runtime，状态会尽量实时同步。";
+    case "local-fallback":
+      return "当前结果来自桌面本地 fallback，不会伪装成远端链路。";
+    default:
+      return "当前还没有可用的 runtime 来源。";
+  }
+}
+
+function formatRefreshModeLabel(supportsSSE?: boolean, sseEnabled?: boolean) {
+  if (supportsSSE && sseEnabled) {
+    return "SSE 实时刷新";
+  }
+  if (supportsSSE) {
+    return "SSE 重连中";
+  }
+  return "手动刷新模式";
+}
+
+function formatRefreshModeDetail(source?: string, supportsSSE?: boolean, sseEnabled?: boolean) {
+  if (supportsSSE && sseEnabled) {
+    return "远端事件流已接通，任务和审批会自动刷新。";
+  }
+  if (supportsSSE) {
+    return "运行时支持 SSE，但当前连接未建立，界面可能稍后回到自动刷新。";
+  }
+  if (source === "local-fallback") {
+    return "本地 fallback 目前按手动刷新工作，这个状态是预期行为。";
+  }
+  return "当前链路未提供 SSE，需要手动刷新查看最新状态。";
+}
+
+function formatAgentWorkflowOverview(task: ExtendedRuntimeTask | null) {
+  if (!task) {
+    return "默认入口是 agent.run：围绕目标自动派生读取、写入、审批和最终回复。";
+  }
+
+  const parts: string[] = [];
+  if (task.agentStep > 0 && task.agentMaxSteps > 0) {
+    parts.push(`当前执行到第 ${task.agentStep}/${task.agentMaxSteps} 步。`);
+  }
+  const waitingLabel = formatTaskWaitingStatusLabel(task);
+  if (waitingLabel) {
+    parts.push(`当前状态：${waitingLabel}。`);
+  }
+  if (task.latestChildTaskId) {
+    parts.push(`最新子任务：${task.latestChildTaskId}。`);
+  }
+  if (task.resultSummary) {
+    parts.push(task.resultSummary);
+  } else if (task.agentCurrentStepTitle) {
+    parts.push(`当前步骤：${task.agentCurrentStepTitle}。`);
+  }
+  return parts.join(" ") || "默认入口是 agent.run：围绕目标自动派生读取、写入、审批和最终回复。";
+}
+
 function ApprovalActions({
   taskId,
   loading,
@@ -1266,10 +1658,10 @@ function ApprovalActions({
 }) {
   return (
     <div className="flow-item__actions">
-      <button className="thread-action" onClick={() => void onApprove(taskId)} disabled={loading}>
+      <button className="thread-action" onClick={() => void onApprove(taskId)} disabled={loading} type="button">
         批准执行
       </button>
-      <button className="thread-action thread-action--danger" onClick={() => void onReject(taskId)} disabled={loading}>
+      <button className="thread-action thread-action--danger" onClick={() => void onReject(taskId)} disabled={loading} type="button">
         拒绝
       </button>
     </div>
@@ -1334,9 +1726,9 @@ function WriteExecutionDetails({ execution }: { execution: WriteExecutionViewMod
   );
 }
 
-function ResultCard({ label, title, body }: { label: string; title: string; body: string }) {
+function ResultCard({ label, title, body, className }: { label: string; title: string; body: string; className?: string }) {
   return (
-    <article className="result-card">
+    <article className={`result-card${className ? ` ${className}` : ""}`}>
       <p>{label}</p>
       <strong>{title}</strong>
       <span>{body}</span>
@@ -1368,6 +1760,27 @@ function summarizeText(value: string, maxLength: number) {
 
 function normalizeTaskInput(kind: string, rawInput: string) {
   const trimmed = rawInput.trim();
+  if (kind === "agent.run") {
+    if (!trimmed) {
+      return JSON.stringify({ goal: "" });
+    }
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+        return JSON.stringify({
+          goal: typeof parsed.goal === "string" ? parsed.goal : trimmed,
+          provider: typeof parsed.provider === "string" ? parsed.provider : undefined,
+          model: typeof parsed.model === "string" ? parsed.model : undefined,
+          maxSteps: typeof parsed.maxSteps === "number" ? parsed.maxSteps : undefined,
+          maxOutputTokens: typeof parsed.maxOutputTokens === "number" ? parsed.maxOutputTokens : undefined,
+        });
+      } catch {
+        return JSON.stringify({ goal: trimmed });
+      }
+    }
+    return JSON.stringify({ goal: trimmed });
+  }
+
   if (kind !== "model.response.create") {
     return trimmed;
   }

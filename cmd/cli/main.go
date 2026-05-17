@@ -22,7 +22,7 @@ import (
 
 const defaultRuntimeBaseURL = "http://127.0.0.1:10008"
 
-var sharedFallbackService = runtime.NewDefaultService()
+var sharedFallbackService = runtime.NewDefaultServiceWithoutRecovery()
 
 type runtimeFacade struct {
 	service *runtime.Service
@@ -79,7 +79,7 @@ func run(ctx context.Context, args []string) error {
 		return printWorkspace(ctx, runtimeFacade)
 	case "threads":
 		if len(args) < 2 {
-			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts|approvals>")
+			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts|approvals|write-executions>")
 		}
 		switch args[1] {
 		case "list":
@@ -168,8 +168,19 @@ func run(ctx context.Context, args []string) error {
 				return errors.New("usage: gen-code threads approvals --id=<threadId>")
 			}
 			return printApprovals(ctx, runtimeFacade, id)
+		case "write-executions":
+			var id string
+			for _, arg := range args[2:] {
+				if strings.HasPrefix(arg, "--id=") {
+					id = strings.TrimSpace(strings.TrimPrefix(arg, "--id="))
+				}
+			}
+			if id == "" {
+				return errors.New("usage: gen-code threads write-executions --id=<threadId>")
+			}
+			return printWriteExecutions(ctx, runtimeFacade, id)
 		default:
-			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts|approvals>")
+			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts|approvals|write-executions>")
 		}
 	case "tasks":
 		if len(args) < 2 {
@@ -273,6 +284,43 @@ func run(ctx context.Context, args []string) error {
 		default:
 			return errors.New("usage: gen-code tasks <list|create|run|approve|reject|update-status>")
 		}
+	case "agent":
+		if len(args) < 2 || args[1] != "run" {
+			return errors.New("usage: gen-code agent run --thread=<threadId> --goal=... [--provider=...] [--model=...] [--max-steps=...] [--max-output-tokens=...] [--title=...]")
+		}
+		var threadID, goal, providerKind, modelName, title string
+		maxSteps := 0
+		maxOutputTokens := 0
+		for _, arg := range args[2:] {
+			switch {
+			case strings.HasPrefix(arg, "--thread="):
+				threadID = strings.TrimSpace(strings.TrimPrefix(arg, "--thread="))
+			case strings.HasPrefix(arg, "--goal="):
+				goal = strings.TrimSpace(strings.TrimPrefix(arg, "--goal="))
+			case strings.HasPrefix(arg, "--provider="):
+				providerKind = strings.TrimSpace(strings.TrimPrefix(arg, "--provider="))
+			case strings.HasPrefix(arg, "--model="):
+				modelName = strings.TrimSpace(strings.TrimPrefix(arg, "--model="))
+			case strings.HasPrefix(arg, "--max-steps="):
+				value, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(arg, "--max-steps=")))
+				if err != nil {
+					return fmt.Errorf("invalid --max-steps: %w", err)
+				}
+				maxSteps = value
+			case strings.HasPrefix(arg, "--max-output-tokens="):
+				value, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(arg, "--max-output-tokens=")))
+				if err != nil {
+					return fmt.Errorf("invalid --max-output-tokens: %w", err)
+				}
+				maxOutputTokens = value
+			case strings.HasPrefix(arg, "--title="):
+				title = strings.TrimSpace(strings.TrimPrefix(arg, "--title="))
+			}
+		}
+		if threadID == "" || goal == "" {
+			return errors.New("usage: gen-code agent run --thread=<threadId> --goal=... [--provider=...] [--model=...] [--max-steps=...] [--max-output-tokens=...] [--title=...]")
+		}
+		return runAgentTask(ctx, runtimeFacade, threadID, title, goal, providerKind, modelName, maxSteps, maxOutputTokens)
 	case "model":
 		if len(args) < 2 || args[1] != "run" {
 			return errors.New("usage: gen-code model run --thread=<threadId> --input=... [--provider=...] [--model=...] [--max-output-tokens=...] [--title=...]")
@@ -306,6 +354,20 @@ func run(ctx context.Context, args []string) error {
 			return errors.New("usage: gen-code model run --thread=<threadId> --input=... [--provider=...] [--model=...] [--max-output-tokens=...] [--title=...]")
 		}
 		return runModelTask(ctx, runtimeFacade, threadID, title, providerKind, modelName, input, maxOutputTokens)
+	case "rollback":
+		if len(args) < 2 || args[1] != "latest" {
+			return errors.New("usage: gen-code rollback latest --thread=<threadId>")
+		}
+		var threadID string
+		for _, arg := range args[2:] {
+			if strings.HasPrefix(arg, "--thread=") {
+				threadID = strings.TrimSpace(strings.TrimPrefix(arg, "--thread="))
+			}
+		}
+		if threadID == "" {
+			return errors.New("usage: gen-code rollback latest --thread=<threadId>")
+		}
+		return rollbackLatest(ctx, runtimeFacade, threadID)
 	case "skills":
 		if len(args) < 2 || args[1] != "list" {
 			return errors.New("usage: gen-code skills list [--group=<group>]")
@@ -354,6 +416,8 @@ func run(ctx context.Context, args []string) error {
 
 func printUsage() {
 	fmt.Println("gen-code commands:")
+	fmt.Println("  primary workflow: agent run --thread=<threadId> --goal=... [--provider=...] [--model=...] [--max-steps=...] [--max-output-tokens=...] [--title=...]")
+	fmt.Println("  inspect agent progress: tasks list --thread=<threadId>")
 	fmt.Println("  doctor")
 	fmt.Println("  runtime status")
 	fmt.Println("  workspace show")
@@ -365,13 +429,16 @@ func printUsage() {
 	fmt.Println("  threads tool-calls --id=<threadId>")
 	fmt.Println("  threads artifacts --id=<threadId>")
 	fmt.Println("  threads approvals --id=<threadId>")
+	fmt.Println("  threads write-executions --id=<threadId>")
 	fmt.Println("  tasks list --thread=<threadId>")
 	fmt.Println("  tasks create --thread=<threadId> --kind=<kind> [--title=...] [--input=...] [--input-file=<path>] [--patch-file=<path> --path=<workspace-relative-path>]")
 	fmt.Println("  tasks run --thread=<threadId> --task=<taskId>")
 	fmt.Println("  tasks approve --thread=<threadId> --task=<taskId>")
 	fmt.Println("  tasks reject --thread=<threadId> --task=<taskId>")
 	fmt.Println("  tasks update-status --thread=<threadId> --task=<taskId> --status=<status>")
+	fmt.Println("  agent run --thread=<threadId> --goal=... [--provider=...] [--model=...] [--max-steps=...] [--max-output-tokens=...] [--title=...]")
 	fmt.Println("  model run --thread=<threadId> --input=... [--provider=...] [--model=...] [--max-output-tokens=...] [--title=...]")
+	fmt.Println("  rollback latest --thread=<threadId>")
 	fmt.Println("  skills list [--group=<group>]")
 	fmt.Println("  tools list")
 	fmt.Println("  mcp list")
@@ -479,6 +546,15 @@ func (f *runtimeFacade) approvals(ctx context.Context, threadID string) ([]runti
 	}
 	f.source = "local-fallback"
 	return f.service.Approvals(ctx, threadID)
+}
+
+func (f *runtimeFacade) writeExecutions(ctx context.Context, threadID string) ([]runtimecontract.WriteExecutionDescriptor, error) {
+	if items, err := f.client.writeExecutions(threadID); err == nil {
+		f.source = "remote-app-server"
+		return items, nil
+	}
+	f.source = "local-fallback"
+	return f.service.WriteExecutions(ctx, threadID)
 }
 
 func (f *runtimeFacade) approveTask(ctx context.Context, threadID string, taskID string, request runtimecontract.ApproveTaskRequest) (runtimecontract.TaskDescriptor, error) {
@@ -660,7 +736,11 @@ func printRuntimeStatus(ctx context.Context, facade *runtimeFacade) error {
 	core := facade.service.FullStatus()
 	fmt.Println("runtime status")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
-	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  source trust: %s\n", fallbackText(status.RuntimeTrust, runtimeSourceTrust(facade.runtimeSource())))
+	fmt.Printf("  source detail: %s\n", fallbackText(status.RuntimeSourceDetail, runtimeSourceDetail(facade.runtimeSource())))
+	if canonicalTarget := strings.TrimSpace(status.CanonicalRuntimeURL); canonicalTarget != "" {
+		fmt.Printf("  canonical runtime target: %s\n", canonicalTarget)
+	}
 	fmt.Printf("  app version: %s\n", core.AppVersion)
 	fmt.Printf("  app server status: %s\n", status.State)
 	fmt.Printf("  runtime ready: %t\n", status.Ready)
@@ -837,6 +917,35 @@ func printApprovals(ctx context.Context, facade *runtimeFacade, threadID string)
 	return nil
 }
 
+func printWriteExecutions(ctx context.Context, facade *runtimeFacade, threadID string) error {
+	items, err := facade.writeExecutions(ctx, threadID)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("thread write executions")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  thread: %s\n", threadID)
+	for _, item := range items {
+		fmt.Printf(
+			"  - %s (%s, op=%s, task=%s, tool=%s, related=%s, targets=%s)\n",
+			item.ID,
+			item.Status,
+			fallbackText(item.Operation, "apply"),
+			item.TaskID,
+			item.ToolKind,
+			fallbackText(item.RelatedExecutionID, "none"),
+			strings.Join(item.TargetPaths, ","),
+		)
+		fmt.Printf("    patch: %s\n", fallbackText(item.PatchSummary, "none"))
+		fmt.Printf("    before: %s\n", fallbackText(item.BeforeSummary, "none"))
+		fmt.Printf("    after: %s\n", fallbackText(item.AfterSummary, "none"))
+		fmt.Printf("    result: %s\n", fallbackText(item.ResultSummary, "none"))
+	}
+	return nil
+}
+
 func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) error {
 	items, err := facade.tasks(ctx, threadID)
 	if err != nil {
@@ -845,10 +954,37 @@ func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) err
 
 	fmt.Println("tasks list")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(facade.runtimeSource()))
 	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  thread: %s\n", threadID)
 	for _, item := range items {
-		fmt.Printf("  - %s (%s, approval=%s, kind=%s, updated=%s, result=%s)\n", item.ID, item.Status, fallbackText(item.ApprovalStatus, "none"), fallbackText(item.Kind, "none"), fallbackText(item.UpdatedAt, "none"), fallbackText(item.ResultSummary, "none"))
+		role := taskWorkflowRole(item)
+		waitingReason := taskWaitingReason(item)
+		fmt.Printf(
+			"  - %s (%s, approval=%s, waiting=%s, parent=%s, kind=%s, updated=%s, result=%s)\n",
+			item.ID,
+			item.Status,
+			fallbackText(item.ApprovalStatus, "none"),
+			fallbackText(item.WaitingStatus, "none"),
+			fallbackText(item.ParentTaskID, "none"),
+			fallbackText(item.Kind, "none"),
+			fallbackText(item.UpdatedAt, "none"),
+			fallbackText(item.ResultSummary, "none"),
+		)
+		if role != "" {
+			fmt.Printf("    workflow: %s\n", role)
+		}
+		if waitingReason != "" {
+			fmt.Printf("    waiting on: %s\n", waitingReason)
+		}
+		if item.Kind == "agent.run" {
+			fmt.Printf("    plan: %s\n", fallbackText(item.AgentPlanSummary, "none"))
+			fmt.Printf("    plan mode: %s\n", fallbackText(item.AgentPlanMode, "none"))
+			fmt.Printf("    current step: %s\n", fallbackText(item.AgentCurrentStepTitle, "none"))
+			fmt.Printf("    last reasoning: %s\n", fallbackText(item.AgentLastReasoning, "none"))
+			fmt.Printf("    progress: %d/%d\n", item.AgentStep, item.AgentMaxSteps)
+			fmt.Printf("    latest child: %s\n", fallbackText(item.LatestChildTaskID, "none"))
+		}
 	}
 	return nil
 }
@@ -882,7 +1018,7 @@ func createTask(ctx context.Context, facade *runtimeFacade, threadID string, tit
 	if kind == "workspace.apply_patch" {
 		fmt.Println("  recommended patch input: use --patch-file=<path> --path=<workspace-relative-path>")
 	} else {
-		fmt.Println("  inline fallback: PowerShell JSON can use --input='{\"path\":\"go.mod\"}' or --input='{\"query\":\"workspace\",\"path\":\"internal\"}'")
+		fmt.Println("  inline fallback: PowerShell JSON can use --input='{\"path\":\"go.mod\"}', --input='{\"paths\":[\"README.md\",\"go.mod\"]}', or --input='{\"query\":\"workspace\",\"path\":\"internal\",\"limit\":20}'")
 	}
 	return nil
 }
@@ -933,6 +1069,165 @@ func runModelTask(ctx context.Context, facade *runtimeFacade, threadID string, t
 	fmt.Printf("  id: %s\n", result.ID)
 	fmt.Printf("  status: %s\n", result.Status)
 	fmt.Printf("  result: %s\n", fallbackText(result.ResultSummary, "none"))
+	return nil
+}
+
+func runAgentTask(ctx context.Context, facade *runtimeFacade, threadID string, title string, goal string, providerKind string, modelName string, maxSteps int, maxOutputTokens int) error {
+	if strings.TrimSpace(title) == "" {
+		title = "Agent run"
+	}
+	payload := map[string]any{
+		"goal": goal,
+	}
+	if strings.TrimSpace(providerKind) != "" {
+		payload["provider"] = providerKind
+	}
+	if strings.TrimSpace(modelName) != "" {
+		payload["model"] = modelName
+	}
+	if maxSteps > 0 {
+		payload["maxSteps"] = maxSteps
+	}
+	if maxOutputTokens > 0 {
+		payload["maxOutputTokens"] = maxOutputTokens
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	item, err := facade.createTask(ctx, threadID, runtimecontract.CreateTaskRequest{
+		Title: title,
+		Kind:  "agent.run",
+		Input: string(raw),
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("agent task created")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Println("  workflow: default goal-oriented workflow")
+	fmt.Printf("  id: %s\n", item.ID)
+	fmt.Printf("  thread id: %s\n", item.ThreadID)
+	fmt.Printf("  kind: %s\n", item.Kind)
+	fmt.Printf("  status: %s\n", item.Status)
+
+	result, err := facade.runTask(ctx, threadID, item.ID, runtimecontract.RunTaskRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Println("agent task executed")
+	fmt.Printf("  id: %s\n", result.ID)
+	fmt.Printf("  status: %s\n", result.Status)
+	fmt.Printf("  waiting: %s\n", fallbackText(result.WaitingStatus, "none"))
+	if waitingReason := taskWaitingReason(result); waitingReason != "" {
+		fmt.Printf("  waiting on: %s\n", waitingReason)
+	}
+	fmt.Printf("  plan: %s\n", fallbackText(result.AgentPlanSummary, "none"))
+	fmt.Printf("  plan mode: %s\n", fallbackText(result.AgentPlanMode, "none"))
+	fmt.Printf("  current step: %s\n", fallbackText(result.AgentCurrentStepTitle, "none"))
+	fmt.Printf("  last reasoning: %s\n", fallbackText(result.AgentLastReasoning, "none"))
+	fmt.Printf("  progress: %d/%d\n", result.AgentStep, result.AgentMaxSteps)
+	fmt.Printf("  latest child: %s\n", fallbackText(result.LatestChildTaskID, "none"))
+	fmt.Printf("  result: %s\n", fallbackText(result.ResultSummary, "none"))
+	if result.Status == "waiting_for_approval" || result.WaitingStatus == "waiting_for_approval" {
+		fmt.Println("  next step: approve the child workspace.apply_patch task; the parent agent will auto-resume")
+	}
+	fmt.Printf("  inspect: gen-code tasks list --thread=%s\n", threadID)
+	return nil
+}
+
+func taskWorkflowRole(item runtimecontract.TaskDescriptor) string {
+	switch {
+	case item.Kind == "agent.run":
+		return "default goal-oriented agent parent"
+	case strings.TrimSpace(item.ParentTaskID) != "":
+		return fmt.Sprintf("child task of %s", item.ParentTaskID)
+	default:
+		return ""
+	}
+}
+
+func taskWaitingReason(item runtimecontract.TaskDescriptor) string {
+	switch item.WaitingStatus {
+	case "waiting_for_approval":
+		if strings.TrimSpace(item.LatestChildTaskID) != "" {
+			return fmt.Sprintf("approval for child task %s", item.LatestChildTaskID)
+		}
+		return "approval for a child task"
+	case "waiting_for_task":
+		if strings.TrimSpace(item.LatestChildTaskID) != "" {
+			return fmt.Sprintf("child task %s to finish", item.LatestChildTaskID)
+		}
+		return "a child task to finish"
+	default:
+		return ""
+	}
+}
+
+func rollbackLatest(ctx context.Context, facade *runtimeFacade, threadID string) error {
+	items, err := facade.writeExecutions(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	candidate := latestRollbackCandidate(items)
+	if candidate == nil {
+		return errors.New("no rollback-eligible write execution found")
+	}
+
+	inputBytes, err := json.Marshal(map[string]string{"writeExecutionId": candidate.ID})
+	if err != nil {
+		return err
+	}
+	created, err := facade.createTask(ctx, threadID, runtimecontract.CreateTaskRequest{
+		Title: "Rollback latest write execution",
+		Kind:  "workspace.apply_patch.rollback",
+		Input: string(inputBytes),
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("rollback task created")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  source write execution: %s\n", candidate.ID)
+	fmt.Printf("  task id: %s\n", created.ID)
+	fmt.Printf("  status: %s\n", created.Status)
+	fmt.Printf("  approval: %s\n", fallbackText(created.ApprovalStatus, "none"))
+	fmt.Printf("  result: %s\n", fallbackText(created.ResultSummary, "none"))
+
+	if created.Status == "needs_approval" || created.ApprovalStatus == "pending" {
+		fmt.Println("rollback is waiting for approval")
+		return nil
+	}
+
+	executed, err := facade.runTask(ctx, threadID, created.ID, runtimecontract.RunTaskRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Println("rollback task executed")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  task id: %s\n", executed.ID)
+	fmt.Printf("  status: %s\n", executed.Status)
+	fmt.Printf("  approval: %s\n", fallbackText(executed.ApprovalStatus, "none"))
+	fmt.Printf("  result: %s\n", fallbackText(executed.ResultSummary, "none"))
+	return nil
+}
+
+func latestRollbackCandidate(items []runtimecontract.WriteExecutionDescriptor) *runtimecontract.WriteExecutionDescriptor {
+	for index := range items {
+		operation := strings.TrimSpace(items[index].Operation)
+		if operation == "" && items[index].ToolKind == "workspace.apply_patch" {
+			operation = "apply"
+		}
+		if operation == "apply" && items[index].Status == "completed" {
+			return &items[index]
+		}
+	}
 	return nil
 }
 
@@ -1152,11 +1447,22 @@ func fallbackText(value string, fallback string) string {
 func runtimeSourceDetail(source string) string {
 	switch source {
 	case "remote-app-server":
-		return "shared runtime from the running app-server"
+		return "canonical shared runtime served by the app-server entry"
 	case "local-fallback":
-		return "project-local SQLite fallback because app-server is unavailable"
+		return "project-local SQLite fallback because the canonical app-server runtime is unavailable"
 	default:
 		return "unknown runtime source"
+	}
+}
+
+func runtimeSourceTrust(source string) string {
+	switch source {
+	case "remote-app-server":
+		return "canonical"
+	case "local-fallback":
+		return "degraded"
+	default:
+		return "unknown"
 	}
 }
 
@@ -1372,6 +1678,14 @@ func (c *remoteRuntimeClient) approvals(threadID string) ([]runtimecontract.Appr
 		Items []runtimecontract.ApprovalDescriptor `json:"items"`
 	}
 	err := c.fetchEnvelope("/api/threads/"+url.PathEscape(threadID)+"/approvals", &payload)
+	return payload.Items, err
+}
+
+func (c *remoteRuntimeClient) writeExecutions(threadID string) ([]runtimecontract.WriteExecutionDescriptor, error) {
+	var payload struct {
+		Items []runtimecontract.WriteExecutionDescriptor `json:"items"`
+	}
+	err := c.fetchEnvelope("/api/threads/"+url.PathEscape(threadID)+"/write-executions", &payload)
 	return payload.Items, err
 }
 
@@ -1621,6 +1935,19 @@ func decodeEnvelope(response *http.Response, target any) error {
 	}:
 		var envelope apiEnvelope[struct {
 			Items []runtimecontract.ApprovalDescriptor `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
+		Items []runtimecontract.WriteExecutionDescriptor `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []runtimecontract.WriteExecutionDescriptor `json:"items"`
 		}]
 		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 			return err

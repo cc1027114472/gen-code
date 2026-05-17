@@ -22,18 +22,25 @@ func TestRunPrintsUsageWithoutArgs(t *testing.T) {
 	})
 
 	require.Contains(t, output, "gen-code commands:")
+	require.Contains(t, output, "primary workflow: agent run --thread=<threadId> --goal=...")
+	require.Contains(t, output, "inspect agent progress: tasks list --thread=<threadId>")
 	require.Contains(t, output, "runtime status")
+	require.Contains(t, output, "threads write-executions --id=<threadId>")
 	require.Contains(t, output, "tasks list --thread=<threadId>")
 	require.Contains(t, output, "tasks update-status --thread=<threadId> --task=<taskId> --status=<status>")
 	require.Contains(t, output, "model run --thread=<threadId> --input=...")
+	require.Contains(t, output, "rollback latest --thread=<threadId>")
+	require.Contains(t, output, "tasks create --thread=<threadId> --kind=<kind>")
 }
 
 func TestRuntimeStatusUsesRemoteSourceWhenServerIsAvailable(t *testing.T) {
+	serverURL := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/runtime/status", r.URL.Path)
-		_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":2,"activeThreadId":"thread-1","taskCount":3,"eventCount":5}}`))
+		_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","canonicalRuntimeUrl":"` + serverURL + `","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":2,"activeThreadId":"thread-1","taskCount":3,"eventCount":5}}`))
 	}))
 	defer server.Close()
+	serverURL = server.URL
 
 	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
 
@@ -43,7 +50,9 @@ func TestRuntimeStatusUsesRemoteSourceWhenServerIsAvailable(t *testing.T) {
 	})
 
 	require.Contains(t, output, "source: remote-app-server")
-	require.Contains(t, output, "source detail: shared runtime from the running app-server")
+	require.Contains(t, output, "canonical runtime target: "+server.URL)
+	require.Contains(t, output, "source trust: canonical")
+	require.Contains(t, output, "source detail: canonical shared runtime served by the app-server entry")
 	require.Contains(t, output, "active thread task count: 3")
 	require.Contains(t, output, "active thread event count: 5")
 }
@@ -61,7 +70,8 @@ func TestTasksListFallsBackLocallyWhenServerIsUnavailable(t *testing.T) {
 	})
 
 	require.Contains(t, output, "source: local-fallback")
-	require.Contains(t, output, "source detail: project-local SQLite fallback because app-server is unavailable")
+	require.Contains(t, output, "source trust: degraded")
+	require.Contains(t, output, "source detail: project-local SQLite fallback because the canonical app-server runtime is unavailable")
 	require.Contains(t, output, "kind=thread.message.append")
 }
 
@@ -69,7 +79,7 @@ func TestToolsListPrintsExecutionMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tools":
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"workspace.read_file","name":"Read File","description":"Read a file from workspace","permissionMode":"read-only","source":"runtime","kind":"workspace.read_file","readOnly":true,"executable":true}]}}`))
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"workspace.read_file","name":"Read File","description":"Read a file from workspace","permissionMode":"read-only","source":"runtime","kind":"workspace.read_file","readOnly":true,"executable":true},{"id":"workspace.stat_file","name":"Stat File","description":"Stat a workspace file","permissionMode":"read-only","source":"runtime","kind":"workspace.stat_file","readOnly":true,"executable":true},{"id":"workspace.read_files_batch","name":"Read Files Batch","description":"Read workspace files","permissionMode":"read-only","source":"runtime","kind":"workspace.read_files_batch","readOnly":true,"executable":true},{"id":"workspace.list_files_filtered","name":"List Files Filtered","description":"List filtered files","permissionMode":"read-only","source":"runtime","kind":"workspace.list_files_filtered","readOnly":true,"executable":true},{"id":"workspace.search_text_detailed","name":"Search Text Detailed","description":"Search text with details","permissionMode":"read-only","source":"runtime","kind":"workspace.search_text_detailed","readOnly":true,"executable":true}]}}`))
 		case "/api/runtime/status":
 			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":0,"eventCount":0}}`))
 		default:
@@ -86,11 +96,81 @@ func TestToolsListPrintsExecutionMetadata(t *testing.T) {
 	})
 
 	require.Contains(t, output, "source: remote-app-server")
-	require.Contains(t, output, "source detail: shared runtime from the running app-server")
+	require.Contains(t, output, "source detail: canonical shared runtime served by the app-server entry")
 	require.Contains(t, output, "permission=read-only")
 	require.Contains(t, output, "kind=workspace.read_file")
+	require.Contains(t, output, "kind=workspace.stat_file")
+	require.Contains(t, output, "kind=workspace.read_files_batch")
+	require.Contains(t, output, "kind=workspace.list_files_filtered")
+	require.Contains(t, output, "kind=workspace.search_text_detailed")
 	require.Contains(t, output, "executable=true")
 	require.Contains(t, output, "readOnly=true")
+}
+
+func TestTasksListPrintsAgentPlanMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/threads/thread-1/tasks":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"task-agent","threadId":"thread-1","title":"Agent run","status":"running","kind":"agent.run","resultSummary":"agent step 2/4: Read the selected files","parentTaskId":"","waitingStatus":"waiting_for_task","agentStep":2,"agentMaxSteps":4,"latestChildTaskId":"task-child","agentPlanSummary":"Filter matching files first, then read the selected files, then answer.","agentPlanMode":"filter_then_read","agentCurrentStepTitle":"Answer with the findings","agentLastReasoning":"Read the selected files","createdAt":"2026-05-17T00:00:00Z","updatedAt":"2026-05-17T00:00:02Z"},{"id":"task-child","threadId":"thread-1","title":"Read files","status":"completed","kind":"workspace.read_files_batch","resultSummary":"read 2 files: README.md, go.mod","parentTaskId":"task-agent","waitingStatus":"","createdAt":"2026-05-17T00:00:01Z","updatedAt":"2026-05-17T00:00:01Z"}]}}`))
+		case "/api/runtime/status":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":1,"eventCount":0}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"tasks", "list", "--thread=thread-1"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "plan: Filter matching files first, then read the selected files, then answer.")
+	require.Contains(t, output, "plan mode: filter_then_read")
+	require.Contains(t, output, "current step: Answer with the findings")
+	require.Contains(t, output, "last reasoning: Read the selected files")
+	require.Contains(t, output, "progress: 2/4")
+	require.Contains(t, output, "latest child: task-child")
+	require.Contains(t, output, "workflow: default goal-oriented agent parent")
+	require.Contains(t, output, "waiting on: child task task-child to finish")
+	require.Contains(t, output, "workflow: child task of task-agent")
+	require.Contains(t, output, "kind=workspace.read_files_batch")
+}
+
+func TestAgentRunPrintsDefaultWorkflowGuidance(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/threads/thread-1/tasks":
+			require.Equal(t, http.MethodPost, r.Method)
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-agent","threadId":"thread-1","title":"Goal run","status":"queued","kind":"agent.run","createdAt":"2026-05-17T00:00:00Z","updatedAt":"2026-05-17T00:00:00Z"}}`))
+		case "/api/threads/thread-1/tasks/task-agent/run":
+			require.Equal(t, http.MethodPost, r.Method)
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-agent","threadId":"thread-1","title":"Goal run","status":"waiting_for_approval","kind":"agent.run","waitingStatus":"waiting_for_approval","resultSummary":"agent waiting for approval: update README.md","agentPlanSummary":"Inspect files, prepare patch, then summarize.","agentPlanMode":"filter_then_read","agentCurrentStepTitle":"Apply the proposed patch","agentLastReasoning":"Prepared a patch for README.md","agentStep":3,"agentMaxSteps":4,"latestChildTaskId":"task-child-patch","updatedAt":"2026-05-17T00:00:03Z"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{
+			"agent", "run",
+			"--thread=thread-1",
+			"--title=Goal run",
+			"--goal=Update README with the current workflow",
+		})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "workflow: default goal-oriented workflow")
+	require.Contains(t, output, "waiting on: approval for child task task-child-patch")
+	require.Contains(t, output, "latest child: task-child-patch")
+	require.Contains(t, output, "next step: approve the child workspace.apply_patch task; the parent agent will auto-resume")
+	require.Contains(t, output, "inspect: gen-code tasks list --thread=thread-1")
 }
 
 func TestProvidersListPrintsRecommendedAPIStyle(t *testing.T) {
@@ -153,7 +233,7 @@ func TestCreateTaskPrintsPowerShellInputHint(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	require.Contains(t, output, "source detail: project-local SQLite fallback because app-server is unavailable")
+	require.Contains(t, output, "source detail: project-local SQLite fallback because the canonical app-server runtime is unavailable")
 	require.Contains(t, output, "input: {\"path\":\"go.mod\"}")
 	require.Contains(t, output, "input source: inline --input")
 	require.Contains(t, output, "recommended input: use --input-file=<path> for JSON payloads")
@@ -205,6 +285,73 @@ func TestCreatePatchTaskBuildsJSONFromPatchFileAndPath(t *testing.T) {
 	require.Contains(t, output, "input source: patch file sample.patch -> docs/sample.txt")
 	require.Contains(t, output, "docs/sample.txt")
 	require.Contains(t, output, "recommended patch input: use --patch-file=<path> --path=<workspace-relative-path>")
+}
+
+func TestThreadWriteExecutionsUsesRemoteSourceWhenServerIsAvailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/threads/thread-1/write-executions":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"write-1","threadId":"thread-1","taskId":"task-9","approvalId":"approval-1","toolKind":"workspace.apply_patch","status":"completed","targetPaths":["docs/sample.txt"],"patchSummary":"applied patch to docs/sample.txt: created 1 line(s)","beforeSummary":"docs/sample.txt missing before apply","afterSummary":"docs/sample.txt exists with 1 line(s), 5 byte(s), sha256:abc123","resultSummary":"applied patch to docs/sample.txt: created 1 line(s)","createdAt":"2026-05-16T00:00:00Z","updatedAt":"2026-05-16T00:00:01Z"}]}}`))
+		case "/api/runtime/status":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":1,"eventCount":4}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"threads", "write-executions", "--id=thread-1"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "thread write executions")
+	require.Contains(t, output, "source: remote-app-server")
+	require.Contains(t, output, "op=apply")
+	require.Contains(t, output, "tool=workspace.apply_patch")
+	require.Contains(t, output, "docs/sample.txt")
+	require.Contains(t, output, "patch: applied patch to docs/sample.txt: created 1 line(s)")
+}
+
+func TestRollbackLatestExecutesThroughRemoteTaskAPI(t *testing.T) {
+	var createdBody []byte
+	output := captureOutput(t, func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/threads/thread-1/write-executions":
+				_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"writeexec-9","threadId":"thread-1","taskId":"task-apply","approvalId":"","toolKind":"workspace.apply_patch","operation":"apply","relatedExecutionId":"","status":"completed","targetPaths":["README.md"],"patchSummary":"2 patch line(s)","beforeSummary":"exists","afterSummary":"exists","resultSummary":"applied patch to README.md: updated 2 line(s)","createdAt":"2026-05-16T00:00:00Z","updatedAt":"2026-05-16T00:00:01Z"}]}}`))
+			case "/api/threads/thread-1/tasks":
+				require.Equal(t, http.MethodPost, r.Method)
+				var err error
+				createdBody, err = io.ReadAll(r.Body)
+				require.NoError(t, err)
+				_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-rollback","threadId":"thread-1","title":"Rollback latest write execution","status":"queued","kind":"workspace.apply_patch.rollback","inputSummary":"{\"writeExecutionId\":\"writeexec-9\"}","approvalStatus":"direct","createdAt":"2026-05-16T00:00:02Z","updatedAt":"2026-05-16T00:00:02Z"}}`))
+			case "/api/threads/thread-1/tasks/task-rollback/run":
+				_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-rollback","threadId":"thread-1","title":"Rollback latest write execution","status":"completed","kind":"workspace.apply_patch.rollback","resultSummary":"rolled back patch on README.md: restored README.md","approvalStatus":"direct","createdAt":"2026-05-16T00:00:02Z","updatedAt":"2026-05-16T00:00:03Z"}}`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+		t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+		err := run(context.Background(), []string{"rollback", "latest", "--thread=thread-1"})
+		require.NoError(t, err)
+	})
+
+	var payload struct {
+		Title string `json:"title"`
+		Kind  string `json:"kind"`
+		Input string `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(createdBody, &payload))
+	require.Equal(t, "workspace.apply_patch.rollback", payload.Kind)
+	assertJSONEqual(t, `{"writeExecutionId":"writeexec-9"}`, payload.Input)
+	require.Contains(t, output, "rollback task created")
+	require.Contains(t, output, "rollback task executed")
+	require.Contains(t, output, "rolled back patch on README.md")
 }
 
 func TestCreateTaskRejectsConflictingInputFlags(t *testing.T) {
@@ -294,9 +441,15 @@ func TestFallbackText(t *testing.T) {
 }
 
 func TestRuntimeSourceDetail(t *testing.T) {
-	require.Equal(t, "shared runtime from the running app-server", runtimeSourceDetail("remote-app-server"))
-	require.Equal(t, "project-local SQLite fallback because app-server is unavailable", runtimeSourceDetail("local-fallback"))
+	require.Equal(t, "canonical shared runtime served by the app-server entry", runtimeSourceDetail("remote-app-server"))
+	require.Equal(t, "project-local SQLite fallback because the canonical app-server runtime is unavailable", runtimeSourceDetail("local-fallback"))
 	require.Equal(t, "unknown runtime source", runtimeSourceDetail("mystery"))
+}
+
+func TestRuntimeSourceTrust(t *testing.T) {
+	require.Equal(t, "canonical", runtimeSourceTrust("remote-app-server"))
+	require.Equal(t, "degraded", runtimeSourceTrust("local-fallback"))
+	require.Equal(t, "unknown", runtimeSourceTrust("mystery"))
 }
 
 func captureOutput(t *testing.T, fn func()) string {

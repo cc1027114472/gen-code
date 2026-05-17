@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -58,6 +59,7 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 			Enabled:       true,
 			ToolCount:     2,
 			ResourceCount: 3,
+			Status:        "enabled",
 		}}),
 		provider.NewRegistry(""),
 		sessions,
@@ -219,6 +221,46 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	}
 	require.NotEmpty(t, streamed)
 	require.Equal(t, created.ID, streamed[0].ThreadID)
+}
+
+func TestNormalizeMCPServerStatus(t *testing.T) {
+	testCases := []struct {
+		name string
+		item mcp.ServerDescriptor
+		want string
+	}{
+		{
+			name: "prefers explicit degraded status",
+			item: mcp.ServerDescriptor{Enabled: true, ToolCount: 2, ResourceCount: 1, Status: "degraded"},
+			want: "degraded",
+		},
+		{
+			name: "disabled wins when server disabled",
+			item: mcp.ServerDescriptor{Enabled: false, ToolCount: 2, ResourceCount: 1},
+			want: "disabled",
+		},
+		{
+			name: "enabled with zero inventory degrades by default",
+			item: mcp.ServerDescriptor{Enabled: true, ToolCount: 0, ResourceCount: 0},
+			want: "degraded",
+		},
+		{
+			name: "enabled with inventory stays enabled",
+			item: mcp.ServerDescriptor{Enabled: true, ToolCount: 1, ResourceCount: 0},
+			want: "enabled",
+		},
+		{
+			name: "keeps unreachable contract value",
+			item: mcp.ServerDescriptor{Enabled: true, ToolCount: 1, ResourceCount: 0, Status: "unreachable"},
+			want: "unreachable",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, normalizeMCPServerStatus(tc.item))
+		})
+	}
 }
 
 func TestServiceCreateTaskNormalizesPlainModelInput(t *testing.T) {
@@ -446,4 +488,102 @@ func TestServiceCreateAgentTaskSeedsPlanMode(t *testing.T) {
 	require.Equal(t, "stat_then_read", task.AgentPlanMode)
 	require.Equal(t, "Check file status first, then read content if needed, then answer.", task.AgentPlanSummary)
 	require.Equal(t, "Check file status", task.AgentCurrentStepTitle)
+}
+
+func TestTaskDescriptorAgentWorkflowSummary(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+
+	t.Run("waiting for approval prefers explicit runtime summary", func(t *testing.T) {
+		descriptor := toTaskDescriptor(session.Task{
+			ID:             "task-agent",
+			ThreadID:       "thread-1",
+			Title:          "Agent run",
+			Status:         "waiting_for_approval",
+			Kind:           runner.KindAgentRun,
+			ResultSummary:  "agent step 2/4: waiting for approval for child task task-child",
+			WaitingStatus:  "waiting_for_approval",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			AgentState:     runner.MarshalAgentRunStateForRuntime(runner.AgentRunState{TaskID: "task-agent", ThreadID: "thread-1", StepIndex: 2, MaxSteps: 4, WaitingChildTaskID: "task-child", Status: "waiting_for_approval"}),
+		})
+
+		require.Equal(t, "task-child", descriptor.LatestChildTaskID)
+		require.Equal(t, "waiting_for_approval", descriptor.WaitingStatus)
+		require.Equal(t, 2, descriptor.AgentStep)
+		require.Equal(t, 4, descriptor.AgentMaxSteps)
+		require.Equal(t, "agent step 2/4: waiting for approval for child task task-child", descriptor.ResultSummary)
+	})
+
+	t.Run("waiting for child task derives explicit summary when empty", func(t *testing.T) {
+		descriptor := toTaskDescriptor(session.Task{
+			ID:            "task-agent",
+			ThreadID:      "thread-1",
+			Title:         "Agent run",
+			Status:        "waiting_for_task",
+			Kind:          runner.KindAgentRun,
+			WaitingStatus: "waiting_for_task",
+			CreatedAt:     now,
+			UpdatedAt:     now,
+			AgentState: runner.MarshalAgentRunStateForRuntime(runner.AgentRunState{
+				TaskID:             "task-agent",
+				ThreadID:           "thread-1",
+				StepIndex:          1,
+				MaxSteps:           4,
+				WaitingChildTaskID: "task-child",
+				Status:             "waiting_for_task",
+			}),
+		})
+
+		require.Equal(t, "task-child", descriptor.LatestChildTaskID)
+		require.Equal(t, 1, descriptor.AgentStep)
+		require.Equal(t, 4, descriptor.AgentMaxSteps)
+		require.Equal(t, "agent step 1/4: waiting for child task task-child", descriptor.ResultSummary)
+	})
+
+	t.Run("completed parent keeps final result summary", func(t *testing.T) {
+		descriptor := toTaskDescriptor(session.Task{
+			ID:            "task-agent",
+			ThreadID:      "thread-1",
+			Title:         "Agent run",
+			Status:        "completed",
+			Kind:          runner.KindAgentRun,
+			ResultSummary: "agent completed: updated README and summarized the change",
+			CreatedAt:     now,
+			UpdatedAt:     now,
+			AgentState: runner.MarshalAgentRunStateForRuntime(runner.AgentRunState{
+				TaskID:    "task-agent",
+				ThreadID:  "thread-1",
+				StepIndex: 3,
+				MaxSteps:  4,
+				Status:    "completed",
+			}),
+		})
+
+		require.Equal(t, "agent completed: updated README and summarized the change", descriptor.ResultSummary)
+		require.Equal(t, 3, descriptor.AgentStep)
+		require.Equal(t, 4, descriptor.AgentMaxSteps)
+	})
+
+	t.Run("queued parent falls back to explicit queued summary", func(t *testing.T) {
+		descriptor := toTaskDescriptor(session.Task{
+			ID:        "task-agent",
+			ThreadID:  "thread-1",
+			Title:     "Agent run",
+			Status:    "queued",
+			Kind:      runner.KindAgentRun,
+			CreatedAt: now,
+			UpdatedAt: now,
+			AgentState: runner.MarshalAgentRunStateForRuntime(runner.AgentRunState{
+				TaskID:    "task-agent",
+				ThreadID:  "thread-1",
+				StepIndex: 0,
+				MaxSteps:  4,
+				Status:    "queued",
+			}),
+		})
+
+		require.Equal(t, "agent queued", descriptor.ResultSummary)
+		require.Equal(t, 0, descriptor.AgentStep)
+		require.Equal(t, 4, descriptor.AgentMaxSteps)
+	})
 }
