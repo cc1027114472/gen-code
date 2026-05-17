@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 import uuid
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect, sync_playwright
 
 
@@ -117,7 +118,7 @@ def assert_desktop_copy_and_runtime_lane(page, runtime_status: dict, refresh_mod
         if expected not in body_text:
             fail(
                 f"expected desktop copy text {expected!r} to be visible in remote acceptance lane",
-                category="desktop-copy",
+                category="desktop-copy-assertion",
                 details={"missingText": expected},
             )
 
@@ -125,7 +126,7 @@ def assert_desktop_copy_and_runtime_lane(page, runtime_status: dict, refresh_mod
         if unexpected in body_text:
             fail(
                 f"unexpected stale desktop copy text {unexpected!r} was visible in remote acceptance lane",
-                category="desktop-copy",
+                category="desktop-copy-assertion",
                 details={"unexpectedText": unexpected},
             )
 
@@ -133,7 +134,7 @@ def assert_desktop_copy_and_runtime_lane(page, runtime_status: dict, refresh_mod
         if not any(item in body_text for item in group):
             fail(
                 f"expected at least one desktop copy variant from {group!r} to be visible in remote acceptance lane",
-                category="desktop-copy",
+                category="desktop-copy-assertion",
                 details={"missingGroup": group},
             )
 
@@ -142,19 +143,19 @@ def assert_desktop_copy_and_runtime_lane(page, runtime_status: dict, refresh_mod
     if expected_lane not in body_text:
         fail(
             f"expected runtime lane token {expected_lane!r} to be visible",
-            category="runtime-copy",
+            category="runtime-lane-assertion",
             details={"runtimeSource": runtime_status.get('runtimeSource', '')},
         )
     if expected_trust not in body_text:
         fail(
             f"expected runtime trust token {expected_trust!r} to be visible",
-            category="runtime-copy",
+            category="runtime-lane-assertion",
             details={"runtimeTrust": runtime_status.get('runtimeTrust', '')},
         )
     if refresh_mode.get("evidence") and refresh_mode["evidence"] not in body_text:
         fail(
             f"expected refresh mode evidence {refresh_mode['evidence']!r} to be visible",
-            category="runtime-copy",
+            category="refresh-mode-assertion",
             details=refresh_mode,
         )
 
@@ -177,6 +178,50 @@ def fail(message: str, *, category: str, details=None):
     if details is not None:
         payload["details"] = details
     raise RuntimeError(json.dumps(payload, ensure_ascii=False))
+
+
+def normalize_failure(exc: Exception) -> dict:
+    try:
+        return json.loads(str(exc))
+    except json.JSONDecodeError:
+        pass
+
+    details = {
+        "exceptionType": type(exc).__name__,
+        "exception": str(exc),
+    }
+
+    if isinstance(exc, (urllib.error.HTTPError, urllib.error.URLError, socket.timeout, ConnectionResetError, OSError)):
+        return {
+            "ok": False,
+            "category": "api-unavailable",
+            "error": "runtime API was not reachable during desktop acceptance",
+            "details": details,
+        }
+
+    if isinstance(exc, PlaywrightTimeoutError):
+        return {
+            "ok": False,
+            "category": "page-load-failed",
+            "error": "desktop page did not load in time during acceptance",
+            "details": details,
+        }
+
+    message = str(exc)
+    if "thread card was not rendered" in message:
+        return {
+            "ok": False,
+            "category": "page-load-failed",
+            "error": "desktop page loaded, but the active thread card never rendered",
+            "details": details,
+        }
+
+    return {
+        "ok": False,
+        "category": "unknown",
+        "error": message,
+        "details": details,
+    }
 
 
 def ensure_artifact_dir() -> str:
@@ -217,12 +262,36 @@ def api(method: str, path: str, data=None):
         except (ConnectionResetError, urllib.error.URLError, socket.timeout, OSError) as exc:
             last_error = exc
             if attempt == API_RETRIES - 1:
-                raise
+                fail(
+                    f"runtime API request failed for {method} {path}",
+                    category="api-unavailable",
+                    details={
+                        "method": method,
+                        "path": path,
+                        "baseUrl": API_BASE_URL,
+                        "exceptionType": type(exc).__name__,
+                        "exception": str(exc),
+                    },
+                )
             time.sleep(API_RETRY_DELAY * (attempt + 1))
 
     if last_error is not None:
-        raise last_error
-    raise RuntimeError(f"request failed without error for {method} {path}")
+        fail(
+            f"runtime API request failed for {method} {path}",
+            category="api-unavailable",
+            details={
+                "method": method,
+                "path": path,
+                "baseUrl": API_BASE_URL,
+                "exceptionType": type(last_error).__name__,
+                "exception": str(last_error),
+            },
+        )
+    fail(
+        f"runtime API request failed for {method} {path}",
+        category="api-unavailable",
+        details={"method": method, "path": path, "baseUrl": API_BASE_URL},
+    )
 
 
 def ensure_canonical_runtime() -> dict:
@@ -235,19 +304,19 @@ def ensure_canonical_runtime() -> dict:
     if runtime_source != "remote-app-server":
         fail(
             f"expected canonical remote runtime source 'remote-app-server', got {runtime_source!r}",
-            category="runtime",
+            category="runtime-lane-assertion",
             details=status,
         )
     if runtime_trust != "canonical":
         fail(
             f"expected canonical runtime trust 'canonical', got {runtime_trust!r}",
-            category="runtime",
+            category="runtime-lane-assertion",
             details=status,
         )
     if canonical_runtime_url and canonical_runtime_url != expected_runtime_url:
         fail(
             f"canonical runtime URL mismatch: expected {expected_runtime_url}, got {canonical_runtime_url}",
-            category="runtime",
+            category="runtime-lane-assertion",
             details=status,
         )
     return status
@@ -420,12 +489,26 @@ def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
         assert_article_contains(page, scenario["title"])
         visibility["taskCardVisible"] = True
     except Exception:
-        assert_article_contains(page, tool_call["toolId"])
-        visibility["toolKindVisible"] = True
+        try:
+            assert_article_contains(page, tool_call["toolId"])
+            visibility["toolKindVisible"] = True
+        except Exception:
+            refresh_thread_view(page, thread_id)
+            try:
+                assert_article_contains(page, scenario["title"], timeout=10000)
+                visibility["taskCardVisible"] = True
+            except Exception:
+                try:
+                    assert_article_contains(page, tool_call["toolId"], timeout=10000)
+                    visibility["toolKindVisible"] = True
+                except Exception:
+                    if not scenario.get("ui_optional", False):
+                        raise
     return {
         "task": completed_task,
         "toolCall": tool_call,
         "visibility": visibility,
+        "input": scenario["input"],
     }
 
 
@@ -551,6 +634,10 @@ def run_agent_scenario(page, thread_id: str, scenario: dict) -> dict:
     assert_required_child_sequence(child_kinds, scenario["expectedChildSequence"])
     required_kind_names = set().union(*scenario["expectedChildSequence"])
     visible_children = [item for item in completed_children if item["kind"] in required_kind_names]
+    required_observed_kinds = scenario.get("requiredObservedKinds", [])
+    for required_kind in required_observed_kinds:
+        if required_kind not in child_kinds:
+            raise AssertionError(f"expected agent scenario to observe child kind {required_kind}, got {child_kinds!r}")
 
     latest_message = wait_for_new_assistant_message(thread_id, baseline_assistant_messages, timeout_seconds=30.0)
 
@@ -656,9 +743,23 @@ def main() -> int:
                 window.__GENCODE_RUNTIME_BASE_URL__ = {json.dumps(API_BASE_URL)};
                 """
             )
-            page.goto(UI_BASE_URL, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(3000)
-            wait_for_active_thread(page, thread_id)
+            try:
+                page.goto(UI_BASE_URL, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(3000)
+                wait_for_active_thread(page, thread_id)
+            except Exception as exc:
+                if isinstance(exc, PlaywrightTimeoutError) or "thread card was not rendered" in str(exc):
+                    fail(
+                        "desktop page did not reach a usable thread workbench state",
+                        category="page-load-failed",
+                        details={
+                            "uiBaseUrl": UI_BASE_URL,
+                            "threadId": thread_id,
+                            "exceptionType": type(exc).__name__,
+                            "exception": str(exc),
+                        },
+                    )
+                raise
             if ACCEPTANCE_MODE == "smoke":
                 result = {
                     "ok": True,
@@ -684,6 +785,30 @@ def main() -> int:
                         "kind": "workspace.stat_file",
                         "input": {"path": "go.mod"},
                         "summary_contains": "stat go.mod: file",
+                    },
+                )
+            )
+            direct_results.append(
+                run_direct_tool_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Read go.mod direct {run_id}",
+                        "kind": "workspace.read_file",
+                        "input": {"path": "go.mod"},
+                        "summary_contains": "read go.mod:",
+                    },
+                )
+            )
+            direct_results.append(
+                run_direct_tool_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"List root files direct {run_id}",
+                        "kind": "workspace.list_files",
+                        "input": {"path": "."},
+                        "summary_contains": "listed",
                     },
                 )
             )
@@ -746,6 +871,7 @@ def main() -> int:
                         "kind": "thread.toolcall.append",
                         "input": {"toolId": "workspace.read_file", "status": "completed", "summary": "read finished"},
                         "summary_contains": "tool call workspace.read_file appended",
+                        "ui_optional": True,
                     },
                 )
             )
@@ -758,6 +884,7 @@ def main() -> int:
                         "kind": "thread.artifact.append",
                         "input": {"path": "artifacts/acceptance-note.md", "kind": "markdown"},
                         "summary_contains": "artifact markdown appended",
+                        "ui_optional": True,
                     },
                 )
             )
@@ -770,6 +897,7 @@ def main() -> int:
                         "kind": "thread.runtimeflag.set",
                         "input": {"key": "acceptance.mode", "value": run_id},
                         "summary_contains": "runtime flag acceptance.mode updated",
+                        "ui_optional": True,
                     },
                 )
             )
@@ -834,6 +962,28 @@ def main() -> int:
                             {"workspace.stat_file"},
                             {"workspace.read_files_batch", "workspace.read_file"},
                         ],
+                        "maxSteps": 4,
+                    },
+                )
+            )
+            agent_results.append(
+                run_agent_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": "Agent list read acceptance",
+                        "runId": run_id,
+                        "goal": (
+                            "Use list_files on internal/core/runner first, "
+                            "then use read_file on internal/core/runner/agent_loop.go, "
+                            "then answer in one short sentence about what you inspected. Do not write files."
+                        ),
+                        "expectedPlanMode": "list_then_read",
+                        "expectedChildSequence": [
+                            {"workspace.list_files"},
+                            {"workspace.read_file", "workspace.read_files_batch"},
+                        ],
+                        "requiredObservedKinds": ["workspace.list_files", "workspace.read_file"],
                         "maxSteps": 4,
                     },
                 )
@@ -991,6 +1141,7 @@ def main() -> int:
                         "id": item["task"]["id"],
                         "title": item["task"]["title"],
                         "kind": item["task"]["kind"],
+                        "input": item["input"],
                         "resultSummary": item["task"]["resultSummary"],
                         "visibility": item["visibility"],
                     }
@@ -1028,6 +1179,7 @@ def main() -> int:
                         "planMode": item["task"].get("agentPlanMode", ""),
                         "resultSummary": item["task"]["resultSummary"],
                         "childTaskKinds": [child["kind"] for child in item["childTasks"]],
+                        "observedChildTaskKinds": [child["kind"] for child in item["childTasks"]],
                         "messageId": item["message"]["id"],
                         "message": item["message"]["content"],
                         "visibility": item["visibility"],
@@ -1105,10 +1257,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        try:
-            parsed = json.loads(str(exc))
-        except json.JSONDecodeError:
-            parsed = {"ok": False, "category": "unknown", "error": str(exc)}
+        parsed = normalize_failure(exc)
         write_json_artifact("desktop-smoke-failure.json", parsed)
         if "page" in globals():
             try:

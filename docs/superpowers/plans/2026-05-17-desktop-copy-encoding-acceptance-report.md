@@ -19,6 +19,21 @@
 
 - [2026-05-17-desktop-copy-encoding-and-runtime-alignment-plan.md](/D:/GOWorks/gen-code-heji/gen-code/docs/superpowers/plans/2026-05-17-desktop-copy-encoding-and-runtime-alignment-plan.md) 需要作为可读中文文档重新收口。
 - [runtimeBridge.ts](/D:/GOWorks/gen-code-heji/gen-code/desktop/frontend/src/runtimeBridge.ts) 与 [App.tsx](/D:/GOWorks/gen-code-heji/gen-code/desktop/frontend/src/App.tsx) 的问题属于用户可见文案收口，不涉及 runtime wire shape 变更。
+- [2026-05-18-desktop-smoke-first-run-playbook.md](/D:/GOWorks/gen-code-heji/gen-code/docs/superpowers/plans/2026-05-18-desktop-smoke-first-run-playbook.md) 与 [2026-05-17-desktop-remote-acceptance-entrypoint.md](/D:/GOWorks/gen-code-heji/gen-code/docs/superpowers/plans/2026-05-17-desktop-remote-acceptance-entrypoint.md) 的 Markdown 文件字节当前仍是正常 UTF-8；若 PowerShell 直接读取显示乱码，应优先按 UTF-8 方式复核，而不是直接判断文件内容受损。
+
+## UTF-8 复核约定
+
+若 PowerShell 默认 `Get-Content` 输出疑似乱码，本阶段统一按以下顺序处理：
+
+1. 先用明确的 UTF-8 读取方式复核同一文件。
+2. 再确认 Python / 编辑器按 UTF-8 打开时是否正常。
+3. 只有在 UTF-8 原始字节也无法正确还原内容时，才判定 repo 中文本真正损坏。
+
+这条约定同样适用于：
+
+- smoke 首跑手册
+- remote 验收默认入口
+- 本验收报告自身
 
 ## 手工验收项
 
@@ -76,6 +91,7 @@
 - smoke lane 适合作为本地快速预检和默认 CI smoke gate。
 - full lane 仍保留为更重的完整链路验收，当前更适合作为手动触发或发布前检查。
 - smoke summary 中的 `refreshMode` 已从不稳定的 `unknown` 收敛为可用的连接态信号，例如 `SSE 已连接`。
+- 当前尚未完成真实 GitHub 远端首跑；`gh` 未登录这一事实必须继续在 closeout 和 runbook 中明确记录。
 
 ## 通过标准
 

@@ -83,6 +83,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
   - `agent.run` 父子任务可见性
   - approval / write execution / rollback 可见性
 
+职责边界固定为：
+
+- `smoke`
+  - 正式默认 CI gate
+  - 只要求首屏文案、runtime lane、refresh mode 和 canonical remote 链路成立
+- `full`
+  - 手动 / 发布前检查
+  - 用于完整任务流、审批、写执行、rollback、MCP、agent 和 direct tool 链路
+  - 当前不进入默认 GitHub workflow
+
 ## 非覆盖范围
 
 当前默认入口不覆盖：
@@ -107,6 +117,24 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 - 失败时自动上传 smoke 日志产物，便于排查前后端启动或页面验收问题
 - 成功时上传 smoke summary JSON，失败时额外上传失败 JSON 与页面截图
 
+当前 artifact 语义固定为：
+
+- `desktop-smoke-summary`
+  - 成功时至少应包含 `desktop-smoke-summary.json`
+- `desktop-smoke-logs`
+  - 失败时上传前后端启动日志
+- `desktop-smoke-screenshot`
+  - 失败时上传页面截图
+
+失败分类当前统一围绕：
+
+- `api-unavailable`
+- `page-load-failed`
+- `runtime-lane-assertion`
+- `refresh-mode-assertion`
+- `desktop-copy-assertion`
+- `unknown`
+
 ## 相关文档
 
 - [Desktop 文案编码与运行态一致性验收报告](/D:/GOWorks/gen-code-heji/gen-code/docs/superpowers/plans/2026-05-17-desktop-copy-encoding-acceptance-report.md)
@@ -115,7 +143,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 
 ## 下一步建议
 
-下一步若要继续推进，优先二选一：
+下一步若要继续推进，优先顺序固定为：
 
-1. 继续观察 smoke gate 的稳定性，再视运行时长决定是否增加 full lane
-2. 补 fallback lane 的更强证据链，但继续保持它不是同级 browser 自动化
+1. 完成第一次真实 GitHub 远端 smoke 首跑并记录结果
+2. 若远端首跑通过，再决定是否补 full lane 的手动/发布前 runbook
+3. fallback lane 继续只补证据链，不升级为同级 browser 自动化

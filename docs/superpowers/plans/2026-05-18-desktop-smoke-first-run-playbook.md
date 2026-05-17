@@ -117,6 +117,23 @@ gh run watch <run-id>
 - `desktop-smoke-failure.json`
 - `desktop-smoke-failure.png`
 
+## 失败分类基线
+
+首次真实远端运行失败时，优先按 `desktop-smoke-failure.json` 中的 `category` 判断：
+
+- `api-unavailable`
+  - runtime API 未启动、未监听、启动过慢，或 runner 无法连到 `10008`
+- `page-load-failed`
+  - 前端页面未成功加载到可用工作台状态，或线程卡片始终未渲染
+- `runtime-lane-assertion`
+  - 页面已打开，但 `remote-app-server / canonical`、`canonicalRuntimeUrl` 等运行链路语义不满足预期
+- `refresh-mode-assertion`
+  - 页面刷新方式与预期不一致，例如 smoke 预期的 SSE 连接态没有正确显示
+- `desktop-copy-assertion`
+  - 首屏文案断言失败，或出现了明确不应存在的陈旧文案
+- `unknown`
+  - 仍未归类的异常；优先结合 screenshot 和 stderr 继续排查
+
 ## 首次失败时的排查顺序
 
 1. 先看 `desktop-smoke-failure.json`
@@ -131,6 +148,27 @@ gh run watch <run-id>
 - 如果 server stderr 有异常：优先看 API 是否启动失败
 - 如果 vite stderr 有异常：优先看前端 dev server 是否启动失败
 - 如果 screenshot 显示页面已打开但断言失败：优先看 smoke 文案或 runtime 展示是否回归
+
+## 首次真实远端运行记录
+
+首次远端首跑完成后，在验收报告中补一段固定记录，至少包括：
+
+- run 日期
+- branch / ref
+- workflow：`desktop-smoke.yml`
+- run id
+- 结论：success / failed
+- `desktop-smoke-summary` artifact 是否可下载
+- 若失败：
+  - `desktop-smoke-failure.json` 中的 `category`
+  - 首个有效定位证据
+  - 是否属于 CI-only 问题
+
+当前真实状态：
+
+- 本机已安装 `gh`
+- 但当前尚未登录 GitHub
+- 因此这份手册当前只覆盖“如何首跑”和“如何记录结果”，不伪装成“已经完成远端 workflow 首跑”
 
 ## 与本地对等入口的关系
 
@@ -148,5 +186,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-with-bootst
 
 - workflow 成功
 - `desktop-smoke-summary` artifact 可下载
-- summary 中 `refreshMode` 不再是无意义的空值
+- summary 中 `runtimeSource=remote-app-server`
+- summary 中 `runtimeTrust=canonical`
+- summary 中 `refreshMode` 不再是无意义的空值或 `unknown`
 - 无需依赖人工解释即可判断 smoke gate 是否通过

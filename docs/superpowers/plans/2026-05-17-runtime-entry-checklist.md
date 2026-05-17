@@ -49,6 +49,7 @@ Pass standard:
 - `fallback` is supporting evidence only, not a second browser gate
 - `canonicalRuntimeUrl`, when present, matches the API target used for the run
 - all direct read-tool, MCP execution, agent, apply, and rollback checks pass
+- canonical direct read-tool coverage explicitly includes `workspace.read_file`, `workspace.list_files`, `workspace.stat_file`, `workspace.read_files_batch`, `workspace.list_files_filtered`, and `workspace.search_text_detailed`
 - current MCP verification is fixture-backed stdio external execution, not blanket compatibility for arbitrary third-party MCP servers
 
 ## Fallback Interpretation Rules
@@ -71,3 +72,4 @@ Pass standard:
 - MCP execution task ID and summary
 - any intentional port override
 - any skipped MCP or skill-governance assertion, with reason
+- for the first real GitHub smoke run: workflow name, run id, artifact download status, and failure category when the run is not green
