@@ -18,7 +18,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-check.ps1
 
 - 本地快速预检
 - 改完 desktop 文案或 runtime 展示后先做一轮低成本确认
-- 后续 CI 预检查的优先候选入口
+- 仓库默认的 desktop smoke gate
 
 当前覆盖：
 
@@ -26,6 +26,19 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-check.ps1
 - `remote-app-server / canonical` 运行链路 token
 - `SSE 实时刷新` 展示
 - canonical remote `5174 + 10008` 基本连通性
+
+若需要自动启动本地 API 与前端，可执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-with-bootstrap.ps1
+```
+
+这条入口会自行启动：
+
+- `go run .\cmd\server`
+- `npm run dev -- --host 127.0.0.1 --port 5174`
+
+然后执行 smoke 验收并在结束后清理子进程。
 
 ### 2. 完整 Full 验收
 
@@ -54,6 +67,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 脚本入口：
 
 - [run-desktop-smoke-check.ps1](/D:/GOWorks/gen-code-heji/gen-code/scripts/run-desktop-smoke-check.ps1)
+- [run-desktop-smoke-with-bootstrap.ps1](/D:/GOWorks/gen-code-heji/gen-code/scripts/run-desktop-smoke-with-bootstrap.ps1)
 - [run-desktop-live-refresh-check.ps1](/D:/GOWorks/gen-code-heji/gen-code/scripts/run-desktop-live-refresh-check.ps1)
 - [verify-desktop-live-refresh.py](/D:/GOWorks/gen-code-heji/gen-code/scripts/verify-desktop-live-refresh.py)
 
@@ -75,9 +89,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 
 - `desktop local-fallback` 的同级 browser 自动化
 - in-app browser plugin 链路
-- 完整 CI 托管执行
+- full lane 的稳定 CI 托管执行
 
 其中 fallback lane 继续以手工验收和 Go 测试证据为主，不伪装成同级 browser 自动化通过项。
+
+## CI Gate
+
+仓库已补最小 GitHub Actions workflow：
+
+- [.github/workflows/desktop-smoke.yml](/D:/GOWorks/gen-code-heji/gen-code/.github/workflows/desktop-smoke.yml)
+
+当前定位：
+
+- 只跑 smoke lane
+- 通过自举脚本拉起 API 与前端
+- 作为 canonical remote `5174 + 10008` 的默认 desktop smoke gate
 
 ## 相关文档
 
@@ -88,5 +114,5 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 
 下一步若要继续推进，优先二选一：
 
-1. 先把 smoke 入口挂进 CI 预检查，再视运行时长决定是否增加 full lane
+1. 继续观察 smoke gate 的稳定性，再视运行时长决定是否增加 full lane
 2. 补 fallback lane 的更强证据链，但继续保持它不是同级 browser 自动化

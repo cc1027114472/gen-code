@@ -54,10 +54,25 @@
 
 - `desktop/frontend` 还没有单独内置 Playwright 资产。
 - 仓库级 remote 浏览器验收资产已存在：
+  - [run-desktop-smoke-check.ps1](/D:/GOWorks/gen-code-heji/gen-code/scripts/run-desktop-smoke-check.ps1)
+  - [run-desktop-smoke-with-bootstrap.ps1](/D:/GOWorks/gen-code-heji/gen-code/scripts/run-desktop-smoke-with-bootstrap.ps1)
   - [run-desktop-live-refresh-check.ps1](/D:/GOWorks/gen-code-heji/gen-code/scripts/run-desktop-live-refresh-check.ps1)
   - [verify-desktop-live-refresh.py](/D:/GOWorks/gen-code-heji/gen-code/scripts/verify-desktop-live-refresh.py)
-- 这条自动化链当前覆盖 canonical remote `5174 + 10008`，并校验 desktop 文案、runtime lane、刷新方式、任务流、审批与写执行可见性。
+- 默认 smoke gate workflow 已补：
+  - [.github/workflows/desktop-smoke.yml](/D:/GOWorks/gen-code-heji/gen-code/.github/workflows/desktop-smoke.yml)
+- 默认命令入口文档见：
+  - [Desktop Remote 验收默认入口](/D:/GOWorks/gen-code-heji/gen-code/docs/superpowers/plans/2026-05-17-desktop-remote-acceptance-entrypoint.md)
+- 这条自动化链当前覆盖 canonical remote `5174 + 10008`，并区分：
+  - smoke：首屏文案、runtime lane、刷新方式
+  - full：任务流、审批与写执行可见性
 - fallback lane 仍不作为同级 browser 自动化通过条件，继续以手工验收和 Go 测试证据为主。
+
+当前验证结论补充：
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-check.ps1` 已在当前环境跑通。
+- `powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-with-bootstrap.ps1` 是默认 smoke gate 的本地对等入口。
+- smoke lane 适合作为本地快速预检和默认 CI smoke gate。
+- full lane 仍保留为更重的完整链路验收，当前更适合作为手动触发或发布前检查。
 
 ## 通过标准
 

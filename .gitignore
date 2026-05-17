@@ -7,3 +7,5 @@ desktop/build/
 desktop/frontend/dist/
 desktop/frontend/node_modules/
 desktop/frontend/vite*.log
+desktop/frontend/*smoke*.log
+server-smoke*.log
