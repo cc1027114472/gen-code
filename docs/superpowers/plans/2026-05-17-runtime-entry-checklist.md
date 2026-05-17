@@ -49,6 +49,7 @@ Pass standard:
 - `fallback` is supporting evidence only, not a second browser gate
 - `canonicalRuntimeUrl`, when present, matches the API target used for the run
 - all direct read-tool, MCP execution, agent, apply, and rollback checks pass
+- current MCP verification is fixture-backed stdio external execution, not blanket compatibility for arbitrary third-party MCP servers
 
 ## Fallback Interpretation Rules
 

@@ -36,8 +36,18 @@ func TestRunPrintsUsageWithoutArgs(t *testing.T) {
 func TestRuntimeStatusUsesRemoteSourceWhenServerIsAvailable(t *testing.T) {
 	serverURL := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/runtime/status", r.URL.Path)
-		_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","canonicalRuntimeUrl":"` + serverURL + `","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":2,"activeThreadId":"thread-1","taskCount":3,"eventCount":5}}`))
+		switch r.URL.Path {
+		case "/api/runtime/status":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","canonicalRuntimeUrl":"` + serverURL + `","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":2,"activeThreadId":"thread-1","taskCount":3,"eventCount":5}}`))
+		case "/api/skills":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"common.browser","group":"common","name":"Browser","description":"Shared browser skill","source":"common","verificationStatus":"implemented","localizationChecked":false},{"id":"codex.review","group":"codex","name":"Review","description":"Codex review skill","source":"codex","verificationStatus":"implemented","localizationChecked":false}]}}`))
+		case "/api/tools":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"workspace.read_file","name":"Read File","description":"Read a file from workspace","permissionMode":"read-only","source":"runtime","kind":"workspace.read_file","readOnly":true,"executable":true}]}}`))
+		case "/api/mcp/servers":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"filesystem","source":"node_modules","enabled":true,"toolCount":2,"resourceCount":1,"status":"enabled"}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	defer server.Close()
 	serverURL = server.URL
@@ -121,11 +131,44 @@ func TestSkillsListPrintsGovernanceBaseline(t *testing.T) {
 	require.Contains(t, output, "source: local-fallback")
 	require.Contains(t, output, "source trust: degraded")
 	require.Contains(t, output, "governance fields: skill id, group, source, verification status, localization checked")
+	require.Contains(t, output, "skill governance:")
+	require.Contains(t, output, "common: implemented=")
+	require.Contains(t, output, "codex: implemented=")
+	require.Contains(t, output, "cc: implemented=")
 	require.Contains(t, output, "common:")
 	require.Contains(t, output, "codex:")
 	require.Contains(t, output, "cc:")
 	require.Contains(t, output, "verification=implemented")
 	require.Contains(t, output, "localization=unchecked")
+}
+
+func TestSkillsListUsesRemoteRuntimeSourceWhenServerIsAvailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/skills":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"common.browser","group":"common","name":"Browser","description":"Shared browser skill","source":"common","verificationStatus":"implemented","localizationChecked":false},{"id":"codex.review","group":"codex","name":"Review","description":"Codex review skill","source":"codex","verificationStatus":"verified","localizationChecked":true}]}}`))
+		case "/api/runtime/status":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":0,"eventCount":0}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"skills", "list"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "source: remote-app-server")
+	require.Contains(t, output, "source trust: canonical")
+	require.Contains(t, output, "common: implemented=1 verified=0 localization-pending=1")
+	require.Contains(t, output, "codex: implemented=1 verified=1 localization-pending=0")
+	require.Contains(t, output, "cc: implemented=0 verified=0 localization-pending=0")
+	require.Contains(t, output, "verification=verified")
+	require.Contains(t, output, "localization=checked")
 }
 
 func TestMCPListPrintsHealthStatusAndTrust(t *testing.T) {
@@ -152,11 +195,48 @@ func TestMCPListPrintsHealthStatusAndTrust(t *testing.T) {
 	require.Contains(t, output, "source: remote-app-server")
 	require.Contains(t, output, "source trust: canonical")
 	require.Contains(t, output, "metadata verification: metadata health only; end-to-end MCP execution is not verified")
+	require.Contains(t, output, "execution baseline: fixture-backed stdio external execution baseline verified")
 	require.Contains(t, output, "configured servers: 4")
 	require.Contains(t, output, "filesystem (enabled, metadata health: enabled) [source=node_modules, tools=2, resources=1]")
 	require.Contains(t, output, "memory (disabled, metadata health: disabled) [source=builtin, tools=0, resources=0]")
 	require.Contains(t, output, "remote-proxy (enabled, metadata health: degraded) [source=node_modules, tools=0, resources=0]")
 	require.Contains(t, output, "stale-bridge (enabled, metadata health: unreachable) [source=node_modules, tools=1, resources=0]")
+}
+
+func TestMCPInvokePrintsTaskIdentityAndSummary(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/threads/thread-1/tasks":
+			require.Equal(t, http.MethodPost, r.Method)
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-mcp","threadId":"thread-1","title":"Invoke MCP external-fixture/echo","status":"queued","kind":"mcp.tool.invoke","createdAt":"2026-05-17T00:00:00Z","updatedAt":"2026-05-17T00:00:00Z"}}`))
+		case "/api/threads/thread-1/tasks/task-mcp/run":
+			require.Equal(t, http.MethodPost, r.Method)
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-mcp","threadId":"thread-1","title":"Invoke MCP external-fixture/echo","status":"completed","kind":"mcp.tool.invoke","resultSummary":"mcp tool external-fixture/echo executed","updatedAt":"2026-05-17T00:00:01Z"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{
+			"mcp", "invoke",
+			"--thread=thread-1",
+			"--server=external-fixture",
+			"--tool=echo",
+			`--arguments={"message":"hello"}`,
+		})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "mcp task created")
+	require.Contains(t, output, "server id: external-fixture")
+	require.Contains(t, output, "tool name: echo")
+	require.Contains(t, output, "task id: task-mcp")
+	require.Contains(t, output, "status: completed")
+	require.Contains(t, output, "result summary: mcp tool external-fixture/echo executed")
 }
 
 func TestTasksListPrintsAgentPlanMetadata(t *testing.T) {

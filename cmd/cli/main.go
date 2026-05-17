@@ -379,17 +379,40 @@ func run(ctx context.Context, args []string) error {
 				group = strings.TrimSpace(strings.TrimPrefix(arg, "--group="))
 			}
 		}
-		return printSkills(runtimeFacade.service, group, runtimeFacade.runtimeSource())
+		return printSkills(ctx, runtimeFacade, group)
 	case "tools":
 		if len(args) < 2 || args[1] != "list" {
 			return errors.New("usage: gen-code tools list")
 		}
 		return printTools(ctx, runtimeFacade)
 	case "mcp":
-		if len(args) < 2 || args[1] != "list" {
-			return errors.New("usage: gen-code mcp list")
+		if len(args) < 2 {
+			return errors.New("usage: gen-code mcp <list|invoke>")
 		}
-		return printMCP(ctx, runtimeFacade)
+		switch args[1] {
+		case "list":
+			return printMCP(ctx, runtimeFacade)
+		case "invoke":
+			var threadID, serverID, toolName, arguments string
+			for _, arg := range args[2:] {
+				switch {
+				case strings.HasPrefix(arg, "--thread="):
+					threadID = strings.TrimSpace(strings.TrimPrefix(arg, "--thread="))
+				case strings.HasPrefix(arg, "--server="):
+					serverID = strings.TrimSpace(strings.TrimPrefix(arg, "--server="))
+				case strings.HasPrefix(arg, "--tool="):
+					toolName = strings.TrimSpace(strings.TrimPrefix(arg, "--tool="))
+				case strings.HasPrefix(arg, "--arguments="):
+					arguments = strings.TrimSpace(strings.TrimPrefix(arg, "--arguments="))
+				}
+			}
+			if threadID == "" || serverID == "" || toolName == "" {
+				return errors.New("usage: gen-code mcp invoke --thread=<threadId> --server=<id> --tool=<name> [--arguments=<json>]")
+			}
+			return invokeMCPTool(ctx, runtimeFacade, threadID, serverID, toolName, arguments)
+		default:
+			return errors.New("usage: gen-code mcp <list|invoke>")
+		}
 	case "providers":
 		if len(args) < 2 || args[1] != "list" {
 			return errors.New("usage: gen-code providers list")
@@ -443,6 +466,7 @@ func printUsage() {
 	fmt.Println("  skills list [--group=<group>]")
 	fmt.Println("  tools list")
 	fmt.Println("  mcp list")
+	fmt.Println("  mcp invoke --thread=<threadId> --server=<id> --tool=<name> [--arguments=<json>]")
 	fmt.Println("  providers list")
 	fmt.Println("  provider probe --kind=<provider>")
 }
@@ -630,6 +654,15 @@ func (f *runtimeFacade) tools(ctx context.Context) ([]runtimecontract.Tool, erro
 	return f.service.Tools(ctx)
 }
 
+func (f *runtimeFacade) skills(ctx context.Context) ([]runtimecontract.Skill, error) {
+	if items, err := f.client.skills(); err == nil {
+		f.source = "remote-app-server"
+		return items, nil
+	}
+	f.source = "local-fallback"
+	return f.service.Skills(ctx)
+}
+
 func (f *runtimeFacade) mcp(ctx context.Context) ([]runtimecontract.MCPServer, error) {
 	if items, err := f.client.mcpServers(); err == nil {
 		f.source = "remote-app-server"
@@ -673,24 +706,17 @@ func runDoctor(ctx context.Context, facade *runtimeFacade) error {
 		return err
 	}
 
-	skillCounts := map[string]int{}
-	totalSkills := 0
-	for _, groupName := range []string{"common", "codex", "cc"} {
-		group, err := skill.ParseGroup(groupName)
-		if err != nil {
-			return err
-		}
-		items := facade.service.SkillDescriptors(group)
-		count := 0
-		for _, item := range items {
-			if group != skill.Common && item.Group == skill.Common {
-				continue
-			}
-			count++
-		}
-		skillCounts[groupName] = count
-		totalSkills += count
+	skills, err := facade.skills(ctx)
+	if err != nil {
+		return err
 	}
+
+	skillCounts := map[string]int{}
+	for _, item := range skills {
+		group := fallbackText(strings.TrimSpace(item.Group), "common")
+		skillCounts[group]++
+	}
+	totalSkills := len(skills)
 
 	fmt.Println("gen-code doctor")
 	fmt.Println()
@@ -760,9 +786,21 @@ func printRuntimeStatus(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Printf("  permission mode: %s\n", core.PermissionMode)
 	fmt.Printf("  configured mcp server count: %d\n", core.ConfiguredMCPServers)
 	fmt.Printf("  mcp metadata verification: %s\n", mcp.MetadataVerificationNote)
-	fmt.Printf("  skills discovered: %d\n", countSkills(facade.service))
-	fmt.Printf("  tools discovered: %d\n", len(facade.service.ToolDescriptors()))
-	fmt.Printf("  mcp discovered: %d\n", len(facade.service.MCPDescriptors()))
+	skills, err := facade.skills(ctx)
+	if err != nil {
+		return err
+	}
+	tools, err := facade.tools(ctx)
+	if err != nil {
+		return err
+	}
+	mcpServers, err := facade.mcp(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  skills discovered: %d\n", len(skills))
+	fmt.Printf("  tools discovered: %d\n", len(tools))
+	fmt.Printf("  mcp discovered: %d\n", len(mcpServers))
 	return nil
 }
 
@@ -1303,7 +1341,14 @@ func updateTaskStatus(ctx context.Context, facade *runtimeFacade, threadID strin
 	return nil
 }
 
-func printSkills(runtimeService *runtime.Service, requestedGroup string, source string) error {
+func printSkills(ctx context.Context, facade *runtimeFacade, requestedGroup string) error {
+	items, err := facade.skills(ctx)
+	if err != nil {
+		return err
+	}
+	source := facade.runtimeSource()
+	summaries := runtime.SummarizeSkillGovernance(items)
+
 	if requestedGroup != "" {
 		group, err := skill.ParseGroup(requestedGroup)
 		if err != nil {
@@ -1315,11 +1360,11 @@ func printSkills(runtimeService *runtime.Service, requestedGroup string, source 
 		fmt.Printf("  source trust: %s\n", runtimeSourceTrust(source))
 		fmt.Printf("  source detail: %s\n", runtimeSourceDetail(source))
 		fmt.Println("  governance fields: skill id, group, source, verification status, localization checked")
-		for _, item := range runtimeService.SkillDescriptors(group) {
-			if group != skill.Common && item.Group == skill.Common {
+		for _, item := range items {
+			if item.Group != string(group) {
 				continue
 			}
-			fmt.Printf("  - %s (group=%s, source=%s, verification=implemented, localization=unchecked)\n", item.ID, item.Group, skillGroupSourceLabel(item.Group))
+			fmt.Printf("  - %s (group=%s, source=%s, verification=%s, localization=%s)\n", item.ID, item.Group, fallbackText(item.Source, item.Group), fallbackText(item.VerificationStatus, "implemented"), localizationStatus(item.LocalizationChecked))
 		}
 		return nil
 	}
@@ -1329,17 +1374,17 @@ func printSkills(runtimeService *runtime.Service, requestedGroup string, source 
 	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(source))
 	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(source))
 	fmt.Println("  governance fields: skill id, group, source, verification status, localization checked")
+	fmt.Println("  skill governance:")
+	for _, summary := range summaries {
+		fmt.Printf("  - %s: implemented=%d verified=%d localization-pending=%d\n", summary.Group, summary.ImplementedCount, summary.VerifiedCount, summary.LocalizationPending)
+	}
 	for _, groupName := range []string{"common", "codex", "cc"} {
-		group, err := skill.ParseGroup(groupName)
-		if err != nil {
-			return err
-		}
 		fmt.Printf("%s:\n", groupName)
-		for _, item := range runtimeService.SkillDescriptors(group) {
-			if groupName != "common" && item.Group == skill.Common {
+		for _, item := range items {
+			if item.Group != groupName {
 				continue
 			}
-			fmt.Printf("  - %s (group=%s, source=%s, verification=implemented, localization=unchecked)\n", item.ID, item.Group, skillGroupSourceLabel(item.Group))
+			fmt.Printf("  - %s (group=%s, source=%s, verification=%s, localization=%s)\n", item.ID, item.Group, fallbackText(item.Source, item.Group), fallbackText(item.VerificationStatus, "implemented"), localizationStatus(item.LocalizationChecked))
 		}
 	}
 	return nil
@@ -1378,10 +1423,62 @@ func printMCP(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(facade.runtimeSource()))
 	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	fmt.Printf("  metadata verification: %s\n", mcp.MetadataVerificationNote)
+	fmt.Printf("  execution baseline: %s\n", mcp.ExecutionVerificationNote)
 	fmt.Printf("  configured servers: %d\n", len(items))
 	for _, item := range items {
 		fmt.Printf("  - %s [source=%s, tools=%d, resources=%d]\n", summarizeMCPMetadata(item), fallbackText(item.Source, "unknown"), item.ToolCount, item.ResourceCount)
 	}
+	return nil
+}
+
+func invokeMCPTool(ctx context.Context, facade *runtimeFacade, threadID string, serverID string, toolName string, arguments string) error {
+	payload := map[string]any{
+		"serverId": serverID,
+		"toolName": toolName,
+	}
+	if strings.TrimSpace(arguments) == "" {
+		payload["arguments"] = map[string]any{}
+	} else {
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(arguments), &decoded); err != nil {
+			return fmt.Errorf("invalid --arguments json: %w", err)
+		}
+		payload["arguments"] = decoded
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	created, err := facade.createTask(ctx, threadID, runtimecontract.CreateTaskRequest{
+		Title: fmt.Sprintf("Invoke MCP %s/%s", serverID, toolName),
+		Kind:  "mcp.tool.invoke",
+		Input: string(raw),
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("mcp task created")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  server id: %s\n", serverID)
+	fmt.Printf("  tool name: %s\n", toolName)
+	fmt.Printf("  task id: %s\n", created.ID)
+	fmt.Printf("  status: %s\n", created.Status)
+
+	result, err := facade.runTask(ctx, threadID, created.ID, runtimecontract.RunTaskRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Println("mcp task executed")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  server id: %s\n", serverID)
+	fmt.Printf("  tool name: %s\n", toolName)
+	fmt.Printf("  task id: %s\n", result.ID)
+	fmt.Printf("  status: %s\n", result.Status)
+	fmt.Printf("  result summary: %s\n", fallbackText(result.ResultSummary, "none"))
 	return nil
 }
 
@@ -1425,23 +1522,6 @@ func probeProvider(ctx context.Context, facade *runtimeFacade, kind string) erro
 		fmt.Printf("  details: %s\n", string(encoded))
 	}
 	return nil
-}
-
-func countSkills(runtimeService *runtime.Service) int {
-	total := 0
-	for _, groupName := range []string{"common", "codex", "cc"} {
-		group, err := skill.ParseGroup(groupName)
-		if err != nil {
-			continue
-		}
-		for _, item := range runtimeService.SkillDescriptors(group) {
-			if group != skill.Common && item.Group == skill.Common {
-				continue
-			}
-			total++
-		}
-	}
-	return total
 }
 
 func runtimeBaseURL() string {
@@ -1491,6 +1571,13 @@ func skillGroupSourceLabel(group skill.Group) string {
 	default:
 		return "unknown"
 	}
+}
+
+func localizationStatus(checked bool) string {
+	if checked {
+		return "checked"
+	}
+	return "unchecked"
 }
 
 func summarizeMCPMetadata(item runtimecontract.MCPServer) string {
@@ -1795,6 +1882,14 @@ func (c *remoteRuntimeClient) tools() ([]runtimecontract.Tool, error) {
 	return payload.Items, err
 }
 
+func (c *remoteRuntimeClient) skills() ([]runtimecontract.Skill, error) {
+	var payload struct {
+		Items []runtimecontract.Skill `json:"items"`
+	}
+	err := c.fetchEnvelope("/api/skills", &payload)
+	return payload.Items, err
+}
+
 func (c *remoteRuntimeClient) mcpServers() ([]runtimecontract.MCPServer, error) {
 	var payload struct {
 		Items []runtimecontract.MCPServer `json:"items"`
@@ -1986,6 +2081,19 @@ func decodeEnvelope(response *http.Response, target any) error {
 	}:
 		var envelope apiEnvelope[struct {
 			Items []runtimecontract.WriteExecutionDescriptor `json:"items"`
+		}]
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		if envelope.Code != 0 {
+			return fmt.Errorf("request failed: %s", envelope.Message)
+		}
+		*typed = envelope.Data
+	case *struct {
+		Items []runtimecontract.Skill `json:"items"`
+	}:
+		var envelope apiEnvelope[struct {
+			Items []runtimecontract.Skill `json:"items"`
 		}]
 		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 			return err

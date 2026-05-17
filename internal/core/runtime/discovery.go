@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"llmtrace/internal/appserver/runtimecontract"
 	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/provider"
@@ -21,6 +22,13 @@ type discoverySet struct {
 	skills []skill.Descriptor
 	tools  []tool.Descriptor
 	mcp    []mcp.ServerDescriptor
+}
+
+type SkillGovernanceSummary struct {
+	Group               string
+	ImplementedCount    int
+	VerifiedCount       int
+	LocalizationPending int
 }
 
 func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
@@ -175,10 +183,22 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 			ReadOnly:           false,
 			Executable:         true,
 		},
+		{
+			ID:                 "mcp.tool.invoke",
+			Name:               "MCP Tool Invoke",
+			Description:        "Invoke a runtime-configured MCP tool through the shared task runner",
+			InputSchemaSummary: `{"serverId":"external-fixture","toolName":"echo","arguments":{"message":"hello"}}`,
+			PermissionMode:     policy.ReadOnly,
+			Source:             "runtime",
+			Kind:               "mcp.tool.invoke",
+			ReadOnly:           true,
+			Executable:         true,
+		},
 	}
 	discoveredTools = append(discoveredTools, discoverTools(ccToolsRoot)...)
 
 	discoveredMCP := discoverMCPServers(ccNodeModulesRoot)
+	discoveredMCP = append(discoveredMCP, builtinExternalMCPFixture())
 	if len(discoveredMCP) == 0 {
 		discoveredMCP = append(discoveredMCP, mcp.NormalizeServerDescriptor(mcp.ServerDescriptor{
 			ID:            "local-files",
@@ -195,6 +215,19 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 		tools:  dedupeToolDescriptors(discoveredTools),
 		mcp:    dedupeMCPDescriptors(discoveredMCP),
 	}
+}
+
+func builtinExternalMCPFixture() mcp.ServerDescriptor {
+	return mcp.NormalizeServerDescriptor(mcp.ServerDescriptor{
+		ID:            "external-fixture",
+		Source:        "fixture",
+		Enabled:       true,
+		ToolCount:     2,
+		ResourceCount: 0,
+		Status:        "enabled",
+		Command:       mcpFixtureCommand(),
+		Tools:         []string{"echo", "sum", "fail"},
+	})
 }
 
 func discoverSkills(root string, group skill.Group) []skill.Descriptor {
@@ -386,6 +419,14 @@ func workspaceRoot() string {
 	return filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(file))))
 }
 
+func mcpFixtureCommand() []string {
+	scriptPath := filepath.Join(workspaceRoot(), "scripts", "mcp_stdio_fixture.py")
+	if goruntime.GOOS == "windows" {
+		return []string{"python", scriptPath}
+	}
+	return []string{"python3", scriptPath}
+}
+
 func newServiceFromDiscoveryWithStore(discovered discoverySet, explicitStore *state.Store, providers *provider.Registry) *Service {
 	return newServiceFromDiscovery(discovered, explicitStore, providers, true)
 }
@@ -443,4 +484,51 @@ func newSkillResolver(discovered discoverySet) *skill.Resolver {
 	}
 
 	return skill.NewResolver(common, grouped)
+}
+
+func SummarizeSkillGovernance(items []runtimecontract.Skill) []SkillGovernanceSummary {
+	summaries := map[string]*SkillGovernanceSummary{
+		"common": {Group: "common"},
+		"codex":  {Group: "codex"},
+		"cc":     {Group: "cc"},
+	}
+
+	for _, item := range items {
+		group := strings.TrimSpace(item.Group)
+		if group == "" {
+			group = "common"
+		}
+		summary, ok := summaries[group]
+		if !ok {
+			summary = &SkillGovernanceSummary{Group: group}
+			summaries[group] = summary
+		}
+		summary.ImplementedCount++
+		if strings.EqualFold(strings.TrimSpace(item.VerificationStatus), "verified") {
+			summary.VerifiedCount++
+		}
+		if !item.LocalizationChecked {
+			summary.LocalizationPending++
+		}
+	}
+
+	order := []string{"common", "codex", "cc"}
+	result := make([]SkillGovernanceSummary, 0, len(summaries))
+	for _, group := range order {
+		if summary, ok := summaries[group]; ok {
+			result = append(result, *summary)
+			delete(summaries, group)
+		}
+	}
+	if len(summaries) > 0 {
+		extras := make([]string, 0, len(summaries))
+		for group := range summaries {
+			extras = append(extras, group)
+		}
+		sort.Strings(extras)
+		for _, group := range extras {
+			result = append(result, *summaries[group])
+		}
+	}
+	return result
 }

@@ -87,7 +87,7 @@ func newService(version string, group skill.Group, permission policy.Mode, proje
 		providers = provider.NewRegistry("")
 	}
 	providerClient := provider.NewClient(providers)
-	taskRunner := runner.New(sessions, providerClient)
+	taskRunner := runner.New(sessions, providerClient).WithMCP(mcpManager)
 	if recoverInterrupted {
 		_ = taskRunner.RecoverInterruptedTasks()
 	}
@@ -631,11 +631,13 @@ func (s *Service) Skills(_ context.Context) ([]runtimecontract.Skill, error) {
 	result := make([]runtimecontract.Skill, 0, len(items))
 	for _, item := range items {
 		result = append(result, runtimecontract.Skill{
-			ID:          item.ID,
-			Group:       string(item.Group),
-			Name:        item.Name,
-			Description: item.Description,
-			Source:      groupSource(item.Group),
+			ID:                  item.ID,
+			Group:               string(item.Group),
+			Name:                item.Name,
+			Description:         item.Description,
+			Source:              groupSource(item.Group),
+			VerificationStatus:  "implemented",
+			LocalizationChecked: false,
 		})
 	}
 	return result, nil

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"llmtrace/internal/appserver/runtimecontract"
 	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/skill"
@@ -164,8 +165,8 @@ func TestDiscoverSiblingRuntimeContentUsesExpectedSiblingPaths(t *testing.T) {
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "mcp.tool.invoke",
 		Name:               "MCP Tool Invoke",
-		Description:        "Invoke a synthetic runtime MCP tool",
-		InputSchemaSummary: `{"serverId":"synthetic","toolName":"echo","arguments":{"message":"hello"}}`,
+		Description:        "Invoke a runtime-configured MCP tool through the shared task runner",
+		InputSchemaSummary: `{"serverId":"external-fixture","toolName":"echo","arguments":{"message":"hello"}}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
 		Kind:               "mcp.tool.invoke",
@@ -179,6 +180,16 @@ func TestDiscoverSiblingRuntimeContentUsesExpectedSiblingPaths(t *testing.T) {
 		ToolCount:     0,
 		ResourceCount: 0,
 		Status:        "degraded",
+	})
+	require.Contains(t, discovered.mcp, mcp.ServerDescriptor{
+		ID:            "external-fixture",
+		Source:        "fixture",
+		Enabled:       true,
+		ToolCount:     2,
+		ResourceCount: 0,
+		Status:        "enabled",
+		Command:       mcpFixtureCommand(),
+		Tools:         []string{"echo", "fail", "sum"},
 	})
 }
 
@@ -200,4 +211,17 @@ func TestNewSkillResolverPreservesGroupingSemantics(t *testing.T) {
 	ccGroup, ok := resolver.Resolve("cc")
 	require.True(t, ok)
 	require.Equal(t, []string{"cc.swarm", "common.browser"}, ccGroup.Skills)
+}
+
+func TestSummarizeSkillGovernanceUsesStableGroupBaseline(t *testing.T) {
+	summaries := SummarizeSkillGovernance([]runtimecontract.Skill{
+		{ID: "common.browser", Group: "common", Source: "common", VerificationStatus: "implemented", LocalizationChecked: false},
+		{ID: "codex.review", Group: "codex", Source: "codex", VerificationStatus: "verified", LocalizationChecked: true},
+		{ID: "cc.swarm", Group: "cc", Source: "cc", VerificationStatus: "implemented", LocalizationChecked: false},
+	})
+
+	require.Len(t, summaries, 3)
+	require.Equal(t, SkillGovernanceSummary{Group: "common", ImplementedCount: 1, VerifiedCount: 0, LocalizationPending: 1}, summaries[0])
+	require.Equal(t, SkillGovernanceSummary{Group: "codex", ImplementedCount: 1, VerifiedCount: 1, LocalizationPending: 0}, summaries[1])
+	require.Equal(t, SkillGovernanceSummary{Group: "cc", ImplementedCount: 1, VerifiedCount: 0, LocalizationPending: 1}, summaries[2])
 }

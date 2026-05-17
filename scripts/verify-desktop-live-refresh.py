@@ -345,6 +345,7 @@ def run_mcp_execution_scenario(page, thread_id: str, scenario: dict) -> dict:
         "visibility": scenario_result["visibility"],
         "serverId": scenario["input"]["serverId"],
         "toolName": scenario["input"]["toolName"],
+        "transport": "stdio-fixture",
     }
 
 
@@ -562,8 +563,8 @@ def main() -> int:
                     {
                         "title": f"Invoke MCP echo {run_id}",
                         "kind": "mcp.tool.invoke",
-                        "input": {"serverId": "synthetic", "toolName": "echo", "arguments": {"message": "hello"}},
-                        "summary_contains": "mcp tool synthetic/echo executed",
+                        "input": {"serverId": "external-fixture", "toolName": "echo", "arguments": {"message": "hello"}},
+                        "summary_contains": "mcp tool external-fixture/echo executed",
                     },
                 )
             )
@@ -833,6 +834,7 @@ def main() -> int:
                         "kind": item["task"]["kind"],
                         "serverId": item["serverId"],
                         "toolName": item["toolName"],
+                        "transport": item["transport"],
                         "resultSummary": item["task"]["resultSummary"],
                         "record": item["record"],
                         "visibility": item["visibility"],

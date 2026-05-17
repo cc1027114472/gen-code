@@ -25,7 +25,6 @@ const (
 	KindToolCallAppend              = "thread.toolcall.append"
 	KindArtifactAppend              = "thread.artifact.append"
 	KindRuntimeFlagSet              = "thread.runtimeflag.set"
-	KindMCPToolInvoke               = "mcp.tool.invoke"
 	KindWorkspaceRead               = "workspace.read_file"
 	KindWorkspaceList               = "workspace.list_files"
 	KindWorkspaceSearch             = "workspace.search_text"
@@ -35,6 +34,7 @@ const (
 	KindWorkspaceSearchDetailed     = "workspace.search_text_detailed"
 	KindWorkspaceApplyPatch         = "workspace.apply_patch"
 	KindWorkspaceApplyPatchRollback = "workspace.apply_patch.rollback"
+	KindMCPToolInvoke               = "mcp.tool.invoke"
 	KindModelResponse               = "model.response.create"
 	KindAgentRun                    = "agent.run"
 	restartFailureLabel             = "interrupted by runtime restart"
@@ -84,11 +84,7 @@ func New(registry Registry, models ModelExecutor) *Runner {
 	return &Runner{registry: registry, models: models}
 }
 
-// WithMCP attaches an MCP manager to the runner.
 func (r *Runner) WithMCP(manager *mcp.Manager) *Runner {
-	if r == nil {
-		return nil
-	}
 	r.mcp = manager
 	return r
 }
@@ -776,22 +772,26 @@ func (r *Runner) execute(ctx context.Context, threadID string, task session.Task
 		}
 		return fmt.Sprintf("runtime flag %s updated", input.Key), nil
 	case KindMCPToolInvoke:
-		var input mcp.InvocationRequest
+		var input struct {
+			ServerID  string         `json:"serverId"`
+			ToolName  string         `json:"toolName"`
+			Arguments map[string]any `json:"arguments"`
+		}
 		if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
 			return "", err
 		}
 		if r.mcp == nil {
-			return "", fmt.Errorf("mcp execution unavailable")
+			return "", errors.New("mcp execution is not configured")
 		}
-		result, err := r.mcp.Invoke(input)
+		result, err := r.mcp.Invoke(ctx, mcp.InvokeRequest{
+			ServerID:  input.ServerID,
+			ToolName:  input.ToolName,
+			Arguments: input.Arguments,
+		})
 		if err != nil {
 			return "", err
 		}
-		summary := fmt.Sprintf("mcp tool %s/%s executed", result.ServerID, result.ToolName)
-		if compact := compactSummary(strings.TrimSpace(result.Content), 120); compact != "" {
-			summary = fmt.Sprintf("%s: %s", summary, compact)
-		}
-		return summary, nil
+		return result.ResultSummary, nil
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedTaskKind, task.Kind)
 	}

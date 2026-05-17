@@ -1,74 +1,92 @@
 package mcp
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
 	// MetadataVerificationNote explains the scope of MCP discovery checks.
 	MetadataVerificationNote = "metadata health only; end-to-end MCP execution is not verified"
+	// ExecutionVerificationNote explains the scope of the executable baseline.
+	ExecutionVerificationNote = "fixture-backed stdio external execution baseline verified"
+)
+
+var (
+	ErrServerNotFound = errors.New("mcp server not found")
+	ErrToolNotFound   = errors.New("mcp tool not found")
 )
 
 // ServerDescriptor describes a configured MCP server.
 type ServerDescriptor struct {
-	ID            string `json:"id"`
-	Source        string `json:"source"`
-	Enabled       bool   `json:"enabled"`
-	ToolCount     int    `json:"tool_count"`
-	ResourceCount int    `json:"resource_count"`
-	Status        string `json:"status,omitempty"`
+	ID            string   `json:"id"`
+	Source        string   `json:"source"`
+	Enabled       bool     `json:"enabled"`
+	ToolCount     int      `json:"tool_count"`
+	ResourceCount int      `json:"resource_count"`
+	Status        string   `json:"status,omitempty"`
+	Command       []string `json:"-"`
+	Tools         []string `json:"-"`
 }
 
-// InvocationRequest describes one MCP tool execution request.
-type InvocationRequest struct {
+// InvokeRequest is the minimal MCP execution payload.
+type InvokeRequest struct {
 	ServerID  string         `json:"serverId"`
 	ToolName  string         `json:"toolName"`
 	Arguments map[string]any `json:"arguments"`
 }
 
-// InvocationResult describes the normalized result returned by a synthetic MCP tool.
-type InvocationResult struct {
-	ServerID string         `json:"serverId"`
-	ToolName string         `json:"toolName"`
-	Content  string         `json:"content"`
-	Data     map[string]any `json:"data,omitempty"`
+// InvokeResult is the normalized execution result returned to runner/CLI.
+type InvokeResult struct {
+	ServerID      string         `json:"serverId"`
+	ToolName      string         `json:"toolName"`
+	Transport     string         `json:"transport"`
+	Result        map[string]any `json:"result,omitempty"`
+	ResultSummary string         `json:"resultSummary"`
 }
 
-// ToolExecutor executes an MCP tool call.
-type ToolExecutor func(arguments map[string]any) (InvocationResult, error)
+type invokeEnvelope struct {
+	ToolName  string         `json:"toolName"`
+	Arguments map[string]any `json:"arguments"`
+}
 
-// Manager stores MCP server metadata.
+type invokeResponseEnvelope struct {
+	OK      bool           `json:"ok"`
+	Error   string         `json:"error,omitempty"`
+	Summary string         `json:"summary,omitempty"`
+	Result  map[string]any `json:"result,omitempty"`
+}
+
+// Manager stores MCP server metadata plus optional execution config.
 type Manager struct {
-	servers    []ServerDescriptor
-	executors  map[string]map[string]ToolExecutor
-	serverByID map[string]ServerDescriptor
+	servers map[string]ServerDescriptor
 }
 
 // NewManager builds a new Manager.
 func NewManager(servers []ServerDescriptor) *Manager {
-	cloned := make([]ServerDescriptor, len(servers))
-	for i, server := range servers {
-		cloned[i] = NormalizeServerDescriptor(server)
+	items := make(map[string]ServerDescriptor, len(servers))
+	for _, server := range servers {
+		normalized := NormalizeServerDescriptor(server)
+		items[normalized.ID] = normalized
 	}
-	items := make(map[string]ServerDescriptor, len(cloned))
-	for _, item := range cloned {
-		items[item.ID] = item
-	}
-	return &Manager{
-		servers:    cloned,
-		executors:  make(map[string]map[string]ToolExecutor),
-		serverByID: items,
-	}
+	return &Manager{servers: items}
 }
 
 // List returns configured MCP servers sorted by ID.
 func (m *Manager) List() []ServerDescriptor {
-	items := make([]ServerDescriptor, len(m.servers))
-	copy(items, m.servers)
-	for i, item := range items {
-		items[i] = NormalizeServerDescriptor(item)
+	if m == nil {
+		return nil
+	}
+	items := make([]ServerDescriptor, 0, len(m.servers))
+	for _, item := range m.servers {
+		items = append(items, NormalizeServerDescriptor(item))
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].ID < items[j].ID
@@ -76,9 +94,97 @@ func (m *Manager) List() []ServerDescriptor {
 	return items
 }
 
+// CanInvoke reports whether at least one configured server has an execution adapter.
+func (m *Manager) CanInvoke() bool {
+	if m == nil {
+		return false
+	}
+	for _, item := range m.servers {
+		if len(item.Command) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// Invoke executes a minimal MCP tool call through the configured external adapter.
+func (m *Manager) Invoke(ctx context.Context, request InvokeRequest) (InvokeResult, error) {
+	if m == nil {
+		return InvokeResult{}, ErrServerNotFound
+	}
+	server, ok := m.servers[strings.TrimSpace(request.ServerID)]
+	if !ok {
+		return InvokeResult{}, fmt.Errorf("%w: %s", ErrServerNotFound, strings.TrimSpace(request.ServerID))
+	}
+	if !containsTool(server.Tools, request.ToolName) {
+		return InvokeResult{}, fmt.Errorf("%w: %s/%s", ErrToolNotFound, server.ID, request.ToolName)
+	}
+	if len(server.Command) == 0 {
+		return InvokeResult{}, fmt.Errorf("mcp server %s is metadata-only", server.ID)
+	}
+
+	payload, err := json.Marshal(invokeEnvelope{
+		ToolName:  request.ToolName,
+		Arguments: cloneArguments(request.Arguments),
+	})
+	if err != nil {
+		return InvokeResult{}, err
+	}
+
+	callCtx := ctx
+	if callCtx == nil {
+		callCtx = context.Background()
+	}
+	if _, ok := callCtx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(callCtx, 10*time.Second)
+		defer cancel()
+	}
+
+	cmd := exec.CommandContext(callCtx, server.Command[0], server.Command[1:]...)
+	cmd.Stdin = bytes.NewReader(payload)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return InvokeResult{}, fmt.Errorf("external mcp server %s failed: %s", server.ID, detail)
+	}
+
+	var response invokeResponseEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		return InvokeResult{}, fmt.Errorf("external mcp server %s returned invalid json: %w", server.ID, err)
+	}
+	if !response.OK {
+		failure := strings.TrimSpace(response.Error)
+		if failure == "" {
+			failure = "unknown external mcp error"
+		}
+		return InvokeResult{}, fmt.Errorf("external mcp server %s failed: %s", server.ID, failure)
+	}
+
+	summary := strings.TrimSpace(response.Summary)
+	if summary == "" {
+		summary = fmt.Sprintf("mcp tool %s/%s executed", server.ID, request.ToolName)
+	}
+
+	return InvokeResult{
+		ServerID:      server.ID,
+		ToolName:      request.ToolName,
+		Transport:     "stdio-fixture",
+		Result:        response.Result,
+		ResultSummary: summary,
+	}, nil
+}
+
 // NormalizeServerDescriptor returns a descriptor with stable metadata health semantics.
 func NormalizeServerDescriptor(server ServerDescriptor) ServerDescriptor {
 	server.Status = NormalizeServerStatus(server)
+	server.Tools = dedupeTools(server.Tools)
 	return server
 }
 
@@ -114,59 +220,43 @@ func metadataEnabledLabel(server ServerDescriptor) string {
 	return "enabled"
 }
 
-// RegisterExecutor stores an executable synthetic MCP tool under the given server and tool name.
-func (m *Manager) RegisterExecutor(serverID string, toolName string, exec ToolExecutor) {
-	if m == nil || exec == nil {
-		return
+func dedupeTools(tools []string) []string {
+	if len(tools) == 0 {
+		return nil
 	}
-	serverID = strings.TrimSpace(serverID)
-	toolName = strings.TrimSpace(toolName)
-	if serverID == "" || toolName == "" {
-		return
+	seen := map[string]struct{}{}
+	items := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		trimmed := strings.TrimSpace(tool)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		items = append(items, trimmed)
 	}
-	if _, ok := m.executors[serverID]; !ok {
-		m.executors[serverID] = make(map[string]ToolExecutor)
-	}
-	m.executors[serverID][toolName] = exec
+	sort.Strings(items)
+	return items
 }
 
-// Invoke executes a registered synthetic MCP tool.
-func (m *Manager) Invoke(request InvocationRequest) (InvocationResult, error) {
-	if m == nil {
-		return InvocationResult{}, fmt.Errorf("mcp manager unavailable")
+func containsTool(tools []string, toolName string) bool {
+	for _, item := range tools {
+		if item == strings.TrimSpace(toolName) {
+			return true
+		}
 	}
-	request.ServerID = strings.TrimSpace(request.ServerID)
-	request.ToolName = strings.TrimSpace(request.ToolName)
-	if request.ServerID == "" {
-		return InvocationResult{}, fmt.Errorf("mcp server id is required")
+	return false
+}
+
+func cloneArguments(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return map[string]any{}
 	}
-	if request.ToolName == "" {
-		return InvocationResult{}, fmt.Errorf("mcp tool name is required")
+	cloned := make(map[string]any, len(input))
+	for key, value := range input {
+		cloned[key] = value
 	}
-	server, ok := m.serverByID[request.ServerID]
-	if !ok {
-		return InvocationResult{}, fmt.Errorf("mcp server %s not found", request.ServerID)
-	}
-	if !server.Enabled {
-		return InvocationResult{}, fmt.Errorf("mcp server %s is disabled", request.ServerID)
-	}
-	tools, ok := m.executors[request.ServerID]
-	if !ok {
-		return InvocationResult{}, fmt.Errorf("mcp server %s has no executable tools", request.ServerID)
-	}
-	exec, ok := tools[request.ToolName]
-	if !ok {
-		return InvocationResult{}, fmt.Errorf("mcp tool %s/%s not found", request.ServerID, request.ToolName)
-	}
-	result, err := exec(request.Arguments)
-	if err != nil {
-		return InvocationResult{}, err
-	}
-	if strings.TrimSpace(result.ServerID) == "" {
-		result.ServerID = request.ServerID
-	}
-	if strings.TrimSpace(result.ToolName) == "" {
-		result.ToolName = request.ToolName
-	}
-	return result, nil
+	return cloned
 }

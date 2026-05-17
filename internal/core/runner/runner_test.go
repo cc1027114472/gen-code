@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -277,6 +278,90 @@ func TestRunnerAllowsReadToolForAskUserMode(t *testing.T) {
 	require.Contains(t, result.ResultSummary, "hello")
 }
 
+func TestRunnerExecutesMCPToolInvokeTask(t *testing.T) {
+	registry := session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "MCP Runner",
+		PermissionMode: policy.ReadOnly,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Invoke external fixture",
+		Kind:  KindMCPToolInvoke,
+		Input: `{"serverId":"external-fixture","toolName":"echo","arguments":{"message":"hello"}}`,
+	})
+	require.True(t, ok)
+
+	manager := mcp.NewManager([]mcp.ServerDescriptor{{
+		ID:            "external-fixture",
+		Source:        "fixture",
+		Enabled:       true,
+		ToolCount:     2,
+		ResourceCount: 0,
+		Status:        "enabled",
+		Command:       runnerFixtureCommand(t),
+		Tools:         []string{"echo", "sum", "fail"},
+	}})
+
+	result, err := New(registry, nil).WithMCP(manager).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, "mcp tool external-fixture/echo executed", result.ResultSummary)
+
+	toolCalls, ok := registry.ToolCalls(thread.ID)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 2)
+	require.Equal(t, "running", toolCalls[0].Status)
+	require.Equal(t, "completed", toolCalls[1].Status)
+
+	approvals, ok := registry.Approvals(thread.ID)
+	require.True(t, ok)
+	require.Len(t, approvals, 0)
+	writeExecutions, ok := registry.WriteExecutions(thread.ID)
+	require.True(t, ok)
+	require.Len(t, writeExecutions, 0)
+}
+
+func TestRunnerFailsMCPToolInvokeForUnknownServer(t *testing.T) {
+	registry := session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "MCP Failure",
+		PermissionMode: policy.ReadOnly,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Invoke missing server",
+		Kind:  KindMCPToolInvoke,
+		Input: `{"serverId":"missing","toolName":"echo","arguments":{}}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry, nil).WithMCP(mcp.NewManager(nil)).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", result.Status)
+	require.Contains(t, result.ResultSummary, "mcp server not found")
+
+	toolCalls, ok := registry.ToolCalls(thread.ID)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 2)
+	require.Equal(t, "failed", toolCalls[1].Status)
+	require.Contains(t, toolCalls[1].Summary, "mcp server not found")
+}
+
+func runnerFixtureCommand(t *testing.T) []string {
+	t.Helper()
+	scriptPath := filepath.Join(runnerRepoRoot(t), "scripts", "mcp_stdio_fixture.py")
+	if runtime.GOOS == "windows" {
+		return []string{"python", scriptPath}
+	}
+	return []string{"python3", scriptPath}
+}
+
+func runnerRepoRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+}
+
 func TestRunnerRejectsPathOutsideWorkspace(t *testing.T) {
 	projectRoot := t.TempDir()
 	outsideDir := t.TempDir()
@@ -336,53 +421,6 @@ func TestRunnerExecutesModelResponseTask(t *testing.T) {
 	require.Len(t, toolCalls, 2)
 	require.Equal(t, KindModelResponse, toolCalls[0].ToolID)
 	require.Equal(t, "completed", toolCalls[1].Status)
-}
-
-func TestRunnerExecutesMCPToolInvokeTask(t *testing.T) {
-	registry := session.NewRegistry(t.TempDir())
-	thread := registry.CreateThread(session.CreateThreadInput{
-		Name:           "MCP",
-		PermissionMode: policy.ReadOnly,
-	})
-	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
-		Title: "Invoke synthetic echo",
-		Kind:  KindMCPToolInvoke,
-		Input: `{"serverId":"synthetic","toolName":"echo","arguments":{"message":"hello"}}`,
-	})
-	require.True(t, ok)
-
-	manager := mcp.NewManager([]mcp.ServerDescriptor{{
-		ID:            "synthetic",
-		Source:        "runtime.synthetic",
-		Enabled:       true,
-		ToolCount:     1,
-		ResourceCount: 0,
-		Status:        "enabled",
-	}})
-	manager.RegisterExecutor("synthetic", "echo", func(arguments map[string]any) (mcp.InvocationResult, error) {
-		return mcp.InvocationResult{
-			Content: fmt.Sprintf("echo %v", arguments["message"]),
-		}, nil
-	})
-
-	result, err := New(registry, nil).WithMCP(manager).RunTask(context.Background(), thread.ID, task.ID)
-	require.NoError(t, err)
-	require.Equal(t, "completed", result.Status)
-	require.Contains(t, result.ResultSummary, "mcp tool synthetic/echo executed")
-
-	toolCalls, ok := registry.ToolCalls(thread.ID)
-	require.True(t, ok)
-	require.Len(t, toolCalls, 2)
-	require.Equal(t, "running", toolCalls[0].Status)
-	require.Equal(t, "completed", toolCalls[1].Status)
-
-	approvals, ok := registry.Approvals(thread.ID)
-	require.True(t, ok)
-	require.Empty(t, approvals)
-
-	writeExecutions, ok := registry.WriteExecutions(thread.ID)
-	require.True(t, ok)
-	require.Empty(t, writeExecutions)
 }
 
 func TestRunnerFailsModelResponseTaskWhenProviderFails(t *testing.T) {

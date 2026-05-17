@@ -130,6 +130,9 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.Len(t, skills, 2)
 	require.ElementsMatch(t, []string{"common", "codex"}, []string{skills[0].Group, skills[1].Group})
 	require.ElementsMatch(t, []string{"common", "codex"}, []string{skills[0].Source, skills[1].Source})
+	require.ElementsMatch(t, []string{"implemented", "implemented"}, []string{skills[0].VerificationStatus, skills[1].VerificationStatus})
+	require.False(t, skills[0].LocalizationChecked)
+	require.False(t, skills[1].LocalizationChecked)
 
 	tools, err := service.Tools(context.Background())
 	require.NoError(t, err)
@@ -263,6 +266,62 @@ func TestNormalizeMCPServerStatus(t *testing.T) {
 			require.Equal(t, tc.want, normalizeMCPServerStatus(tc.item))
 		})
 	}
+}
+
+func TestServiceRunsMCPInvokeTask(t *testing.T) {
+	projectRoot := t.TempDir()
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	sessions, err := session.NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+
+	service := NewService(
+		"0.1.0",
+		skill.Codex,
+		policy.DefaultMode(),
+		projectRoot,
+		tool.NewRegistry(),
+		skill.NewManager(nil),
+		mcp.NewManager([]mcp.ServerDescriptor{{
+			ID:            "external-fixture",
+			Source:        "fixture",
+			Enabled:       true,
+			ToolCount:     2,
+			ResourceCount: 0,
+			Status:        "enabled",
+			Command:       mcpFixtureCommand(),
+			Tools:         []string{"echo", "sum", "fail"},
+		}}),
+		provider.NewRegistry(""),
+		sessions,
+	)
+
+	thread, err := service.CreateThread(context.Background(), runtimecontract.CreateThreadRequest{
+		Name:           "MCP Thread",
+		PermissionMode: string(policy.ReadOnly),
+	})
+	require.NoError(t, err)
+
+	task, err := service.CreateTask(context.Background(), thread.ID, runtimecontract.CreateTaskRequest{
+		Title: "Invoke fixture echo",
+		Kind:  runner.KindMCPToolInvoke,
+		Input: `{"serverId":"external-fixture","toolName":"echo","arguments":{"message":"hello"}}`,
+	})
+	require.NoError(t, err)
+
+	result, err := service.RunTask(context.Background(), thread.ID, task.ID, runtimecontract.RunTaskRequest{})
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, "mcp tool external-fixture/echo executed", result.ResultSummary)
+
+	toolCalls, err := service.ToolCalls(context.Background(), thread.ID)
+	require.NoError(t, err)
+	require.Len(t, toolCalls, 2)
+	require.Equal(t, "mcp.tool.invoke", toolCalls[0].ToolID)
+	require.Equal(t, "running", toolCalls[0].Status)
+	require.Equal(t, "completed", toolCalls[1].Status)
 }
 
 func TestServiceCreateTaskNormalizesPlainModelInput(t *testing.T) {
