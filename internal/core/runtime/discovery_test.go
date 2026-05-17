@@ -33,11 +33,41 @@ func TestDiscoverSkills(t *testing.T) {
 
 func TestDiscoverSkillsMarksLocalizedMarkdownAsChecked(t *testing.T) {
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "localized-skill.md"), []byte("# 技能说明\n- 这是中文内容\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "localized-skill.md"), []byte(`---
+name: localized-skill
+description: copied skill metadata can stay machine-readable
+---
+
+# 本地化技能
+
+这是完整中文化审计样例。
+- 先读取当前上下文。
+- 再整理中文输出。
+- 最后给出下一步建议。
+`), 0o644))
 
 	items := discoverSkills(root, skill.CC)
 	require.Len(t, items, 1)
 	require.True(t, items[0].LocalizationChecked)
+	require.Equal(t, "isolated", items[0].IsolationStatus)
+}
+
+func TestDiscoverSkillsRejectsPartialChineseAsLocalized(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "mixed-skill.md"), []byte(`---
+name: mixed-skill
+description: metadata is ignored for localization audit
+---
+
+# 中文标题
+
+This workflow is still explained in English.
+这里只有一行中文补充。
+`), 0o644))
+
+	items := discoverSkills(root, skill.Codex)
+	require.Len(t, items, 1)
+	require.False(t, items[0].LocalizationChecked)
 	require.Equal(t, "isolated", items[0].IsolationStatus)
 }
 

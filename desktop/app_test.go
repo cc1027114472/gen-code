@@ -144,6 +144,76 @@ func TestDesktopFallbackRuntimeStatusShowsManualRefreshMode(t *testing.T) {
 	}
 }
 
+func TestLocalSkillLocalizationCheckedRequiresFullyChineseAudit(t *testing.T) {
+	root := t.TempDir()
+	requireLocalized := func(name string, content string, want bool) {
+		t.Helper()
+		path := filepath.Join(root, name+".md")
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		if got := localSkillLocalizationChecked(root, name); got != want {
+			t.Fatalf("localSkillLocalizationChecked(%q) = %t, want %t", name, got, want)
+		}
+	}
+
+	requireLocalized("fully-localized", `---
+name: fully-localized
+description: metadata can remain machine-readable
+---
+
+# 中文技能
+
+这是完整中文化审计样例。
+- 先读取上下文。
+- 再整理中文结果。
+- 最后说明下一步。
+`, true)
+
+	requireLocalized("mixed-localized", `---
+name: mixed-localized
+description: metadata can remain machine-readable
+---
+
+# 中文标题
+
+This step is still explained in English.
+这里只有一行中文补充。
+`, false)
+}
+
+func TestDesktopFallbackSkillGovernanceLocalizationPendingMatchesInventory(t *testing.T) {
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
+	t.Setenv("GENCODE_DESKTOP_STATE_PATH", filepath.Join(t.TempDir(), "skill-governance.sqlite"))
+
+	app := NewApp()
+	defer app.shutdown(nil)
+
+	status := app.GetRuntimeStatus()
+	if len(status.Skills) == 0 {
+		t.Fatal("expected fallback skill inventory")
+	}
+	if len(status.SkillGovernance) == 0 {
+		t.Fatal("expected fallback skill governance summary")
+	}
+
+	pendingByGroup := map[string]int{}
+	for _, item := range status.Skills {
+		if !item.LocalizationChecked {
+			group := strings.TrimSpace(item.Group)
+			if group == "" {
+				group = "common"
+			}
+			pendingByGroup[group]++
+		}
+	}
+	for _, summary := range status.SkillGovernance {
+		if got, want := summary.LocalizationPending, pendingByGroup[summary.Group]; got != want {
+			t.Fatalf("group %q localization-pending = %d, want %d", summary.Group, got, want)
+		}
+	}
+}
+
 func TestDesktopFallbackPersistsAcrossAppRestart(t *testing.T) {
 	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
 	statePath := filepath.Join(t.TempDir(), "restart-state.sqlite")
@@ -922,6 +992,15 @@ func TestDesktopFallbackAgentWaitingForApprovalPersistsAcrossRestart(t *testing.
 	if reloaded.RuntimeSource != "local-fallback" {
 		t.Fatalf("expected local-fallback runtime source after restart, got %q", reloaded.RuntimeSource)
 	}
+	if reloaded.RuntimeTrust != "degraded" {
+		t.Fatalf("expected degraded runtime trust after restart, got %q", reloaded.RuntimeTrust)
+	}
+	if !strings.Contains(reloaded.RuntimeSourceDetail, "canonical app-server runtime is unavailable") {
+		t.Fatalf("expected canonical runtime fallback detail after restart, got %q", reloaded.RuntimeSourceDetail)
+	}
+	if !strings.Contains(reloaded.RuntimeMessage, "manual refresh") {
+		t.Fatalf("expected manual refresh runtime message after restart, got %q", reloaded.RuntimeMessage)
+	}
 	if reloaded.StatePath != statePath {
 		t.Fatalf("expected persisted state path %q, got %q", statePath, reloaded.StatePath)
 	}
@@ -1028,6 +1107,15 @@ func TestDesktopFallbackAgentWaitingForTaskPersistsAcrossRestart(t *testing.T) {
 	if reloaded.RuntimeSource != "local-fallback" {
 		t.Fatalf("expected local-fallback runtime source after restart, got %q", reloaded.RuntimeSource)
 	}
+	if reloaded.RuntimeTrust != "degraded" {
+		t.Fatalf("expected degraded runtime trust after restart, got %q", reloaded.RuntimeTrust)
+	}
+	if !strings.Contains(reloaded.RuntimeSourceDetail, "canonical app-server runtime is unavailable") {
+		t.Fatalf("expected canonical runtime fallback detail after restart, got %q", reloaded.RuntimeSourceDetail)
+	}
+	if !strings.Contains(reloaded.RuntimeMessage, "manual refresh") {
+		t.Fatalf("expected manual refresh runtime message after restart, got %q", reloaded.RuntimeMessage)
+	}
 	parent := findTaskByID(t, reloaded, "task-parent-wait")
 	if parent.Status != "waiting_for_task" {
 		t.Fatalf("expected waiting_for_task parent status, got %q", parent.Status)
@@ -1077,6 +1165,87 @@ func TestDesktopFallbackAgentWaitingForTaskPersistsAcrossRestart(t *testing.T) {
 	}
 	if reloaded.ActiveThreadSummary.WaitingTaskCount != 1 {
 		t.Fatalf("expected waiting task count 1, got %d", reloaded.ActiveThreadSummary.WaitingTaskCount)
+	}
+	if !strings.Contains(reloaded.RecoverySummary, "Recovered 1 thread") {
+		t.Fatalf("expected restart recovery summary, got %q", reloaded.RecoverySummary)
+	}
+}
+
+func TestDesktopFallbackAgentRecoveredAsFailedPersistsAcrossRestart(t *testing.T) {
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", "http://127.0.0.1:1")
+	statePath := filepath.Join(t.TempDir(), "agent-recovered-failed-restart.sqlite")
+	t.Setenv("GENCODE_DESKTOP_STATE_PATH", statePath)
+
+	first := NewApp()
+	defer first.shutdown(nil)
+
+	created := first.CreateThread("Agent Recovery Failed Restart")
+	if created.ActiveThreadID == "" {
+		t.Fatal("expected active thread after create")
+	}
+	store := first.store
+	if store == nil || store.db == nil {
+		t.Fatal("expected desktop store")
+	}
+
+	now := "2026-05-17T00:00:00Z"
+	if _, err := store.db.Exec(`
+		INSERT INTO tasks(id, thread_id, title, kind, input, status, result_summary, approval_status, parent_task_id, waiting_status, agent_state, updated_at, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "task-recovered-failed", created.ActiveThreadID, "Agent recovered as failed", "agent.run", `{"goal":"resume interrupted agent run"}`, "failed", "agent recovery failed after desktop restart", "", "", "", `{"taskId":"task-recovered-failed","threadId":"thread-1","stepIndex":3,"maxSteps":5,"status":"recovered_as_failed","goal":"resume interrupted agent run","planSummary":"Recover prior agent state and resume execution","currentStepTitle":"Resume execution","lastReasoning":"agent recovery failed after desktop restart"}`, now, now); err != nil {
+		t.Fatalf("insert recovered-as-failed task: %v", err)
+	}
+
+	second := NewApp()
+	defer second.shutdown(nil)
+
+	reloaded := second.GetRuntimeStatus()
+	if reloaded.RuntimeSource != "local-fallback" {
+		t.Fatalf("expected local-fallback runtime source after restart, got %q", reloaded.RuntimeSource)
+	}
+	if reloaded.RuntimeTrust != "degraded" {
+		t.Fatalf("expected degraded runtime trust after restart, got %q", reloaded.RuntimeTrust)
+	}
+	if !strings.Contains(reloaded.RuntimeSourceDetail, "canonical app-server runtime is unavailable") {
+		t.Fatalf("expected canonical runtime fallback detail after restart, got %q", reloaded.RuntimeSourceDetail)
+	}
+	if !strings.Contains(reloaded.RuntimeMessage, "manual refresh") {
+		t.Fatalf("expected manual refresh runtime message after restart, got %q", reloaded.RuntimeMessage)
+	}
+
+	task := findTaskByID(t, reloaded, "task-recovered-failed")
+	if task.Status != "failed" {
+		t.Fatalf("expected failed task status after restart, got %q", task.Status)
+	}
+	if task.WaitingStatus != "" {
+		t.Fatalf("expected no waiting status for recovered failure, got %q", task.WaitingStatus)
+	}
+	if task.AgentStep != 3 || task.AgentMaxSteps != 5 {
+		t.Fatalf("expected agent step 3/5, got %d/%d", task.AgentStep, task.AgentMaxSteps)
+	}
+	if !strings.Contains(task.WorkflowLabel, "failed") {
+		t.Fatalf("expected workflow label to include failed, got %q", task.WorkflowLabel)
+	}
+	if !strings.Contains(task.WorkflowLabel, "recovered_as_failed") {
+		t.Fatalf("expected workflow label to include recovered_as_failed, got %q", task.WorkflowLabel)
+	}
+	if !strings.Contains(task.WorkflowLabel, "step 3/5") {
+		t.Fatalf("expected workflow label to include step 3/5, got %q", task.WorkflowLabel)
+	}
+	if !strings.Contains(task.ResultSummary, "agent recovery failed") {
+		t.Fatalf("expected result summary to mention agent recovery failed, got %q", task.ResultSummary)
+	}
+	if !strings.Contains(task.AgentLastReasoning, "agent recovery failed") {
+		t.Fatalf("expected agent last reasoning to mention agent recovery failed, got %q", task.AgentLastReasoning)
+	}
+	if strings.TrimSpace(task.AgentPlanSummary) == "" {
+		t.Fatal("expected non-empty agent plan summary after restart")
+	}
+	if reloaded.ActiveThreadSummary.FailedTaskCount != 1 {
+		t.Fatalf("expected failed task count 1 in active thread summary, got %d", reloaded.ActiveThreadSummary.FailedTaskCount)
+	}
+	if reloaded.WorkspaceSummary.FailedTaskCount != 1 {
+		t.Fatalf("expected failed task count 1 in workspace summary, got %d", reloaded.WorkspaceSummary.FailedTaskCount)
 	}
 	if !strings.Contains(reloaded.RecoverySummary, "Recovered 1 thread") {
 		t.Fatalf("expected restart recovery summary, got %q", reloaded.RecoverySummary)

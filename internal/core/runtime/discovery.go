@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -17,6 +16,7 @@ import (
 	"llmtrace/internal/core/skill"
 	"llmtrace/internal/core/state"
 	"llmtrace/internal/core/tool"
+	"llmtrace/pkg/skillaudit"
 )
 
 type discoverySet struct {
@@ -278,50 +278,7 @@ func discoverSkills(root string, group skill.Group) []skill.Descriptor {
 }
 
 func skillLocalizationChecked(root string, id string) bool {
-	markdownPath := filepath.Join(root, id+".md")
-	if fileLooksLocalized(markdownPath) {
-		return true
-	}
-	skillPath := filepath.Join(root, id, "SKILL.md")
-	if fileLooksLocalized(skillPath) {
-		return true
-	}
-	return false
-}
-
-func fileLooksLocalized(path string) bool {
-	file, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	lineCount := 0
-	nonASCII := 0
-	for scanner.Scan() && lineCount < 80 {
-		lineCount++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if containsNonASCII(line) {
-			nonASCII++
-			if nonASCII >= 2 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func containsNonASCII(value string) bool {
-	for _, r := range value {
-		if r > unicode.MaxASCII {
-			return true
-		}
-	}
-	return false
+	return skillaudit.LocalizationChecked(root, id)
 }
 
 func skillIsolationStatus(group skill.Group, source string) string {

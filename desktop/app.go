@@ -22,6 +22,8 @@ import (
 	"unicode"
 
 	_ "modernc.org/sqlite"
+
+	"llmtrace/pkg/skillaudit"
 )
 
 const (
@@ -1822,50 +1824,7 @@ func localSkillGroupDescription(group string) string {
 }
 
 func localSkillLocalizationChecked(root string, id string) bool {
-	markdownPath := filepath.Join(root, id+".md")
-	if localFileLooksLocalized(markdownPath) {
-		return true
-	}
-	skillPath := filepath.Join(root, id, "SKILL.md")
-	if localFileLooksLocalized(skillPath) {
-		return true
-	}
-	return false
-}
-
-func localFileLooksLocalized(path string) bool {
-	file, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	lineCount := 0
-	nonASCII := 0
-	for scanner.Scan() && lineCount < 80 {
-		lineCount++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if localContainsNonASCII(line) {
-			nonASCII++
-			if nonASCII >= 2 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func localContainsNonASCII(value string) bool {
-	for _, r := range value {
-		if r > unicode.MaxASCII {
-			return true
-		}
-	}
-	return false
+	return skillaudit.LocalizationChecked(root, id)
 }
 
 func localSkillIsolationStatus(group string) string {

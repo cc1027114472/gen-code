@@ -170,6 +170,7 @@ func TestSkillsListUsesRemoteRuntimeSourceWhenServerIsAvailable(t *testing.T) {
 	require.Contains(t, output, "cc: implemented=0 verified=0 localization-pending=0")
 	require.Contains(t, output, "verification=verified")
 	require.Contains(t, output, "localization=checked")
+	require.Contains(t, output, "localization=unchecked")
 	require.Contains(t, output, "isolation=shared-common")
 	require.Contains(t, output, "isolation=isolated")
 }

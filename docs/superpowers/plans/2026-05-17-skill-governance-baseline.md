@@ -9,7 +9,7 @@ This note defines the minimum governance boundary for grouped skills in `gen-cod
 - `skill discovered` does not mean `skill accepted`
 - current verified scope is the grouped governance baseline only, not per-skill business capability acceptance
 - Phase B acceptance closes runtime, desktop, approval, and built-in tool coverage first
-- grouped skill verification and Chinese localization audit remain separate follow-up work
+- grouped skill verification remains separate from per-skill business capability acceptance, but the 1:1 Chinese localization audit baseline is now explicitly closed
 - MCP metadata and skill governance are tracked separately to avoid mixing inventory status with runtime acceptance status
 - `localization checked = true` only means the copied skill has passed the current 1:1 Chinese-localization audit baseline
 - `isolation status` only means the skill still sits within the expected `common` / `codex` / `cc` grouping boundary
@@ -31,6 +31,7 @@ This note defines the minimum governance boundary for grouped skills in `gen-cod
 
 - `skill discovered != skill verified`
 - `localization checked = false` is an honest audit result, not a temporary display default
+- `localization checked = true` means the copied skill passed the current 1:1 Chinese-localization audit, not that the skill capability itself has been accepted
 - `isolation status = isolated` means a non-common skill stays in its own governed group
 - `isolation status = shared-common` is only valid for reusable common skills
 - `isolation status = blocked` means the skill could not be cleanly classified and must remain a governance exception
