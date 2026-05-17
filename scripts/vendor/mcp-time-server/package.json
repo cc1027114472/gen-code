@@ -1,0 +1,6 @@
+{
+  "name": "@szemeng76/mcp-time-server",
+  "version": "1.0.1",
+  "main": "dist/index.js",
+  "type": "module"
+}

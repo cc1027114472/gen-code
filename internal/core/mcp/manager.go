@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"time"
@@ -16,7 +19,7 @@ const (
 	// MetadataVerificationNote explains the scope of MCP discovery checks.
 	MetadataVerificationNote = "metadata health only; end-to-end MCP execution is not verified"
 	// ExecutionVerificationNote explains the scope of the executable baseline.
-	ExecutionVerificationNote = "fixture-backed stdio external execution baseline verified"
+	ExecutionVerificationNote = "multi-server stdio external execution baseline verified"
 )
 
 var (
@@ -26,14 +29,18 @@ var (
 
 // ServerDescriptor describes a configured MCP server.
 type ServerDescriptor struct {
-	ID            string   `json:"id"`
-	Source        string   `json:"source"`
-	Enabled       bool     `json:"enabled"`
-	ToolCount     int      `json:"tool_count"`
-	ResourceCount int      `json:"resource_count"`
-	Status        string   `json:"status,omitempty"`
-	Command       []string `json:"-"`
-	Tools         []string `json:"-"`
+	ID               string            `json:"id"`
+	Source           string            `json:"source"`
+	Enabled          bool              `json:"enabled"`
+	ToolCount        int               `json:"tool_count"`
+	ResourceCount    int               `json:"resource_count"`
+	Status           string            `json:"status,omitempty"`
+	Command          []string          `json:"-"`
+	Env              map[string]string `json:"-"`
+	Tools            []string          `json:"-"`
+	Transport        string            `json:"-"`
+	ExecutionTier    string            `json:"-"`
+	ExecutionSummary string            `json:"-"`
 }
 
 // InvokeRequest is the minimal MCP execution payload.
@@ -123,6 +130,15 @@ func (m *Manager) Invoke(ctx context.Context, request InvokeRequest) (InvokeResu
 		return InvokeResult{}, fmt.Errorf("mcp server %s is metadata-only", server.ID)
 	}
 
+	switch normalizedTransport(server.Transport) {
+	case "stdio-fixture":
+		return m.invokeFixtureServer(ctx, server, request)
+	default:
+		return m.invokeBridgeServer(ctx, server, request)
+	}
+}
+
+func (m *Manager) invokeFixtureServer(ctx context.Context, server ServerDescriptor, request InvokeRequest) (InvokeResult, error) {
 	payload, err := json.Marshal(invokeEnvelope{
 		ToolName:  request.ToolName,
 		Arguments: cloneArguments(request.Arguments),
@@ -142,6 +158,7 @@ func (m *Manager) Invoke(ctx context.Context, request InvokeRequest) (InvokeResu
 	}
 
 	cmd := exec.CommandContext(callCtx, server.Command[0], server.Command[1:]...)
+	cmd.Env = commandEnvironment(server.Env)
 	cmd.Stdin = bytes.NewReader(payload)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -175,7 +192,73 @@ func (m *Manager) Invoke(ctx context.Context, request InvokeRequest) (InvokeResu
 	return InvokeResult{
 		ServerID:      server.ID,
 		ToolName:      request.ToolName,
-		Transport:     "stdio-fixture",
+		Transport:     normalizedTransport(server.Transport),
+		Result:        response.Result,
+		ResultSummary: summary,
+	}, nil
+}
+
+func (m *Manager) invokeBridgeServer(ctx context.Context, server ServerDescriptor, request InvokeRequest) (InvokeResult, error) {
+	payload, err := json.Marshal(map[string]any{
+		"serverId":   server.ID,
+		"transport":  normalizedTransport(server.Transport),
+		"command":    server.Command,
+		"env":        cloneEnvironment(server.Env),
+		"toolName":   request.ToolName,
+		"arguments":  cloneArguments(request.Arguments),
+		"summary":    fmt.Sprintf("mcp tool %s/%s executed", server.ID, request.ToolName),
+		"serverHint": server.ExecutionSummary,
+	})
+	if err != nil {
+		return InvokeResult{}, err
+	}
+
+	callCtx := ctx
+	if callCtx == nil {
+		callCtx = context.Background()
+	}
+	if _, ok := callCtx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(callCtx, 15*time.Second)
+		defer cancel()
+	}
+
+	bridgeCommand := bridgeCommand()
+	cmd := exec.CommandContext(callCtx, bridgeCommand[0], bridgeCommand[1:]...)
+	cmd.Stdin = bytes.NewReader(payload)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return InvokeResult{}, fmt.Errorf("external mcp server %s failed: %s", server.ID, detail)
+	}
+
+	var response invokeResponseEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		return InvokeResult{}, fmt.Errorf("external mcp server %s returned invalid json: %w", server.ID, err)
+	}
+	if !response.OK {
+		failure := strings.TrimSpace(response.Error)
+		if failure == "" {
+			failure = "unknown external mcp error"
+		}
+		return InvokeResult{}, fmt.Errorf("external mcp server %s failed: %s", server.ID, failure)
+	}
+
+	summary := strings.TrimSpace(response.Summary)
+	if summary == "" {
+		summary = fmt.Sprintf("mcp tool %s/%s executed", server.ID, request.ToolName)
+	}
+
+	return InvokeResult{
+		ServerID:      server.ID,
+		ToolName:      request.ToolName,
+		Transport:     normalizedTransport(server.Transport),
 		Result:        response.Result,
 		ResultSummary: summary,
 	}, nil
@@ -185,6 +268,10 @@ func (m *Manager) Invoke(ctx context.Context, request InvokeRequest) (InvokeResu
 func NormalizeServerDescriptor(server ServerDescriptor) ServerDescriptor {
 	server.Status = NormalizeServerStatus(server)
 	server.Tools = dedupeTools(server.Tools)
+	server.Transport = normalizedTransport(server.Transport)
+	server.ExecutionTier = strings.TrimSpace(server.ExecutionTier)
+	server.ExecutionSummary = strings.TrimSpace(server.ExecutionSummary)
+	server.Env = cloneEnvironment(server.Env)
 	return server
 }
 
@@ -259,4 +346,62 @@ func cloneArguments(input map[string]any) map[string]any {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func cloneEnvironment(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(input))
+	for key, value := range input {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func normalizedTransport(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "stdio-fixture"
+	}
+	return trimmed
+}
+
+func commandEnvironment(overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return nil
+	}
+	base := map[string]string{}
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		base[key] = value
+	}
+	for key, value := range overrides {
+		base[key] = value
+	}
+	env := make([]string, 0, len(base))
+	for key, value := range base {
+		env = append(env, key+"="+value)
+	}
+	sort.Strings(env)
+	return env
+}
+
+func bridgeCommand() []string {
+	return []string{"node", bridgeScriptPath()}
+}
+
+func bridgeScriptPath() string {
+	return filepath.Join(mcpWorkspaceRoot(), "scripts", "mcp_stdio_bridge.js")
+}
+
+func mcpWorkspaceRoot() string {
+	_, file, _, ok := goruntime.Caller(0)
+	if !ok {
+		return "."
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }

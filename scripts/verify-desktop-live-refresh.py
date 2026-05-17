@@ -512,6 +512,60 @@ def activate_thread_in_ui(page, thread_id: str):
     refresh_thread_view(page, thread_id)
 
 
+def create_agent_task_via_ui(page, thread_id: str, title: str, goal: str, max_steps: int = 4) -> dict:
+    existing_ids = {item["id"] for item in api("GET", f"/api/threads/{thread_id}/tasks")["items"]}
+    wait_for_active_thread(page, thread_id)
+    page.get_by_test_id("task-title-input").fill(title)
+    page.get_by_test_id("task-kind-select").select_option("agent.run")
+    page.get_by_test_id("task-input-textarea").fill(goal)
+    page.get_by_test_id("create-task-button").click()
+    return wait_for_task(
+        thread_id,
+        lambda item: item["title"] == title and item["id"] not in existing_ids and item["kind"] == "agent.run",
+        timeout_seconds=30.0,
+    )
+
+
+def run_task_via_ui(page, thread_id: str, task_id: str, title: str) -> str:
+    try:
+        run_button = page.locator("article").filter(has_text=title).get_by_role("button", name="运行任务").first
+        expect(run_button).to_be_visible(timeout=12000)
+    except Exception:
+        refresh_thread_view(page, thread_id)
+        run_button = page.locator("article").filter(has_text=title).get_by_role("button", name="运行任务").first
+        if not run_button.is_visible():
+            run_task(thread_id, task_id)
+            return "api-fallback"
+    run_button.click()
+    return "desktop-ui"
+
+
+def approve_task_via_ui(page, thread_id: str, task_id: str, task_title: str) -> str:
+    try:
+        approve_button = (
+            page.locator("article")
+            .filter(has_text=task_title)
+            .filter(has_text="approval required")
+            .get_by_role("button", name="批准执行")
+            .first
+        )
+        expect(approve_button).to_be_visible(timeout=12000)
+    except Exception:
+        refresh_thread_view(page, thread_id)
+        approve_button = (
+            page.locator("article")
+            .filter(has_text=task_title)
+            .filter(has_text="approval required")
+            .get_by_role("button", name="批准执行")
+            .first
+        )
+        if not approve_button.is_visible():
+            api("POST", f"/api/threads/{thread_id}/tasks/{task_id}/approve", {})
+            return "api-fallback"
+    approve_button.click()
+    return "desktop-ui"
+
+
 def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
     created_task = create_task(thread_id, scenario["title"], scenario["kind"], scenario["input"])
     task_id = created_task["id"]
@@ -606,7 +660,8 @@ def run_mcp_execution_scenario(page, thread_id: str, scenario: dict) -> dict:
         "visibility": scenario_result["visibility"],
         "serverId": scenario["input"]["serverId"],
         "toolName": scenario["input"]["toolName"],
-        "transport": "stdio-fixture",
+        "transport": scenario["transport"],
+        "lane": scenario["lane"],
     }
 
 
@@ -750,25 +805,22 @@ def run_recovery_continuation_scenario(page, thread_id: str, run_id: str) -> dic
     baseline_assistant_messages = len(
         [item for item in api("GET", f"/api/threads/{thread_id}/messages")["items"] if item.get("role") == "assistant"]
     )
-    created_task = create_task(
-        thread_id,
-        title,
-        "agent.run",
-        {
-            "goal": (
-                "Apply a patch to playwright-recovery-note.txt that adds one line saying recovery evidence, "
-                "then answer in one short sentence about what you changed. Do not do any extra work."
-            ),
-            "maxSteps": 4,
-        },
+    goal = (
+        "Apply a patch to playwright-recovery-note.txt that adds one line saying recovery evidence, "
+        "then answer in one short sentence about what you changed. Do not do any extra work."
     )
+    created_task = create_agent_task_via_ui(page, thread_id, title, goal, max_steps=4)
     task_id = created_task["id"]
-    run_task(thread_id, task_id)
+    run_trigger_mode = run_task_via_ui(page, thread_id, task_id, title)
 
     waiting_parent = wait_for_task(
         thread_id,
         lambda item: item["id"] == task_id and item["status"] == "waiting_for_approval",
     )
+    if waiting_parent.get("agentPlanMode") != "patch_then_respond":
+        raise AssertionError(
+            f"expected recovery continuation plan mode patch_then_respond, got {waiting_parent.get('agentPlanMode')!r}"
+        )
     child_tasks = api("GET", f"/api/threads/{thread_id}/tasks")["items"]
     waiting_child = next(
         (
@@ -817,7 +869,7 @@ def run_recovery_continuation_scenario(page, thread_id: str, run_id: str) -> dic
     pending_child_card = page.locator("article").filter(has_text=waiting_child["title"]).filter(has_text="approval required").first
     expect(pending_child_card).to_be_visible(timeout=15000)
 
-    api("POST", f"/api/threads/{thread_id}/tasks/{waiting_child['id']}/approve", {})
+    approve_trigger_mode = approve_task_via_ui(page, thread_id, waiting_child["id"], waiting_child["title"])
     approved_child = wait_for_task_terminal(thread_id, waiting_child["id"], timeout_seconds=60.0)
     if approved_child.get("status") != "completed":
         raise AssertionError(f"expected approved child status completed, got {approved_child.get('status')!r}")
@@ -842,6 +894,12 @@ def run_recovery_continuation_scenario(page, thread_id: str, run_id: str) -> dic
         "childStatusBeforeResume": waiting_child["status"],
         "parentStatusAfterResume": resumed_parent["status"],
         "resultSummary": resumed_parent.get("resultSummary", ""),
+        "planMode": resumed_parent.get("agentPlanMode", ""),
+        "uiCreateTriggered": True,
+        "uiRunTriggered": run_trigger_mode == "desktop-ui",
+        "runTriggerMode": run_trigger_mode,
+        "uiApproveTriggered": approve_trigger_mode == "desktop-ui",
+        "approveTriggerMode": approve_trigger_mode,
         "parentVisibleAfterRefresh": parentVisibleAfterRefresh,
         "waitingIndicatorVisible": waitingIndicatorVisible,
         "latestAgentCardVisible": latestAgentCardVisible,
@@ -1153,10 +1211,40 @@ def main() -> int:
                     page,
                     thread_id,
                     {
-                        "title": f"Invoke MCP echo {run_id}",
+                        "title": f"Invoke MCP fixture echo {run_id}",
                         "kind": "mcp.tool.invoke",
                         "input": {"serverId": "external-fixture", "toolName": "echo", "arguments": {"message": "hello"}},
                         "summary_contains": "mcp tool external-fixture/echo executed",
+                        "transport": "stdio-fixture",
+                        "lane": "fixture regression lane",
+                    },
+                )
+            )
+            mcp_execution_results.append(
+                run_mcp_execution_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Invoke MCP sdk echo {run_id}",
+                        "kind": "mcp.tool.invoke",
+                        "input": {"serverId": "sdk-external-fixture", "toolName": "echo", "arguments": {"message": "hello-sdk"}},
+                        "summary_contains": "mcp tool sdk-external-fixture/echo executed",
+                        "transport": "stdio-sdk",
+                        "lane": "official SDK external lane",
+                    },
+                )
+            )
+            mcp_execution_results.append(
+                run_mcp_execution_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Invoke MCP third-party time {run_id}",
+                        "kind": "mcp.tool.invoke",
+                        "input": {"serverId": "third-party-time", "toolName": "get_current_time", "arguments": {"timezone": "UTC"}},
+                        "summary_contains": "mcp tool third-party-time/get_current_time executed",
+                        "transport": "stdio-third-party",
+                        "lane": "third-party time lane",
                     },
                 )
             )
@@ -1392,6 +1480,7 @@ def main() -> int:
                         "approvalRejected": approval_rejected_result,
                         "childTaskFailed": child_failed_result,
                     },
+                    "uiFirstCanonicalAgentScenario": recovery_result,
                     "recoveryContinuation": recovery_result,
                     "approvalVisibility": {
                         "applyApprovalVisible": approval_visible_before_approve,
@@ -1472,6 +1561,7 @@ def main() -> int:
                         "taskId": item["task"]["id"],
                         "title": item["task"]["title"],
                         "kind": item["task"]["kind"],
+                        "lane": item["lane"],
                         "serverId": item["serverId"],
                         "toolName": item["toolName"],
                         "transport": item["transport"],
@@ -1507,6 +1597,7 @@ def main() -> int:
                     for item in agent_results
                 ],
                 "agentFailureMatrix": acceptance_report["remote"]["agentFailureMatrix"],
+                "uiFirstCanonicalAgentScenario": recovery_result,
                 "recoveryContinuation": recovery_result,
                 "runtimeSource": runtime_status.get("runtimeSource", ""),
                 "runtimeTrust": runtime_status.get("runtimeTrust", ""),
@@ -1562,6 +1653,8 @@ def validate_release_baseline(result: dict) -> None:
     for key in ("runtimeSource", "runtimeTrust", "uiBaseUrl", "apiBaseUrl", "refreshMode", "agentFailureMatrix"):
         if key not in remote_report:
             raise AssertionError(f"missing remote acceptance key: {key}")
+    if "uiFirstCanonicalAgentScenario" not in remote_report:
+        raise AssertionError("missing UI-first canonical agent scenario in remote acceptance report")
 
     agent_failure_matrix = remote_report.get("agentFailureMatrix") or {}
     for key in (

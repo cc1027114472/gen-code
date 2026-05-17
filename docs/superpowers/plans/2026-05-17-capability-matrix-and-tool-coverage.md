@@ -87,7 +87,7 @@
 | --- | --- | --- | --- |
 | MCP server metadata listing | implemented | `runtimecontract.MCPServer`, runtime discovery | Tool/resource counts and enabled state are exposed. |
 | MCP server health status contract | verified | `internal/core/mcp/manager.go`, `internal/core/runtime/status.go`, runtime tests, CLI output tests | `enabled`, `disabled`, `degraded`, and `unreachable` stay explicit. |
-| End-to-end MCP execution acceptance lane | verified | `internal/core/mcp/manager.go`, `internal/core/runner/runner.go`, `cmd/cli/main.go`, `scripts/verify-desktop-live-refresh.py` | Verified with a fixture-backed stdio external MCP server through the canonical task lane. |
+| End-to-end MCP execution acceptance lane | verified | `internal/core/mcp/manager.go`, `internal/core/runner/runner.go`, `cmd/cli/main.go`, `scripts/verify-desktop-live-refresh.py` | Verified through the canonical task lane with three stdio execution lanes: fixture regression, official SDK external server, and third-party time server. |
 
 ## 7. Desktop Product Surface
 
@@ -107,5 +107,5 @@
 
 ## 9. Highest-Priority Remaining Gaps
 
-1. Decide whether to extend the current verified MCP baseline beyond the fixture-backed external execution lane.
+1. Decide whether to extend the current verified MCP baseline beyond the current stdio multi-server execution lane into broader arbitrary third-party compatibility.
 2. Define how and when to add capability-level verification for each grouped skill.

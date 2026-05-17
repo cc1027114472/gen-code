@@ -49,9 +49,10 @@ Pass standard:
 - `fallback` is supporting evidence only, not a second browser gate
 - `canonicalRuntimeUrl`, when present, matches the API target used for the run
 - all direct read-tool, MCP execution, agent, apply, and rollback checks pass
+- MCP execution canonical lane now includes fixture regression, official SDK external, and third-party time server scenarios
 - canonical direct read-tool coverage explicitly includes `workspace.read_file`, `workspace.list_files`, `workspace.stat_file`, `workspace.read_files_batch`, `workspace.list_files_filtered`, and `workspace.search_text_detailed`
 - canonical lane explicitly includes parent/child waiting visibility and one resumed-to-completion recovery continuation scenario
-- current MCP verification is fixture-backed stdio external execution, not blanket compatibility for arbitrary third-party MCP servers
+- current MCP verification is a multi-server stdio external baseline: fixture regression, official SDK external, and one third-party time server; it is still not blanket compatibility for arbitrary third-party MCP servers
 
 ## Fallback Interpretation Rules
 

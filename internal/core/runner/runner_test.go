@@ -321,6 +321,68 @@ func TestRunnerExecutesMCPToolInvokeTask(t *testing.T) {
 	require.Len(t, writeExecutions, 0)
 }
 
+func TestRunnerExecutesSDKMCPToolInvokeTask(t *testing.T) {
+	registry := session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "MCP SDK Runner",
+		PermissionMode: policy.ReadOnly,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Invoke sdk fixture",
+		Kind:  KindMCPToolInvoke,
+		Input: `{"serverId":"sdk-external-fixture","toolName":"echo","arguments":{"message":"hello-sdk"}}`,
+	})
+	require.True(t, ok)
+
+	manager := mcp.NewManager([]mcp.ServerDescriptor{{
+		ID:            "sdk-external-fixture",
+		Source:        "sdk",
+		Enabled:       true,
+		ToolCount:     2,
+		ResourceCount: 0,
+		Status:        "enabled",
+		Command:       []string{"node", filepath.Join(runnerRepoRoot(t), "scripts", "mcp_sdk_server.js")},
+		Tools:         []string{"echo", "sum"},
+		Transport:     "stdio-sdk",
+	}})
+
+	result, err := New(registry, nil).WithMCP(manager).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, "mcp tool sdk-external-fixture/echo executed", result.ResultSummary)
+}
+
+func TestRunnerExecutesThirdPartyTimeMCPToolInvokeTask(t *testing.T) {
+	registry := session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "MCP Third Party Runner",
+		PermissionMode: policy.ReadOnly,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Invoke third-party time",
+		Kind:  KindMCPToolInvoke,
+		Input: `{"serverId":"third-party-time","toolName":"get_current_time","arguments":{"timezone":"UTC"}}`,
+	})
+	require.True(t, ok)
+
+	manager := mcp.NewManager([]mcp.ServerDescriptor{{
+		ID:            "third-party-time",
+		Source:        "third-party",
+		Enabled:       true,
+		ToolCount:     1,
+		ResourceCount: 0,
+		Status:        "enabled",
+		Command:       []string{"node", filepath.Join(runnerRepoRoot(t), "scripts", "mcp_third_party_time_server.js")},
+		Tools:         []string{"get_current_time"},
+		Transport:     "stdio-third-party",
+	}})
+
+	result, err := New(registry, nil).WithMCP(manager).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, "mcp tool third-party-time/get_current_time executed", result.ResultSummary)
+}
+
 func TestRunnerFailsMCPToolInvokeForUnknownServer(t *testing.T) {
 	registry := session.NewRegistry(`D:\GOWorks\gen-code-heji\gen-code`)
 	thread := registry.CreateThread(session.CreateThreadInput{
@@ -713,6 +775,10 @@ func TestRunnerAgentRunWaitsForApprovalAndResumesAfterApprove(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "waiting_for_approval", waiting.Status)
 	require.Equal(t, waitingStatusApproval, waiting.WaitingStatus)
+	waitingState, err := parseAgentRunState(waiting.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, "patch_then_respond", waitingState.Plan.Mode)
+	require.Equal(t, "Answer with the result", waitingState.CurrentStepTitle)
 
 	tasks, ok := registry.Tasks(thread.ID)
 	require.True(t, ok)
@@ -732,6 +798,8 @@ func TestRunnerAgentRunWaitsForApprovalAndResumesAfterApprove(t *testing.T) {
 	require.Equal(t, "completed", reloadedParent.Status)
 	reloadedState, err := parseAgentRunState(reloadedParent.AgentState)
 	require.NoError(t, err)
+	require.Equal(t, "patch_then_respond", reloadedState.Plan.Mode)
+	require.Equal(t, "Answer with the result", reloadedState.CurrentStepTitle)
 	require.Equal(t, "completed", reloadedState.Status)
 	require.Empty(t, reloadedState.WaitingChildTaskID)
 	require.Empty(t, reloadedState.FailureReason)
@@ -751,21 +819,21 @@ func TestRunnerRecoverInterruptedAgentRunResumesWaitingChildCompletion(t *testin
 		PermissionMode: policy.WorkspaceWrite,
 	})
 	parent, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
-		Title: "Agent recover",
-		Kind:  KindAgentRun,
-		Input: `{"goal":"Read README and answer","maxSteps":3}`,
-		Status: "waiting_for_task",
+		Title:         "Agent recover",
+		Kind:          KindAgentRun,
+		Input:         `{"goal":"Read README and answer","maxSteps":3}`,
+		Status:        "waiting_for_task",
 		WaitingStatus: waitingStatusTask,
-		AgentState: `{"taskId":"task-1","threadId":"thread-1","stepIndex":1,"maxSteps":3,"waitingChildTaskId":"task-2","lastAction":{"type":"read_file","path":"README.md"},"status":"waiting_for_task","goal":"Read README and answer"}`,
+		AgentState:    `{"taskId":"task-1","threadId":"thread-1","stepIndex":1,"maxSteps":3,"waitingChildTaskId":"task-2","lastAction":{"type":"read_file","path":"README.md"},"status":"waiting_for_task","goal":"Read README and answer"}`,
 	})
 	require.True(t, ok)
 	child, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
-		Title: "Read file README.md",
-		Kind:  KindWorkspaceRead,
-		Input: `{"path":"README.md"}`,
-		Status: "completed",
+		Title:         "Read file README.md",
+		Kind:          KindWorkspaceRead,
+		Input:         `{"path":"README.md"}`,
+		Status:        "completed",
 		ResultSummary: "read README.md: hello",
-		ParentTaskID: parent.ID,
+		ParentTaskID:  parent.ID,
 	})
 	require.True(t, ok)
 
@@ -818,7 +886,7 @@ func TestRunnerRecoverInterruptedAgentRunKeepsWaitingApprovalWhenChildStillPendi
 		ParentTaskID:   parent.ID,
 	})
 	require.True(t, ok)
-	agentState := fmt.Sprintf(`{"taskId":%q,"threadId":%q,"stepIndex":1,"maxSteps":4,"waitingChildTaskId":%q,"lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm"}`, parent.ID, thread.ID, child.ID)
+	agentState := fmt.Sprintf(`{"taskId":%q,"threadId":%q,"stepIndex":1,"maxSteps":4,"waitingChildTaskId":%q,"lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm","currentStepTitle":"Answer with the result","completedActions":["apply_patch"],"plan":{"summary":"Apply the requested patch first, then answer with the result.","mode":"patch_then_respond","requiredSequence":["apply_patch","respond"]}}`, parent.ID, thread.ID, child.ID)
 	_, err := registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
 		Status:        "waiting_for_approval",
 		ResultSummary: child.ResultSummary,
@@ -870,7 +938,7 @@ func TestRunnerRecoverInterruptedAgentRunResumesAfterApprovedChildCompleted(t *t
 		ParentTaskID:   parent.ID,
 	})
 	require.True(t, ok)
-	agentState := fmt.Sprintf(`{"taskId":%q,"threadId":%q,"stepIndex":1,"maxSteps":4,"waitingChildTaskId":%q,"lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm"}`, parent.ID, thread.ID, child.ID)
+	agentState := fmt.Sprintf(`{"taskId":%q,"threadId":%q,"stepIndex":1,"maxSteps":4,"waitingChildTaskId":%q,"lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm","currentStepTitle":"Answer with the result","completedActions":["apply_patch"],"plan":{"summary":"Apply the requested patch first, then answer with the result.","mode":"patch_then_respond","requiredSequence":["apply_patch","respond"]}}`, parent.ID, thread.ID, child.ID)
 	_, err := registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
 		Status:        "waiting_for_approval",
 		ResultSummary: child.ResultSummary,
@@ -915,7 +983,7 @@ func TestRunnerRecoverInterruptedAgentRunFailsWhenApprovalChildMissing(t *testin
 		Input: `{"goal":"Patch README and confirm","maxSteps":4}`,
 	})
 	require.True(t, ok)
-	agentState := fmt.Sprintf(`{"taskId":%q,"threadId":%q,"stepIndex":1,"maxSteps":4,"waitingChildTaskId":"task-missing","lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm"}`, parent.ID, thread.ID)
+	agentState := fmt.Sprintf(`{"taskId":%q,"threadId":%q,"stepIndex":1,"maxSteps":4,"waitingChildTaskId":"task-missing","lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm","currentStepTitle":"Answer with the result","completedActions":["apply_patch"],"plan":{"summary":"Apply the requested patch first, then answer with the result.","mode":"patch_then_respond","requiredSequence":["apply_patch","respond"]}}`, parent.ID, thread.ID)
 	_, err := registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
 		Status:        "waiting_for_approval",
 		ResultSummary: "approval required for README.md",
@@ -938,7 +1006,7 @@ func TestRunnerRecoverInterruptedAgentRunFailsWhenApprovalChildMissing(t *testin
 	require.Contains(t, reloadedState.FailureReason, "approval child task not found")
 }
 
-func TestRunnerResumeAgentRunKeepsWaitingStateWhenFollowupPatchNeedsApproval(t *testing.T) {
+func TestRunnerResumeAgentRunCompletesAfterApprovedPatchStep(t *testing.T) {
 	projectRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("old\n"), 0o644))
 
@@ -948,12 +1016,12 @@ func TestRunnerResumeAgentRunKeepsWaitingStateWhenFollowupPatchNeedsApproval(t *
 		PermissionMode: policy.AskUser,
 	})
 	parent, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
-		Title: "Agent resume approval",
-		Kind:  KindAgentRun,
-		Input: `{"goal":"Patch README and confirm","maxSteps":4}`,
-		Status: "waiting_for_approval",
+		Title:         "Agent resume approval",
+		Kind:          KindAgentRun,
+		Input:         `{"goal":"Patch README and confirm","maxSteps":4}`,
+		Status:        "waiting_for_approval",
 		WaitingStatus: waitingStatusApproval,
-		AgentState: `{"taskId":"task-agent","threadId":"thread-1","stepIndex":1,"maxSteps":4,"waitingChildTaskId":"task-child","lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm","completedActions":["apply_patch"]}`,
+		AgentState:    `{"taskId":"task-agent","threadId":"thread-1","stepIndex":1,"maxSteps":4,"waitingChildTaskId":"task-child","lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm","currentStepTitle":"Answer with the result","completedActions":["apply_patch"],"plan":{"summary":"Apply the requested patch first, then answer with the result.","mode":"patch_then_respond","requiredSequence":["apply_patch","respond"]}}`,
 	})
 	require.True(t, ok)
 	child, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
@@ -966,7 +1034,7 @@ func TestRunnerResumeAgentRunKeepsWaitingStateWhenFollowupPatchNeedsApproval(t *
 		ParentTaskID:   parent.ID,
 	})
 	require.True(t, ok)
-	parentState := fmt.Sprintf(`{"taskId":%q,"threadId":%q,"stepIndex":1,"maxSteps":4,"waitingChildTaskId":%q,"lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm"}`, parent.ID, thread.ID, child.ID)
+	parentState := fmt.Sprintf(`{"taskId":%q,"threadId":%q,"stepIndex":1,"maxSteps":4,"waitingChildTaskId":%q,"lastAction":{"type":"apply_patch","path":"README.md"},"status":"waiting_for_approval","goal":"Patch README and confirm","currentStepTitle":"Answer with the result","completedActions":["apply_patch"],"plan":{"summary":"Apply the requested patch first, then answer with the result.","mode":"patch_then_respond","requiredSequence":["apply_patch","respond"]}}`, parent.ID, thread.ID, child.ID)
 	_, err := registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
 		Status:        "waiting_for_approval",
 		ResultSummary: child.ResultSummary,
@@ -977,29 +1045,27 @@ func TestRunnerResumeAgentRunKeepsWaitingStateWhenFollowupPatchNeedsApproval(t *
 
 	models := &scriptedModelExecutor{
 		results: []provider.ResponseResult{
-			{OutputText: `{"type":"apply_patch","path":"README.md","patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-new\n+final\n*** End Patch","reasoningSummary":"Apply followup patch"}`},
+			{OutputText: `{"type":"respond","response":"Patch applied and confirmed.","reasoningSummary":"Report the result"}`},
 		},
 	}
 
 	runner := New(registry, models)
 	resumed, err := runner.resumeAgentRun(context.Background(), thread.ID, parent)
 	require.NoError(t, err)
-	require.Equal(t, "waiting_for_approval", resumed.Status)
-	require.Equal(t, waitingStatusApproval, resumed.WaitingStatus)
+	require.Equal(t, "completed", resumed.Status)
+	require.Contains(t, resumed.ResultSummary, "agent completed")
 
 	reloadedParent, err := registry.Task(thread.ID, parent.ID)
 	require.NoError(t, err)
-	require.Equal(t, "waiting_for_approval", reloadedParent.Status)
+	require.Equal(t, "completed", reloadedParent.Status)
 	reloadedState, err := parseAgentRunState(reloadedParent.AgentState)
 	require.NoError(t, err)
-	require.Equal(t, waitingStatusApproval, reloadedState.Status)
-	require.NotEmpty(t, reloadedState.WaitingChildTaskID)
+	require.Equal(t, "completed", reloadedState.Status)
+	require.Empty(t, reloadedState.WaitingChildTaskID)
 
 	tasks, ok := registry.Tasks(thread.ID)
 	require.True(t, ok)
-	require.Len(t, tasks, 3)
-	require.Equal(t, "needs_approval", tasks[2].Status)
-	require.Equal(t, parent.ID, tasks[2].ParentTaskID)
+	require.Len(t, tasks, 2)
 }
 
 func TestShouldRecoverRunningTask(t *testing.T) {
@@ -1159,9 +1225,38 @@ func TestBuildAgentPromptGuidesSecondBatchReadTools(t *testing.T) {
 	require.Contains(t, prompt, "Current required step: Filter matching files")
 	require.Contains(t, prompt, "Mode guidance: If the goal asks to filter by pattern first")
 	require.Contains(t, prompt, "first call list_files_filtered, then call read_files_batch for the selected files, then respond")
-	require.Contains(t, prompt, "Do not skip the filtering step when the goal explicitly asks for it")
+	require.Contains(t, prompt, "Do not skip the required step when the goal explicitly asks for it")
 	require.Contains(t, prompt, "If you violate the required action sequence, the run fails immediately.")
 	require.Contains(t, prompt, "Return JSON only")
+}
+
+func TestBuildAgentPromptGuidesPatchThenRespondPlan(t *testing.T) {
+	prompt := buildAgentPrompt(nil, nil, AgentRunState{
+		Goal:      "Patch README.md and confirm the result",
+		StepIndex: 0,
+		MaxSteps:  4,
+		Plan: AgentExecutionPlan{
+			Summary:          "Apply the requested patch first, then answer with the result.",
+			Mode:             "patch_then_respond",
+			RequiredSequence: []string{"apply_patch", "respond"},
+		},
+		CurrentStepTitle: "Apply the requested patch",
+	})
+
+	require.Contains(t, prompt, "Plan mode: patch_then_respond")
+	require.Contains(t, prompt, "Plan summary: Apply the requested patch first, then answer with the result.")
+	require.Contains(t, prompt, "Required action sequence: apply_patch -> respond")
+	require.Contains(t, prompt, "Current required step: Apply the requested patch")
+	require.Contains(t, prompt, "Mode guidance: If the goal explicitly asks you to modify a file and then report the outcome")
+	require.Contains(t, prompt, "apply_patch when the goal explicitly asks for a code or file modification")
+	require.Contains(t, prompt, "call apply_patch before respond")
+}
+
+func TestParseAgentActionUsesContentFallbackForRespond(t *testing.T) {
+	action, err := parseAgentActionWithState(`{"type":"respond","content":"Final answer from content","reasoningSummary":"backup"}`, AgentRunState{})
+	require.NoError(t, err)
+	require.Equal(t, "respond", action.Type)
+	require.Equal(t, "Final answer from content", action.Response)
 }
 
 func TestRunnerCorrectsAgentRunAfterSequenceViolation(t *testing.T) {
@@ -1201,12 +1296,66 @@ func TestRunnerCorrectsAgentRunAfterSequenceViolation(t *testing.T) {
 	require.Equal(t, KindWorkspaceSearchDetailed, tasks[2].Kind)
 }
 
+func TestRunnerCorrectsAgentRunWriteGoalToPatchThenRespond(t *testing.T) {
+	projectRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("old\n"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Agent Patch Corrected",
+		PermissionMode: policy.WorkspaceWrite,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Agent run",
+		Kind:  KindAgentRun,
+		Input: `{"goal":"Patch README.md and confirm the result","maxSteps":4}`,
+	})
+	require.True(t, ok)
+
+	models := &scriptedModelExecutor{
+		results: []provider.ResponseResult{
+			{OutputText: `{"type":"read_file","path":"README.md","reasoningSummary":"Inspect the file first"}`},
+			{OutputText: `{"type":"apply_patch","path":"README.md","patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch","reasoningSummary":"Apply the requested patch first"}`},
+			{OutputText: `{"type":"respond","response":"Patch applied and confirmed.","reasoningSummary":"Report the result"}`},
+		},
+	}
+
+	result, err := New(registry, models).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, "agent completed: Patch applied and confirmed.", result.ResultSummary)
+
+	reloadedTask, err := registry.Task(thread.ID, task.ID)
+	require.NoError(t, err)
+	reloadedState, err := parseAgentRunState(reloadedTask.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, "patch_then_respond", reloadedState.Plan.Mode)
+
+	tasks, ok := registry.Tasks(thread.ID)
+	require.True(t, ok)
+	require.Len(t, tasks, 2)
+	require.Equal(t, KindWorkspaceApplyPatch, tasks[1].Kind)
+
+	content, err := os.ReadFile(filepath.Join(projectRoot, "README.md"))
+	require.NoError(t, err)
+	require.Equal(t, "new", string(content))
+}
+
 func TestDeriveAgentExecutionPlanForFilterThenReadGoal(t *testing.T) {
 	plan := deriveAgentExecutionPlan("先筛出 internal/core/runner 下的 *.go，再读取筛出的文件并回答")
 	require.Equal(t, "Filter matching files first, then read the selected files, then answer.", plan.Summary)
 	require.Equal(t, []string{"list_files_filtered", "read_files_batch|read_file", "respond"}, plan.RequiredSequence)
 	require.Len(t, plan.Steps, 3)
 	require.Equal(t, "Filter matching files", plan.Steps[0].Title)
+}
+
+func TestDeriveAgentExecutionPlanForPatchThenRespondGoal(t *testing.T) {
+	plan := deriveAgentExecutionPlan("Patch README.md and confirm the result")
+	require.Equal(t, "patch_then_respond", plan.Mode)
+	require.Equal(t, "Apply the requested patch first, then answer with the result.", plan.Summary)
+	require.Equal(t, []string{"apply_patch", "respond"}, plan.RequiredSequence)
+	require.Len(t, plan.Steps, 2)
+	require.Equal(t, "Apply the requested patch", plan.Steps[0].Title)
 }
 
 func TestDeriveAgentExecutionPlanForSearchThenDetailedGoal(t *testing.T) {
