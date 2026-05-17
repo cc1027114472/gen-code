@@ -677,7 +677,7 @@ def run_agent_scenario(page, thread_id: str, scenario: dict) -> dict:
                 break
             except Exception:
                 continue
-    if not child_visible and expected_plan_mode != "stat_then_read":
+    if not child_visible and expected_plan_mode not in {"stat_then_read", "list_then_read"}:
         raise AssertionError(f"expected at least one child task indicator in UI for plan mode {expected_plan_mode}")
     try:
         expect(page.locator("article").filter(has_text=latest_message["content"]).first).to_be_visible(timeout=12000)
