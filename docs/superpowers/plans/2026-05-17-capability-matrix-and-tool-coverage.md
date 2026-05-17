@@ -72,7 +72,7 @@
 | Shared runtime exposure of skill groups | verified | runtime status, discovery, `/api/skills`, `skills list` output | Inventory fields and grouped governance summaries are visible for verification. |
 | Grouped skill import audit against `AGENTS.md` localization and isolation rules | verified | `internal/core/runtime/discovery.go`, `desktop/app.go`, `cmd/cli/main.go`, governance tests | Current baseline audits project-local copied skills under `internal/core/skill/catalog` for `localization checked` and `isolation status` without claiming per-skill capability acceptance. |
 | Full 1:1 Chinese localization audit for copied skills | verified | `internal/core/runtime/discovery.go`, `desktop/app.go`, governance tests, baseline docs | `localizationChecked` now reflects an explicit 1:1 Chinese-localization audit conclusion for copied skills in `gen-code/internal/core/skill/catalog` instead of a loose heuristic. |
-| Capability-level verification for each grouped skill | not implemented | no matrix before this doc | This document starts the inventory but does not verify each skill individually. |
+| Capability-level verification for each grouped skill | verified | `internal/core/skill/capability.go`, `pkg/skillaudit/capability.go`, `internal/core/runtime/discovery.go`, `cmd/cli/main.go`, `desktop/app.go`, capability-focused governance tests | Verified as a document-asset baseline for project-local copied skills under `internal/core/skill/catalog`; this does not imply a runtime skill execution engine exists. |
 
 ### Skill Governance Boundary
 

@@ -252,6 +252,8 @@ type SkillSummary struct {
 	VerificationStatus  string `json:"verificationStatus"`
 	LocalizationChecked bool   `json:"localizationChecked"`
 	IsolationStatus     string `json:"isolationStatus"`
+	CapabilityVerified  bool   `json:"capabilityVerified"`
+	CapabilitySummary   string `json:"capabilitySummary"`
 }
 
 type SkillGovernanceGroup struct {
@@ -259,6 +261,7 @@ type SkillGovernanceGroup struct {
 	ImplementedCount    int    `json:"implementedCount"`
 	VerifiedCount       int    `json:"verifiedCount"`
 	LocalizationPending int    `json:"localizationPending"`
+	CapabilityPending   int    `json:"capabilityPending"`
 }
 
 type BridgeCheckResult struct {
@@ -412,6 +415,8 @@ type apiSkill struct {
 	VerificationStatus  string `json:"verificationStatus"`
 	LocalizationChecked bool   `json:"localizationChecked"`
 	IsolationStatus     string `json:"isolationStatus"`
+	CapabilityVerified  bool   `json:"capabilityVerified"`
+	CapabilitySummary   string `json:"capabilitySummary"`
 }
 
 type apiTool struct {
@@ -1588,6 +1593,8 @@ func mapSkills(items []apiSkill) []SkillSummary {
 			VerificationStatus:  fallbackText(strings.TrimSpace(item.VerificationStatus), "implemented"),
 			LocalizationChecked: item.LocalizationChecked,
 			IsolationStatus:     fallbackText(strings.TrimSpace(item.IsolationStatus), localSkillIsolationStatus(fallbackText(strings.TrimSpace(item.Group), "common"))),
+			CapabilityVerified:  item.CapabilityVerified,
+			CapabilitySummary:   strings.TrimSpace(item.CapabilitySummary),
 		})
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -1618,6 +1625,9 @@ func summarizeSkillGovernance(items []SkillSummary) []SkillGovernanceGroup {
 		}
 		if !item.LocalizationChecked {
 			summary.LocalizationPending++
+		}
+		if group != "common" && !item.CapabilityVerified {
+			summary.CapabilityPending++
 		}
 	}
 
@@ -1755,6 +1765,8 @@ func localSkillCatalog(workspaceRoot string) []apiSkill {
 			VerificationStatus:  "implemented",
 			LocalizationChecked: true,
 			IsolationStatus:     localSkillIsolationStatus("common"),
+			CapabilityVerified:  false,
+			CapabilitySummary:   "capability baseline not tracked for built-in shared common skill",
 		},
 	}
 	seen := map[string]struct{}{
@@ -1778,6 +1790,7 @@ func localSkillCatalog(workspaceRoot string) []apiSkill {
 				continue
 			}
 			seen[key] = struct{}{}
+			capabilityAudit := skillaudit.VerifyCapability(candidate.root, id)
 			items = append(items, apiSkill{
 				ID:                  id,
 				Group:               candidate.group,
@@ -1787,6 +1800,8 @@ func localSkillCatalog(workspaceRoot string) []apiSkill {
 				VerificationStatus:  "implemented",
 				LocalizationChecked: localSkillLocalizationChecked(candidate.root, id),
 				IsolationStatus:     localSkillIsolationStatus(candidate.group),
+				CapabilityVerified:  capabilityAudit.Verified,
+				CapabilitySummary:   capabilityAudit.Summary,
 			})
 		}
 	}

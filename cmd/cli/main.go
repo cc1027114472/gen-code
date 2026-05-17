@@ -1359,12 +1359,12 @@ func printSkills(ctx context.Context, facade *runtimeFacade, requestedGroup stri
 		fmt.Printf("  source: %s\n", source)
 		fmt.Printf("  source trust: %s\n", runtimeSourceTrust(source))
 		fmt.Printf("  source detail: %s\n", runtimeSourceDetail(source))
-		fmt.Println("  governance fields: skill id, group, source, verification status, localization checked, isolation status")
+		fmt.Println("  governance fields: skill id, group, source, verification status, localization checked, capability verified, isolation status")
 		for _, item := range items {
 			if item.Group != string(group) {
 				continue
 			}
-			fmt.Printf("  - %s (group=%s, source=%s, verification=%s, localization=%s, isolation=%s)\n", item.ID, item.Group, fallbackText(item.Source, item.Group), fallbackText(item.VerificationStatus, "implemented"), localizationStatus(item.LocalizationChecked), isolationStatus(skillIsolationStatusForOutput(item)))
+			fmt.Printf("  - %s (group=%s, source=%s, verification=%s, localization=%s, capability=%s, isolation=%s)\n", item.ID, item.Group, fallbackText(item.Source, item.Group), fallbackText(item.VerificationStatus, "implemented"), localizationStatus(item.LocalizationChecked), capabilityStatus(item.CapabilityVerified), isolationStatus(skillIsolationStatusForOutput(item)))
 		}
 		return nil
 	}
@@ -1373,10 +1373,10 @@ func printSkills(ctx context.Context, facade *runtimeFacade, requestedGroup stri
 	fmt.Printf("  source: %s\n", source)
 	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(source))
 	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(source))
-	fmt.Println("  governance fields: skill id, group, source, verification status, localization checked, isolation status")
+	fmt.Println("  governance fields: skill id, group, source, verification status, localization checked, capability verified, isolation status")
 	fmt.Println("  skill governance:")
 	for _, summary := range summaries {
-		fmt.Printf("  - %s: implemented=%d verified=%d localization-pending=%d\n", summary.Group, summary.ImplementedCount, summary.VerifiedCount, summary.LocalizationPending)
+		fmt.Printf("  - %s: implemented=%d verified=%d localization-pending=%d capability-pending=%d\n", summary.Group, summary.ImplementedCount, summary.VerifiedCount, summary.LocalizationPending, summary.CapabilityPending)
 	}
 	for _, groupName := range []string{"common", "codex", "cc"} {
 		fmt.Printf("%s:\n", groupName)
@@ -1384,7 +1384,7 @@ func printSkills(ctx context.Context, facade *runtimeFacade, requestedGroup stri
 			if item.Group != groupName {
 				continue
 			}
-			fmt.Printf("  - %s (group=%s, source=%s, verification=%s, localization=%s, isolation=%s)\n", item.ID, item.Group, fallbackText(item.Source, item.Group), fallbackText(item.VerificationStatus, "implemented"), localizationStatus(item.LocalizationChecked), isolationStatus(skillIsolationStatusForOutput(item)))
+			fmt.Printf("  - %s (group=%s, source=%s, verification=%s, localization=%s, capability=%s, isolation=%s)\n", item.ID, item.Group, fallbackText(item.Source, item.Group), fallbackText(item.VerificationStatus, "implemented"), localizationStatus(item.LocalizationChecked), capabilityStatus(item.CapabilityVerified), isolationStatus(skillIsolationStatusForOutput(item)))
 		}
 	}
 	return nil
@@ -1427,6 +1427,26 @@ func printMCP(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Printf("  configured servers: %d\n", len(items))
 	for _, item := range items {
 		fmt.Printf("  - %s [source=%s, tools=%d, resources=%d]\n", summarizeMCPMetadata(item), fallbackText(item.Source, "unknown"), item.ToolCount, item.ResourceCount)
+	}
+	laneNotes := []struct {
+		serverID string
+		note     string
+	}{
+		{serverID: "external-fixture", note: "fixture regression lane"},
+		{serverID: "sdk-external-fixture", note: "official SDK external lane"},
+		{serverID: "third-party-time", note: "third-party time lane"},
+	}
+	configured := map[string]bool{}
+	for _, item := range items {
+		configured[item.ID] = true
+	}
+	fmt.Println("  verified execution lanes:")
+	for _, lane := range laneNotes {
+		status := "configured"
+		if !configured[lane.serverID] {
+			status = "not discovered"
+		}
+		fmt.Printf("    - %s: %s (%s)\n", lane.serverID, lane.note, status)
 	}
 	return nil
 }
@@ -1536,6 +1556,13 @@ func fallbackText(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func capabilityStatus(verified bool) string {
+	if verified {
+		return "verified"
+	}
+	return "pending"
 }
 
 func runtimeSourceDetail(source string) string {

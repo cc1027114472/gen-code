@@ -130,16 +130,18 @@ func TestSkillsListPrintsGovernanceBaseline(t *testing.T) {
 	require.Contains(t, output, "skills list")
 	require.Contains(t, output, "source: local-fallback")
 	require.Contains(t, output, "source trust: degraded")
-	require.Contains(t, output, "governance fields: skill id, group, source, verification status, localization checked, isolation status")
+	require.Contains(t, output, "governance fields: skill id, group, source, verification status, localization checked, capability verified, isolation status")
 	require.Contains(t, output, "skill governance:")
 	require.Contains(t, output, "common: implemented=")
 	require.Contains(t, output, "codex: implemented=")
 	require.Contains(t, output, "cc: implemented=")
+	require.Contains(t, output, "capability-pending=")
 	require.Contains(t, output, "common:")
 	require.Contains(t, output, "codex:")
 	require.Contains(t, output, "cc:")
 	require.Contains(t, output, "verification=implemented")
 	require.Contains(t, output, "localization=checked")
+	require.Contains(t, output, "capability=")
 	require.Contains(t, output, "isolation=shared-common")
 }
 
@@ -147,7 +149,7 @@ func TestSkillsListUsesRemoteRuntimeSourceWhenServerIsAvailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/skills":
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"common.browser","group":"common","name":"Browser","description":"Shared browser skill","source":"common","verificationStatus":"implemented","localizationChecked":true,"isolationStatus":"shared-common"},{"id":"codex.review","group":"codex","name":"Review","description":"Codex review skill","source":"codex","verificationStatus":"verified","localizationChecked":true,"isolationStatus":"isolated"}]}}`))
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"common.browser","group":"common","name":"Browser","description":"Shared browser skill","source":"common","verificationStatus":"implemented","localizationChecked":true,"isolationStatus":"shared-common","capabilityVerified":false,"capabilitySummary":"capability baseline not tracked for built-in shared common skill"},{"id":"codex.review","group":"codex","name":"Review","description":"Codex review skill","source":"codex","verificationStatus":"verified","localizationChecked":true,"isolationStatus":"isolated","capabilityVerified":true,"capabilitySummary":"capability verified"}]}}`))
 		case "/api/runtime/status":
 			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":0,"eventCount":0}}`))
 		default:
@@ -165,11 +167,12 @@ func TestSkillsListUsesRemoteRuntimeSourceWhenServerIsAvailable(t *testing.T) {
 
 	require.Contains(t, output, "source: remote-app-server")
 	require.Contains(t, output, "source trust: canonical")
-	require.Contains(t, output, "common: implemented=1 verified=0 localization-pending=0")
-	require.Contains(t, output, "codex: implemented=1 verified=1 localization-pending=0")
-	require.Contains(t, output, "cc: implemented=0 verified=0 localization-pending=0")
+	require.Contains(t, output, "common: implemented=1 verified=0 localization-pending=0 capability-pending=0")
+	require.Contains(t, output, "codex: implemented=1 verified=1 localization-pending=0 capability-pending=0")
+	require.Contains(t, output, "cc: implemented=0 verified=0 localization-pending=0 capability-pending=0")
 	require.Contains(t, output, "verification=verified")
 	require.Contains(t, output, "localization=checked")
+	require.Contains(t, output, "capability=verified")
 	require.Contains(t, output, "isolation=shared-common")
 	require.Contains(t, output, "isolation=isolated")
 }
@@ -178,7 +181,7 @@ func TestMCPListPrintsHealthStatusAndTrust(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/mcp/servers":
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"filesystem","source":"node_modules","enabled":true,"toolCount":2,"resourceCount":1,"status":"enabled"},{"id":"memory","source":"builtin","enabled":false,"toolCount":0,"resourceCount":0,"status":"disabled"},{"id":"remote-proxy","source":"node_modules","enabled":true,"toolCount":0,"resourceCount":0,"status":"degraded"},{"id":"stale-bridge","source":"node_modules","enabled":true,"toolCount":1,"resourceCount":0,"status":"unreachable"}]}}`))
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"external-fixture","source":"fixture","enabled":true,"toolCount":3,"resourceCount":0,"status":"enabled"},{"id":"sdk-external-fixture","source":"sdk","enabled":true,"toolCount":2,"resourceCount":0,"status":"enabled"},{"id":"third-party-time","source":"third-party","enabled":true,"toolCount":1,"resourceCount":0,"status":"enabled"},{"id":"stale-bridge","source":"node_modules","enabled":true,"toolCount":1,"resourceCount":0,"status":"unreachable"}]}}`))
 		case "/api/runtime/status":
 			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":0,"eventCount":0}}`))
 		default:
@@ -198,12 +201,16 @@ func TestMCPListPrintsHealthStatusAndTrust(t *testing.T) {
 	require.Contains(t, output, "source: remote-app-server")
 	require.Contains(t, output, "source trust: canonical")
 	require.Contains(t, output, "metadata verification: metadata health only; end-to-end MCP execution is not verified")
-	require.Contains(t, output, "execution baseline: fixture-backed stdio external execution baseline verified")
+	require.Contains(t, output, "execution baseline: multi-server stdio external execution baseline verified")
 	require.Contains(t, output, "configured servers: 4")
-	require.Contains(t, output, "filesystem (enabled, metadata health: enabled) [source=node_modules, tools=2, resources=1]")
-	require.Contains(t, output, "memory (disabled, metadata health: disabled) [source=builtin, tools=0, resources=0]")
-	require.Contains(t, output, "remote-proxy (enabled, metadata health: degraded) [source=node_modules, tools=0, resources=0]")
+	require.Contains(t, output, "external-fixture (enabled, metadata health: enabled) [source=fixture, tools=3, resources=0]")
+	require.Contains(t, output, "sdk-external-fixture (enabled, metadata health: enabled) [source=sdk, tools=2, resources=0]")
+	require.Contains(t, output, "third-party-time (enabled, metadata health: enabled) [source=third-party, tools=1, resources=0]")
 	require.Contains(t, output, "stale-bridge (enabled, metadata health: unreachable) [source=node_modules, tools=1, resources=0]")
+	require.Contains(t, output, "verified execution lanes:")
+	require.Contains(t, output, "external-fixture: fixture regression lane (configured)")
+	require.Contains(t, output, "sdk-external-fixture: official SDK external lane (configured)")
+	require.Contains(t, output, "third-party-time: third-party time lane (configured)")
 }
 
 func TestMCPInvokePrintsTaskIdentityAndSummary(t *testing.T) {
@@ -211,10 +218,10 @@ func TestMCPInvokePrintsTaskIdentityAndSummary(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/threads/thread-1/tasks":
 			require.Equal(t, http.MethodPost, r.Method)
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-mcp","threadId":"thread-1","title":"Invoke MCP external-fixture/echo","status":"queued","kind":"mcp.tool.invoke","createdAt":"2026-05-17T00:00:00Z","updatedAt":"2026-05-17T00:00:00Z"}}`))
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-mcp","threadId":"thread-1","title":"Invoke MCP sdk-external-fixture/echo","status":"queued","kind":"mcp.tool.invoke","createdAt":"2026-05-17T00:00:00Z","updatedAt":"2026-05-17T00:00:00Z"}}`))
 		case "/api/threads/thread-1/tasks/task-mcp/run":
 			require.Equal(t, http.MethodPost, r.Method)
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-mcp","threadId":"thread-1","title":"Invoke MCP external-fixture/echo","status":"completed","kind":"mcp.tool.invoke","resultSummary":"mcp tool external-fixture/echo executed","updatedAt":"2026-05-17T00:00:01Z"}}`))
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-mcp","threadId":"thread-1","title":"Invoke MCP sdk-external-fixture/echo","status":"completed","kind":"mcp.tool.invoke","resultSummary":"mcp tool sdk-external-fixture/echo executed","updatedAt":"2026-05-17T00:00:01Z"}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -227,7 +234,7 @@ func TestMCPInvokePrintsTaskIdentityAndSummary(t *testing.T) {
 		err := run(context.Background(), []string{
 			"mcp", "invoke",
 			"--thread=thread-1",
-			"--server=external-fixture",
+			"--server=sdk-external-fixture",
 			"--tool=echo",
 			`--arguments={"message":"hello"}`,
 		})
@@ -235,11 +242,11 @@ func TestMCPInvokePrintsTaskIdentityAndSummary(t *testing.T) {
 	})
 
 	require.Contains(t, output, "mcp task created")
-	require.Contains(t, output, "server id: external-fixture")
+	require.Contains(t, output, "server id: sdk-external-fixture")
 	require.Contains(t, output, "tool name: echo")
 	require.Contains(t, output, "task id: task-mcp")
 	require.Contains(t, output, "status: completed")
-	require.Contains(t, output, "result summary: mcp tool external-fixture/echo executed")
+	require.Contains(t, output, "result summary: mcp tool sdk-external-fixture/echo executed")
 }
 
 func TestTasksListPrintsAgentPlanMetadata(t *testing.T) {
@@ -282,7 +289,7 @@ func TestAgentRunPrintsDefaultWorkflowGuidance(t *testing.T) {
 			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-agent","threadId":"thread-1","title":"Goal run","status":"queued","kind":"agent.run","createdAt":"2026-05-17T00:00:00Z","updatedAt":"2026-05-17T00:00:00Z"}}`))
 		case "/api/threads/thread-1/tasks/task-agent/run":
 			require.Equal(t, http.MethodPost, r.Method)
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-agent","threadId":"thread-1","title":"Goal run","status":"waiting_for_approval","kind":"agent.run","waitingStatus":"waiting_for_approval","resultSummary":"agent waiting for approval: update README.md","agentPlanSummary":"Inspect files, prepare patch, then summarize.","agentPlanMode":"filter_then_read","agentCurrentStepTitle":"Apply the proposed patch","agentLastReasoning":"Prepared a patch for README.md","agentStep":3,"agentMaxSteps":4,"latestChildTaskId":"task-child-patch","updatedAt":"2026-05-17T00:00:03Z"}}`))
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-agent","threadId":"thread-1","title":"Goal run","status":"waiting_for_approval","kind":"agent.run","waitingStatus":"waiting_for_approval","resultSummary":"approval required for workspace.apply_patch on README.md; 2 patch line(s)","agentPlanSummary":"Apply the requested patch first, then answer with the result.","agentPlanMode":"patch_then_respond","agentCurrentStepTitle":"Answer with the result","agentLastReasoning":"Prepared a patch for README.md","agentStep":1,"agentMaxSteps":4,"latestChildTaskId":"task-child-patch","updatedAt":"2026-05-17T00:00:03Z"}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -304,6 +311,8 @@ func TestAgentRunPrintsDefaultWorkflowGuidance(t *testing.T) {
 	require.Contains(t, output, "workflow: default goal-oriented workflow")
 	require.Contains(t, output, "waiting on: approval for child task task-child-patch")
 	require.Contains(t, output, "latest child: task-child-patch")
+	require.Contains(t, output, "plan mode: patch_then_respond")
+	require.Contains(t, output, "current step: Answer with the result")
 	require.Contains(t, output, "next step: approve the child workspace.apply_patch task; the parent agent will auto-resume")
 	require.Contains(t, output, "inspect: gen-code tasks list --thread=thread-1")
 }

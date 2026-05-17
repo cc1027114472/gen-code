@@ -1,3 +1,8 @@
+---
+name: andrej-karpathy-skills
+description: 用于减少常见 LLM 编码错误的行为指南。
+---
+
 # CLAUDE.md 配置说明文档
 Andrej Karpathy 编码指南
 

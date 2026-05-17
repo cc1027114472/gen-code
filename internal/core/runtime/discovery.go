@@ -30,6 +30,7 @@ type SkillGovernanceSummary struct {
 	ImplementedCount    int
 	VerifiedCount       int
 	LocalizationPending int
+	CapabilityPending   int
 }
 
 const (
@@ -58,6 +59,8 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 			VerificationStatus:  "implemented",
 			LocalizationChecked: true,
 			IsolationStatus:     skillIsolationStatusShared,
+			CapabilityVerified:  false,
+			CapabilitySummary:   "capability baseline not tracked for built-in shared common skill",
 		},
 	}
 	discoveredSkills = append(discoveredSkills, discoverSkills(codexSkillsRoot, skill.Codex)...)
@@ -202,7 +205,7 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 			ID:                 "mcp.tool.invoke",
 			Name:               "MCP Tool Invoke",
 			Description:        "Invoke a runtime-configured MCP tool through the shared task runner",
-			InputSchemaSummary: `{"serverId":"external-fixture","toolName":"echo","arguments":{"message":"hello"}}`,
+			InputSchemaSummary: `{"serverId":"sdk-external-fixture","toolName":"echo","arguments":{"message":"hello"}}`,
 			PermissionMode:     policy.ReadOnly,
 			Source:             "runtime",
 			Kind:               "mcp.tool.invoke",
@@ -214,6 +217,8 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 
 	discoveredMCP := discoverMCPServers(ccNodeModulesRoot)
 	discoveredMCP = append(discoveredMCP, builtinExternalMCPFixture())
+	discoveredMCP = append(discoveredMCP, builtinSDKExternalMCPServer())
+	discoveredMCP = append(discoveredMCP, builtinThirdPartyTimeMCPServer())
 	if len(discoveredMCP) == 0 {
 		discoveredMCP = append(discoveredMCP, mcp.NormalizeServerDescriptor(mcp.ServerDescriptor{
 			ID:            "local-files",
@@ -234,14 +239,49 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 
 func builtinExternalMCPFixture() mcp.ServerDescriptor {
 	return mcp.NormalizeServerDescriptor(mcp.ServerDescriptor{
-		ID:            "external-fixture",
-		Source:        "fixture",
-		Enabled:       true,
-		ToolCount:     2,
-		ResourceCount: 0,
-		Status:        "enabled",
-		Command:       mcpFixtureCommand(),
-		Tools:         []string{"echo", "sum", "fail"},
+		ID:               "external-fixture",
+		Source:           "fixture",
+		Enabled:          true,
+		ToolCount:        3,
+		ResourceCount:    0,
+		Status:           "enabled",
+		Command:          mcpFixtureCommand(),
+		Tools:            []string{"echo", "sum", "fail"},
+		Transport:        "stdio-fixture",
+		ExecutionTier:    "regression",
+		ExecutionSummary: "fixture regression lane",
+	})
+}
+
+func builtinSDKExternalMCPServer() mcp.ServerDescriptor {
+	return mcp.NormalizeServerDescriptor(mcp.ServerDescriptor{
+		ID:               "sdk-external-fixture",
+		Source:           "sdk",
+		Enabled:          true,
+		ToolCount:        2,
+		ResourceCount:    0,
+		Status:           "enabled",
+		Command:          mcpSDKServerCommand(),
+		Tools:            []string{"echo", "sum"},
+		Transport:        "stdio-sdk",
+		ExecutionTier:    "canonical-verified",
+		ExecutionSummary: "official SDK external lane",
+	})
+}
+
+func builtinThirdPartyTimeMCPServer() mcp.ServerDescriptor {
+	return mcp.NormalizeServerDescriptor(mcp.ServerDescriptor{
+		ID:               "third-party-time",
+		Source:           "third-party",
+		Enabled:          true,
+		ToolCount:        1,
+		ResourceCount:    0,
+		Status:           "enabled",
+		Command:          mcpThirdPartyTimeCommand(),
+		Tools:            []string{"get_current_time"},
+		Transport:        "stdio-third-party",
+		ExecutionTier:    "canonical-verified",
+		ExecutionSummary: "third-party time lane",
 	})
 }
 
@@ -262,6 +302,7 @@ func discoverSkills(root string, group skill.Group) []skill.Descriptor {
 		source := groupSource(group)
 		localizationChecked := skillLocalizationChecked(root, id)
 		isolationStatus := skillIsolationStatus(group, source)
+		capabilityAudit := skill.VerifyCapability(root, id)
 		items = append(items, skill.Descriptor{
 			ID:                  id,
 			Group:               group,
@@ -271,6 +312,8 @@ func discoverSkills(root string, group skill.Group) []skill.Descriptor {
 			VerificationStatus:  "implemented",
 			LocalizationChecked: localizationChecked,
 			IsolationStatus:     isolationStatus,
+			CapabilityVerified:  capabilityAudit.Verified,
+			CapabilitySummary:   capabilityAudit.Summary,
 		})
 	}
 	return items
@@ -469,6 +512,16 @@ func mcpFixtureCommand() []string {
 	return []string{"python3", scriptPath}
 }
 
+func mcpSDKServerCommand() []string {
+	scriptPath := filepath.Join(workspaceRoot(), "scripts", "mcp_sdk_server.js")
+	return []string{"node", scriptPath}
+}
+
+func mcpThirdPartyTimeCommand() []string {
+	scriptPath := filepath.Join(workspaceRoot(), "scripts", "mcp_third_party_time_server.js")
+	return []string{"node", scriptPath}
+}
+
 func newServiceFromDiscoveryWithStore(discovered discoverySet, explicitStore *state.Store, providers *provider.Registry) *Service {
 	return newServiceFromDiscovery(discovered, explicitStore, providers, true)
 }
@@ -551,6 +604,9 @@ func SummarizeSkillGovernance(items []runtimecontract.Skill) []SkillGovernanceSu
 		}
 		if !item.LocalizationChecked {
 			summary.LocalizationPending++
+		}
+		if group != "common" && !item.CapabilityVerified {
+			summary.CapabilityPending++
 		}
 	}
 

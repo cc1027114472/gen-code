@@ -61,6 +61,8 @@ func TestDiscoverSkills(t *testing.T) {
 	require.Equal(t, "implemented", items[0].VerificationStatus)
 	require.Equal(t, "isolated", items[0].IsolationStatus)
 	require.False(t, items[0].LocalizationChecked)
+	require.False(t, items[0].CapabilityVerified)
+	require.Equal(t, "missing primary skill document", items[0].CapabilitySummary)
 	require.Equal(t, "gamma-skill", items[2].ID)
 }
 
@@ -83,6 +85,8 @@ description: copied skill metadata can stay machine-readable
 	require.Len(t, items, 1)
 	require.True(t, items[0].LocalizationChecked)
 	require.Equal(t, "isolated", items[0].IsolationStatus)
+	require.True(t, items[0].CapabilityVerified)
+	require.Equal(t, "capability verified", items[0].CapabilitySummary)
 }
 
 func TestDiscoverSkillsRejectsPartialChineseAsLocalized(t *testing.T) {
@@ -102,6 +106,8 @@ This workflow is still explained in English.
 	require.Len(t, items, 1)
 	require.False(t, items[0].LocalizationChecked)
 	require.Equal(t, "isolated", items[0].IsolationStatus)
+	require.True(t, items[0].CapabilityVerified)
+	require.Equal(t, "capability verified", items[0].CapabilitySummary)
 }
 
 func TestDiscoverSkillsIgnoresStructuralTagsAndQuadrupleCodeFences(t *testing.T) {
@@ -127,6 +133,8 @@ func TestDiscoverSkillsIgnoresStructuralTagsAndQuadrupleCodeFences(t *testing.T)
 	require.Len(t, items, 1)
 	require.True(t, items[0].LocalizationChecked)
 	require.Equal(t, "isolated", items[0].IsolationStatus)
+	require.True(t, items[0].CapabilityVerified)
+	require.Equal(t, "capability verified", items[0].CapabilitySummary)
 }
 
 func TestDiscoverTools(t *testing.T) {
@@ -237,6 +245,8 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		VerificationStatus:  "implemented",
 		LocalizationChecked: true,
 		IsolationStatus:     "shared-common",
+		CapabilityVerified:  false,
+		CapabilitySummary:   "capability baseline not tracked for built-in shared common skill",
 	})
 	require.Contains(t, discovered.skills, skill.Descriptor{
 		ID:                  "code-review",
@@ -247,6 +257,8 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		VerificationStatus:  "implemented",
 		LocalizationChecked: false,
 		IsolationStatus:     "isolated",
+		CapabilityVerified:  false,
+		CapabilitySummary:   "missing primary skill document",
 	})
 	require.Contains(t, discovered.skills, skill.Descriptor{
 		ID:                  "andrej-karpathy-skills",
@@ -257,6 +269,8 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		VerificationStatus:  "implemented",
 		LocalizationChecked: false,
 		IsolationStatus:     "isolated",
+		CapabilityVerified:  false,
+		CapabilitySummary:   "missing frontmatter",
 	})
 	require.Contains(t, discovered.skills, skill.Descriptor{
 		ID:                  "writing-plans",
@@ -267,6 +281,8 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		VerificationStatus:  "implemented",
 		LocalizationChecked: false,
 		IsolationStatus:     "isolated",
+		CapabilityVerified:  false,
+		CapabilitySummary:   "missing primary skill document",
 	})
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "deploy-helper",
@@ -283,7 +299,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		ID:                 "mcp.tool.invoke",
 		Name:               "MCP Tool Invoke",
 		Description:        "Invoke a runtime-configured MCP tool through the shared task runner",
-		InputSchemaSummary: `{"serverId":"external-fixture","toolName":"echo","arguments":{"message":"hello"}}`,
+		InputSchemaSummary: `{"serverId":"sdk-external-fixture","toolName":"echo","arguments":{"message":"hello"}}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
 		Kind:               "mcp.tool.invoke",
@@ -297,16 +313,46 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		ToolCount:     0,
 		ResourceCount: 0,
 		Status:        "degraded",
+		Transport:     "stdio-fixture",
 	})
 	require.Contains(t, discovered.mcp, mcp.ServerDescriptor{
 		ID:            "external-fixture",
 		Source:        "fixture",
 		Enabled:       true,
-		ToolCount:     2,
+		ToolCount:     3,
 		ResourceCount: 0,
 		Status:        "enabled",
 		Command:       mcpFixtureCommand(),
 		Tools:         []string{"echo", "fail", "sum"},
+		Transport:     "stdio-fixture",
+		ExecutionTier: "regression",
+		ExecutionSummary: "fixture regression lane",
+	})
+	require.Contains(t, discovered.mcp, mcp.ServerDescriptor{
+		ID:               "sdk-external-fixture",
+		Source:           "sdk",
+		Enabled:          true,
+		ToolCount:        2,
+		ResourceCount:    0,
+		Status:           "enabled",
+		Command:          mcpSDKServerCommand(),
+		Tools:            []string{"echo", "sum"},
+		Transport:        "stdio-sdk",
+		ExecutionTier:    "canonical-verified",
+		ExecutionSummary: "official SDK external lane",
+	})
+	require.Contains(t, discovered.mcp, mcp.ServerDescriptor{
+		ID:               "third-party-time",
+		Source:           "third-party",
+		Enabled:          true,
+		ToolCount:        1,
+		ResourceCount:    0,
+		Status:           "enabled",
+		Command:          mcpThirdPartyTimeCommand(),
+		Tools:            []string{"get_current_time"},
+		Transport:        "stdio-third-party",
+		ExecutionTier:    "canonical-verified",
+		ExecutionSummary: "third-party time lane",
 	})
 }
 
@@ -326,6 +372,8 @@ func TestProjectLocalGovernedSkillCatalogIsFullyLocalized(t *testing.T) {
 			require.Truef(t, ok, "expected discovered skill %s", key)
 			require.Truef(t, item.LocalizationChecked, "expected project-local copied skill %s to pass localization audit", key)
 			require.Equalf(t, group, item.Source, "expected source to remain stable for %s", key)
+			require.Truef(t, item.CapabilityVerified, "expected project-local copied skill %s to pass capability audit", key)
+			require.Equalf(t, "capability verified", item.CapabilitySummary, "expected project-local copied skill %s to report stable capability summary", key)
 		}
 	}
 }
@@ -352,13 +400,13 @@ func TestNewSkillResolverPreservesGroupingSemantics(t *testing.T) {
 
 func TestSummarizeSkillGovernanceUsesStableGroupBaseline(t *testing.T) {
 	summaries := SummarizeSkillGovernance([]runtimecontract.Skill{
-		{ID: "common.browser", Group: "common", Source: "common", VerificationStatus: "implemented", LocalizationChecked: false},
-		{ID: "codex.review", Group: "codex", Source: "codex", VerificationStatus: "verified", LocalizationChecked: true},
-		{ID: "cc.swarm", Group: "cc", Source: "cc", VerificationStatus: "implemented", LocalizationChecked: false},
+		{ID: "common.browser", Group: "common", Source: "common", VerificationStatus: "implemented", LocalizationChecked: false, CapabilityVerified: false},
+		{ID: "codex.review", Group: "codex", Source: "codex", VerificationStatus: "verified", LocalizationChecked: true, CapabilityVerified: true},
+		{ID: "cc.swarm", Group: "cc", Source: "cc", VerificationStatus: "implemented", LocalizationChecked: false, CapabilityVerified: false},
 	})
 
 	require.Len(t, summaries, 3)
-	require.Equal(t, SkillGovernanceSummary{Group: "common", ImplementedCount: 1, VerifiedCount: 0, LocalizationPending: 1}, summaries[0])
-	require.Equal(t, SkillGovernanceSummary{Group: "codex", ImplementedCount: 1, VerifiedCount: 1, LocalizationPending: 0}, summaries[1])
-	require.Equal(t, SkillGovernanceSummary{Group: "cc", ImplementedCount: 1, VerifiedCount: 0, LocalizationPending: 1}, summaries[2])
+	require.Equal(t, SkillGovernanceSummary{Group: "common", ImplementedCount: 1, VerifiedCount: 0, LocalizationPending: 1, CapabilityPending: 0}, summaries[0])
+	require.Equal(t, SkillGovernanceSummary{Group: "codex", ImplementedCount: 1, VerifiedCount: 1, LocalizationPending: 0, CapabilityPending: 0}, summaries[1])
+	require.Equal(t, SkillGovernanceSummary{Group: "cc", ImplementedCount: 1, VerifiedCount: 0, LocalizationPending: 1, CapabilityPending: 1}, summaries[2])
 }

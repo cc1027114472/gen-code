@@ -111,6 +111,9 @@ func TestDesktopFallbackThreadTaskFlow(t *testing.T) {
 	if afterAdvance.Skills[0].IsolationStatus == "" {
 		t.Fatal("expected fallback skills to include isolation status")
 	}
+	if afterAdvance.Skills[0].CapabilitySummary == "" {
+		t.Fatal("expected fallback skills to include capability summary")
+	}
 	if len(afterAdvance.SkillGovernance) == 0 {
 		t.Fatal("expected fallback skill governance summary")
 	}
@@ -198,6 +201,7 @@ func TestDesktopFallbackSkillGovernanceLocalizationPendingMatchesInventory(t *te
 	}
 
 	pendingByGroup := map[string]int{}
+	capabilityPendingByGroup := map[string]int{}
 	for _, item := range status.Skills {
 		if !item.LocalizationChecked {
 			group := strings.TrimSpace(item.Group)
@@ -206,10 +210,22 @@ func TestDesktopFallbackSkillGovernanceLocalizationPendingMatchesInventory(t *te
 			}
 			pendingByGroup[group]++
 		}
+		if !item.CapabilityVerified {
+			group := strings.TrimSpace(item.Group)
+			if group == "" {
+				group = "common"
+			}
+			if group != "common" {
+				capabilityPendingByGroup[group]++
+			}
+		}
 	}
 	for _, summary := range status.SkillGovernance {
 		if got, want := summary.LocalizationPending, pendingByGroup[summary.Group]; got != want {
 			t.Fatalf("group %q localization-pending = %d, want %d", summary.Group, got, want)
+		}
+		if got, want := summary.CapabilityPending, capabilityPendingByGroup[summary.Group]; got != want {
+			t.Fatalf("group %q capability-pending = %d, want %d", summary.Group, got, want)
 		}
 	}
 	if got := pendingByGroup["common"]; got != 0 {
@@ -253,6 +269,12 @@ func TestLocalSkillCatalogUsesProjectLocalCopiedSkills(t *testing.T) {
 		if !item.LocalizationChecked {
 			t.Fatalf("expected project-local copied skill %q to be localized", key)
 		}
+	}
+	if !found["codex:code-review"].CapabilityVerified || found["codex:code-review"].CapabilitySummary == "" {
+		t.Fatal("expected project-local copied codex skill to expose capability verification")
+	}
+	if !found["cc:writing-skills"].CapabilityVerified || found["cc:writing-skills"].CapabilitySummary == "" {
+		t.Fatal("expected project-local copied cc skill to expose capability verification")
 	}
 }
 

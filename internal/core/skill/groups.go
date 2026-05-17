@@ -24,6 +24,8 @@ type Descriptor struct {
 	VerificationStatus  string `json:"verificationStatus"`
 	LocalizationChecked bool   `json:"localizationChecked"`
 	IsolationStatus     string `json:"isolationStatus"`
+	CapabilityVerified  bool   `json:"capabilityVerified"`
+	CapabilitySummary   string `json:"capabilitySummary"`
 }
 
 // ParseGroup resolves a textual group identifier. Empty values default to Common.

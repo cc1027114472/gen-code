@@ -58,9 +58,9 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 		projectRoot,
 		registry,
 		skill.NewManager([]skill.Descriptor{
-			{ID: "common.browser", Group: skill.Common, Name: "Browser", Description: "Reusable browser skill"},
-			{ID: "codex.review", Group: skill.Codex, Name: "Review", Description: "Codex review skill"},
-			{ID: "cc.swarm", Group: skill.CC, Name: "Swarm", Description: "CC swarm skill"},
+			{ID: "common.browser", Group: skill.Common, Name: "Browser", Description: "Reusable browser skill", CapabilitySummary: "builtin common skill", CapabilityVerified: false},
+			{ID: "codex.review", Group: skill.Codex, Name: "Review", Description: "Codex review skill", CapabilitySummary: "capability verified", CapabilityVerified: true},
+			{ID: "cc.swarm", Group: skill.CC, Name: "Swarm", Description: "CC swarm skill", CapabilitySummary: "capability verified", CapabilityVerified: true},
 		}),
 		mcpManager,
 		provider.NewRegistry(""),
@@ -134,6 +134,9 @@ func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	require.False(t, skills[0].LocalizationChecked)
 	require.False(t, skills[1].LocalizationChecked)
 	require.ElementsMatch(t, []string{"shared-common", "isolated"}, []string{skills[0].IsolationStatus, skills[1].IsolationStatus})
+	require.ElementsMatch(t, []bool{false, true}, []bool{skills[0].CapabilityVerified, skills[1].CapabilityVerified})
+	require.Contains(t, []string{skills[0].CapabilitySummary, skills[1].CapabilitySummary}, "builtin common skill")
+	require.Contains(t, []string{skills[0].CapabilitySummary, skills[1].CapabilitySummary}, "capability verified")
 
 	tools, err := service.Tools(context.Background())
 	require.NoError(t, err)
@@ -323,6 +326,56 @@ func TestServiceRunsMCPInvokeTask(t *testing.T) {
 	require.Equal(t, "mcp.tool.invoke", toolCalls[0].ToolID)
 	require.Equal(t, "running", toolCalls[0].Status)
 	require.Equal(t, "completed", toolCalls[1].Status)
+}
+
+func TestServiceRunsSDKMCPInvokeTask(t *testing.T) {
+	projectRoot := t.TempDir()
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	sessions, err := session.NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+
+	service := NewService(
+		"0.1.0",
+		skill.Codex,
+		policy.DefaultMode(),
+		projectRoot,
+		tool.NewRegistry(),
+		skill.NewManager(nil),
+		mcp.NewManager([]mcp.ServerDescriptor{{
+			ID:            "sdk-external-fixture",
+			Source:        "sdk",
+			Enabled:       true,
+			ToolCount:     2,
+			ResourceCount: 0,
+			Status:        "enabled",
+			Command:       mcpSDKServerCommand(),
+			Tools:         []string{"echo", "sum"},
+			Transport:     "stdio-sdk",
+		}}),
+		provider.NewRegistry(""),
+		sessions,
+	)
+
+	thread, err := service.CreateThread(context.Background(), runtimecontract.CreateThreadRequest{
+		Name:           "MCP SDK Thread",
+		PermissionMode: string(policy.ReadOnly),
+	})
+	require.NoError(t, err)
+
+	task, err := service.CreateTask(context.Background(), thread.ID, runtimecontract.CreateTaskRequest{
+		Title: "Invoke sdk echo",
+		Kind:  runner.KindMCPToolInvoke,
+		Input: `{"serverId":"sdk-external-fixture","toolName":"echo","arguments":{"message":"hello-sdk"}}`,
+	})
+	require.NoError(t, err)
+
+	result, err := service.RunTask(context.Background(), thread.ID, task.ID, runtimecontract.RunTaskRequest{})
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, "mcp tool sdk-external-fixture/echo executed", result.ResultSummary)
 }
 
 func TestServiceCreateTaskNormalizesPlainModelInput(t *testing.T) {

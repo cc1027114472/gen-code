@@ -639,6 +639,8 @@ func (s *Service) Skills(_ context.Context) ([]runtimecontract.Skill, error) {
 			VerificationStatus:  fallbackText(item.VerificationStatus, "implemented"),
 			LocalizationChecked: item.LocalizationChecked,
 			IsolationStatus:     fallbackText(item.IsolationStatus, defaultSkillIsolationStatus(item.Group)),
+			CapabilityVerified:  item.CapabilityVerified,
+			CapabilitySummary:   strings.TrimSpace(item.CapabilitySummary),
 		})
 	}
 	return result, nil
