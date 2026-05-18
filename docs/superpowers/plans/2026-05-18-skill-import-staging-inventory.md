@@ -145,18 +145,18 @@ Blocking checks before promotion:
 
 ### Needs-Trim: CC
 
-- `ui-ux-pro-max`
+- none
 
 Why:
 
-- this import is a valid CC-sourced staging item, but it still points at project-external placeholders instead of a self-contained project-local copied package
-- `ui-ux-pro-max` currently points at project-external `src/ui-ux-pro-max` placeholders rather than a self-contained project-local copied package
+- all remaining promotable CC skills have either already been promoted or deliberately remain deferred as non-standard bundles
 
 ### Trimmed And Promoted: CC
 
 - `agent-browser`
 - `canvas-design`
 - `planning-with-files`
+- `ui-ux-pro-max`
 - `use-my-browser`
 
 Why:
@@ -164,6 +164,7 @@ Why:
 - each package was reduced to the smallest machine-usable project-local copy kept in `imports/cc`
 - retained user-visible markdown, templates, and script-facing guidance were completed with 1:1 Chinese localization
 - each promoted copy passed mojibake review, localization audit, and static capability verification before entering `catalog/cc`
+- `ui-ux-pro-max` was first rebuilt from a placeholder shell into a self-contained project-local package with `scripts/search.py` plus the minimal retained data files needed for `--design-system`, `--domain`, and `--stack` flows
 
 Promote target:
 

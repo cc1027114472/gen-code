@@ -1,0 +1,313 @@
+{
+  "product": [
+    {
+      "name": "内容优先娱乐产品",
+      "summary": "适合强调沉浸感、推荐流和浏览效率的内容型产品，例如短视频、音乐、资讯和社区内容页面。",
+      "recommended_for": ["entertainment", "social", "content", "media"],
+      "tags": ["entertainment", "social", "content", "immersive", "feed"],
+      "details": [
+        "首页优先突出主内容与推荐流，减少首屏认知摩擦。",
+        "导航层级清晰，避免用营销装饰淹没有价值的信息。",
+        "视觉节奏可偏活跃，但交互反馈必须稳定。 "
+      ],
+      "anti_patterns": ["首屏信息过载", "主要内容被装饰背景抢戏"]
+    },
+    {
+      "name": "效率型工具产品",
+      "summary": "适合搜索、编辑、管理、分析等强调效率、清晰度与任务完成路径的工具型产品。",
+      "recommended_for": ["tool", "productivity", "dashboard", "saas"],
+      "tags": ["tool", "productivity", "dashboard", "saas", "clarity"],
+      "details": [
+        "优先确保信息层级、状态反馈和列表性能。",
+        "更适合克制风格与高可读排版，而不是过度装饰。",
+        "复杂操作应通过渐进式披露降低理解成本。 "
+      ],
+      "anti_patterns": ["功能密度高却没有分组", "操作状态缺失"]
+    },
+    {
+      "name": "服务转化型产品",
+      "summary": "适合美容、医疗、教育、咨询、预约等需要兼顾信任感、品牌调性与转化路径的产品。",
+      "recommended_for": ["beauty", "service", "healthcare", "booking"],
+      "tags": ["service", "beauty", "trust", "booking", "conversion"],
+      "details": [
+        "英雄区、信任信号、优势说明与 CTA 顺序要稳定。",
+        "配色与字体要先建立可信度，再追求风格化。",
+        "表单和预约流程必须简洁，避免填写负担。 "
+      ],
+      "anti_patterns": ["CTA 埋得太深", "品牌气质与转化路径割裂"]
+    }
+  ],
+  "style": [
+    {
+      "name": "极简功能主义",
+      "summary": "用克制的结构、清晰留白和低噪音视觉保证信息与操作优先。",
+      "recommended_for": ["tool", "productivity", "saas"],
+      "tags": ["minimal", "modern", "content-first", "clarity"],
+      "effects": ["轻量阴影", "低饱和背景层", "结构性分割"],
+      "details": [
+        "适合工具型和效率型产品。",
+        "强调内容、功能和状态反馈，不鼓励堆装饰。",
+        "正文、列表和表单可读性优先。 "
+      ],
+      "anti_patterns": ["过多渐变", "装饰抢过内容"]
+    },
+    {
+      "name": "沉浸式深色界面",
+      "summary": "以深色背景、发光重点和强对比内容面板营造沉浸感，适合内容或科技感产品。",
+      "recommended_for": ["entertainment", "creator", "tech"],
+      "tags": ["dark", "immersive", "vibrant", "futuristic"],
+      "effects": ["局部发光", "深色层级对比", "高聚焦卡片"],
+      "details": [
+        "适合娱乐、AI、媒体和科技导向产品。",
+        "必须单独验证暗色对比度，不能直接反相浅色主题。",
+        "高亮色只用于重点操作或关键数据。 "
+      ],
+      "anti_patterns": ["大面积高饱和荧光色", "暗色模式文字对比不足"]
+    },
+    {
+      "name": "柔和品牌服务风格",
+      "summary": "以温和配色、可信字体与有呼吸感的节奏建立服务感与专业感。",
+      "recommended_for": ["beauty", "service", "wellness", "healthcare"],
+      "tags": ["elegant", "soft", "trust", "service"],
+      "effects": ["柔和渐变", "低对比分层", "精致分隔线"],
+      "details": [
+        "适合预约、服务、品牌介绍和转化页面。",
+        "更强调信任与舒适感，而不是速度感。",
+        "CTA 应突出但不应破坏整体气质。 "
+      ],
+      "anti_patterns": ["过度梦幻导致可读性下降", "CTA 与正文对比不足"]
+    }
+  ],
+  "typography": [
+    {
+      "name": "理性无衬线 + 中性正文",
+      "summary": "标题与正文都以现代无衬线为主，适合效率型产品和现代工具。",
+      "pairing": "Space Grotesk + Inter",
+      "tags": ["modern", "tool", "dashboard", "minimal"],
+      "details": [
+        "标题负责方向感，正文保持中性与长文可读性。",
+        "适合数据面板、工具页面和 SaaS。 "
+      ],
+      "anti_patterns": ["标题过度装饰化", "正文太轻导致对比不足"]
+    },
+    {
+      "name": "几何标题 + 易读正文",
+      "summary": "标题可带一点品牌性格，正文保持克制，适合内容与科技混合型产品。",
+      "pairing": "Sora + Inter",
+      "tags": ["tech", "content", "modern", "brand"],
+      "details": [
+        "适合 AI、内容平台、科技服务产品。",
+        "在品牌表达和实用阅读之间平衡得较好。 "
+      ],
+      "anti_patterns": ["正文也使用过于有性格的展示字体"]
+    },
+    {
+      "name": "优雅标题 + 温和正文",
+      "summary": "用更细腻的标题和稳定正文建立服务感、信任感与品牌精致度。",
+      "pairing": "Cormorant Garamond + Source Sans 3",
+      "tags": ["service", "beauty", "elegant", "luxury"],
+      "details": [
+        "适合美容、康养、品牌服务和高端展示页面。",
+        "要注意标题使用节制，避免页面变成海报。 "
+      ],
+      "anti_patterns": ["大面积衬线正文", "标题字重与版面不协调"]
+    }
+  ],
+  "color": [
+    {
+      "name": "高可读科技蓝灰",
+      "summary": "适合工具型与数据型产品，强调稳定、可信和高可读性。",
+      "palette": "主色 #2563EB / 强调 #38BDF8 / 中性色 Slate 系列",
+      "tags": ["tool", "saas", "fintech", "dashboard", "blue"],
+      "details": [
+        "适合信息密度较高的界面。",
+        "中性色负责结构层级，蓝色负责行为与状态。 "
+      ],
+      "anti_patterns": ["所有层都用高饱和蓝", "禁用态仍过亮"]
+    },
+    {
+      "name": "深色霓虹对比",
+      "summary": "适合内容型或 AI 产品的暗黑界面，用深底+局部亮色制造聚焦。",
+      "palette": "背景 #09090B / 重点 #A855F7 / 高亮 #22D3EE",
+      "tags": ["dark", "ai", "content", "immersive", "vibrant"],
+      "details": [
+        "适合深色模式原生产品。",
+        "亮色只应用在关键节点，避免泛滥。 "
+      ],
+      "anti_patterns": ["每个模块都发光", "正文灰度太低"]
+    },
+    {
+      "name": "温和服务色盘",
+      "summary": "适合服务型与品牌转化型产品，强调信任、亲和与精致。",
+      "palette": "主色 #D97757 / 辅色 #F3E7E2 / 文字 #3F2F2A",
+      "tags": ["service", "beauty", "wellness", "warm"],
+      "details": [
+        "适合预约、咨询、品牌展示页面。",
+        "需要确保浅色背景上的正文对比度。 "
+      ],
+      "anti_patterns": ["全页低对比浅粉", "CTA 缺少足够跳出感"]
+    }
+  ],
+  "landing": [
+    {
+      "name": "Hero + 证明链 + CTA",
+      "summary": "经典高转化落地页结构：主价值、证据、能力亮点、行动号召。",
+      "structure": "Hero / Social Proof / Core Benefits / Feature Blocks / CTA",
+      "tags": ["landing", "conversion", "service", "saas"],
+      "details": [
+        "适合需要快速解释价值并推动行动的页面。",
+        "首屏 CTA 要明确，社会证明不要埋太深。 "
+      ]
+    },
+    {
+      "name": "内容优先浏览结构",
+      "summary": "适合让用户快速进入内容流、搜索结果或推荐列表。",
+      "structure": "Primary Content / Quick Filters / Secondary Context / Persistent Navigation",
+      "tags": ["content", "search", "feed", "tool"],
+      "details": [
+        "适合搜索、内容推荐和流式产品。",
+        "减少首屏营销装饰，优先可浏览内容。 "
+      ]
+    },
+    {
+      "name": "服务说明 + 信任建立结构",
+      "summary": "适合展示服务内容、资质与预约路径的转化页。",
+      "structure": "Hero / Service Summary / Trust Signals / Process / Booking CTA",
+      "tags": ["service", "booking", "trust", "wellness"],
+      "details": [
+        "适合医疗、美容、咨询、教育类服务产品。",
+        "流程说明与信任证明的顺序要服务于转化。 "
+      ]
+    }
+  ],
+  "chart": [
+    {
+      "name": "趋势折线图",
+      "summary": "适合展示时间维度变化，例如 DAU、转化率、收入趋势。",
+      "tags": ["trend", "analytics", "time-series"],
+      "details": ["优先搭配清晰 tooltip、单位和基准线。", "避免过多系列同时竞争视觉焦点。"]
+    },
+    {
+      "name": "对比柱状图",
+      "summary": "适合展示不同类别之间的量化对比，例如渠道表现或方案差异。",
+      "tags": ["comparison", "category", "dashboard"],
+      "details": ["标签和排序很关键。", "类别太多时要分组或分页。"]
+    },
+    {
+      "name": "漏斗图",
+      "summary": "适合转化链路、报名流程或 onboarding 完成率分析。",
+      "tags": ["funnel", "conversion", "flow"],
+      "details": ["必须标出每一层的转化率和掉失点。", "不要用过度装饰削弱信息判断。"]
+    }
+  ],
+  "ux": [
+    {
+      "name": "动画与反馈复核",
+      "summary": "适合检查过渡时长、层级反馈、加载态和微交互是否自然。",
+      "recommended_for": ["animation", "loading", "feedback"],
+      "tags": ["animation", "accessibility", "loading", "motion"],
+      "details": [
+        "优先确认 loading、press、success、error 是否都有反馈。",
+        "动画应解释状态变化，而不是炫技。 "
+      ],
+      "anti_patterns": ["零反馈提交", "动画过长", "reduced-motion 未处理"]
+    },
+    {
+      "name": "可访问性与输入体验复核",
+      "summary": "适合检查表单、标签、错误提示和键盘/无障碍支持。",
+      "recommended_for": ["form", "accessibility", "validation"],
+      "tags": ["accessibility", "form", "validation", "contrast"],
+      "details": [
+        "检查 label、hint、error、focus 管理、颜色对比。",
+        "确认信息不是只靠颜色表达。 "
+      ],
+      "anti_patterns": ["placeholder 代替 label", "错误离字段太远"]
+    },
+    {
+      "name": "层级与导航复核",
+      "summary": "适合检查导航层级、返回行为、z-index 和页面转场是否稳定。",
+      "recommended_for": ["navigation", "hierarchy", "z-index"],
+      "tags": ["navigation", "hierarchy", "z-index", "state"],
+      "details": [
+        "确认浮层层级不会遮挡错误内容。",
+        "确保返回能恢复之前的状态。 "
+      ],
+      "anti_patterns": ["z-index 混乱", "返回后状态丢失"]
+    }
+  ],
+  "google-fonts": [
+    {
+      "name": "Inter",
+      "summary": "现代中性无衬线，适合正文、工具产品和大多数界面。",
+      "tags": ["sans", "popular", "variable", "modern"],
+      "details": ["正文可读性强。", "适合做大多数 UI 的安全底座。"]
+    },
+    {
+      "name": "Space Grotesk",
+      "summary": "带一点科技感和几何感的标题字体，适合现代工具与科技产品。",
+      "tags": ["sans", "display", "tech", "modern"],
+      "details": ["更适合标题与重点标签。", "不要大面积拿来做正文。"]
+    },
+    {
+      "name": "Cormorant Garamond",
+      "summary": "适合优雅、高端、品牌感较强的标题场景。",
+      "tags": ["serif", "elegant", "luxury"],
+      "details": ["适合服务品牌和展示型页面。", "使用时要控制篇幅与字号层级。"]
+    }
+  ],
+  "react": [
+    {
+      "name": "列表与渲染性能",
+      "summary": "适合长列表、筛选页和高频刷新页面的性能复核。",
+      "tags": ["rerender", "list", "memo", "performance"],
+      "details": [
+        "优先减少不必要 rerender。",
+        "对长列表使用虚拟化或窗口化策略。 ",
+        "谨慎使用昂贵阴影和布局测量。 "
+      ]
+    },
+    {
+      "name": "交互状态组织",
+      "summary": "适合表单、弹层、按钮和多状态组件的本地状态设计。",
+      "tags": ["state", "interaction", "form", "modal"],
+      "details": [
+        "保持状态边界清楚。",
+        "把 loading、error、empty 等显式建模。 "
+      ]
+    }
+  ],
+  "web": [
+    {
+      "name": "移动端可访问性交付基线",
+      "summary": "适合检查 safe area、触控尺寸、无障碍标签和字号放大行为。",
+      "tags": ["accessibilitylabel", "touch", "safe-area", "dynamic-type"],
+      "details": [
+        "所有关键操作要达到最小触控尺寸。",
+        "大字号和 reduced-motion 必须验证。 "
+      ]
+    },
+    {
+      "name": "交互层级与可见性",
+      "summary": "适合检查模态框、抽屉、toast、snackbar 与 fixed bar 的层级关系。",
+      "tags": ["overlay", "z-index", "visibility", "scrim"],
+      "details": [
+        "确保错误与反馈不会被遮挡。",
+        "Scrim 强度应保证前景可读。 "
+      ]
+    }
+  ],
+  "prompt": [
+    {
+      "name": "极简风格 prompt 词汇",
+      "summary": "适合为 AI 视觉草图、风格探索或文案提示词补风格关键词。",
+      "tags": ["minimalism", "clean", "modern", "white-space"],
+      "details": ["高留白", "清晰层级", "克制配色", "结构感强"]
+    },
+    {
+      "name": "暗色科技风 prompt 词汇",
+      "summary": "适合 AI / 科技 / 数据产品的视觉探索关键词。",
+      "tags": ["dark", "futuristic", "glow", "tech"],
+      "details": ["深色背景", "局部发光", "高对比卡片", "精确排版"]
+    }
+  ]
+}

@@ -67,6 +67,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"systematic-debugging",
 		"tailwindcss",
 		"test-driven-development",
+		"ui-ux-pro-max",
 		"using-git-worktrees",
 		"use-my-browser",
 		"using-superpowers",

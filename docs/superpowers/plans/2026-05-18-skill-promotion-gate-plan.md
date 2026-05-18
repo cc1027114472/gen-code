@@ -145,6 +145,7 @@ Current first needs-trim CC batch promoted after trim + localization:
 - `agent-browser`
 - `canvas-design`
 - `planning-with-files`
+- `ui-ux-pro-max`
 - `use-my-browser`
 
 Current ready-localization CC promotion result:
@@ -155,7 +156,7 @@ Current ready-localization CC promotion result:
 
 #### Needs-Trim: CC
 
-- `ui-ux-pro-max`
+- none
 
 #### Defer: CC
 

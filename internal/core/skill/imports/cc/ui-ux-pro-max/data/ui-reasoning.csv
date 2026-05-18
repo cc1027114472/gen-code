@@ -1,0 +1,5 @@
+match_terms,preferred_product,preferred_style,preferred_color,preferred_typography,rationale,anti_patterns
+tool productivity dashboard saas,效率型工具产品,极简功能主义,高可读科技蓝灰,理性无衬线 + 中性正文,工具和效率型产品应优先保证结构清晰、排版稳定与状态反馈明确,炫技式装饰|信息分组缺失
+ai tech search modern dark,效率型工具产品,沉浸式深色界面,深色霓虹对比,几何标题 + 易读正文,AI 与科技产品通常适合深色高对比界面，但必须保持高可读性与克制高亮,全局发光|正文对比不足
+beauty service wellness booking,服务转化型产品,柔和品牌服务风格,温和服务色盘,优雅标题 + 温和正文,服务型产品应先建立信任感与舒适感，再强化预约或转化路径,低对比正文|CTA 不够突出
+content social media entertainment,内容优先娱乐产品,沉浸式深色界面,深色霓虹对比,几何标题 + 易读正文,内容型产品优先让用户进入主内容流，同时保留沉浸氛围和浏览节奏,营销装饰压过内容|导航过载

@@ -1,0 +1,32 @@
+{
+  "react-native": [
+    {
+      "name": "列表性能与虚拟化",
+      "summary": "优先关注 FlatList / SectionList 的窗口化、item key 稳定性与滚动性能。",
+      "tags": ["list", "performance", "virtualize", "scroll"],
+      "details": [
+        "对长列表优先使用虚拟化，而不是 ScrollView 堆叠。",
+        "稳定 key，避免 renderItem 频繁重建。",
+        "把 expensive 视觉效果留给少量重点模块。"
+      ]
+    },
+    {
+      "name": "导航与返回一致性",
+      "summary": "优先保证底部导航、堆栈导航和 modal/sheet 的层级与返回行为清楚。",
+      "tags": ["navigation", "back", "state", "modal"],
+      "details": [
+        "返回操作应恢复筛选、滚动和输入状态。",
+        "不要让手势返回与自定义侧滑冲突。"
+      ]
+    },
+    {
+      "name": "可访问性与安全区",
+      "summary": "确保 safe areas、触控面积、Dynamic Type 与屏幕阅读器标签都可用。",
+      "tags": ["safe-area", "accessibility", "dynamic-type", "touch"],
+      "details": [
+        "底部 CTA、Tab Bar、Header 都要验证安全区。",
+        "检查 accessibilityLabel、hint 和逻辑阅读顺序。"
+      ]
+    }
+  ]
+}
