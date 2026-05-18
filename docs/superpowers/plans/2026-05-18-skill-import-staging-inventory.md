@@ -236,9 +236,22 @@ Stable blocker labels for future `gstack` split work:
 - `localization pending`
 - `capability structure pending`
 
+#### `browse` blocked truth
+
+- `browse` was evaluated as the final remaining runtime-heavy `gstack` split candidate and is now explicitly blocked, not merely “next up”
+- the staged package can build `browse.exe` and `find-browse.exe`, but the compiled retained set does not collapse into a safe minimal copied package:
+  - `find-browse` still resolves external install locations instead of treating the copied package itself as the primary truth
+  - the CLI / daemon flow still carries suite-coupled runtime semantics such as `sidebar-agent` and adjacent source-tree expectations
+  - the compiled binaries balloon to runtime-heavy artifacts that are materially larger than the staged source slice and do not satisfy the intended minimal governed baseline
+- current blocker labels for `browse` are:
+  - `missing standalone project-local truth`
+  - `bundled runtime/tooling dependency`
+  - `oversized asset bundle`
+- as a result, `browse` does not enter `internal/core/skill/catalog/cc` in the current phase
+
 Future split entry rule:
 
-- future work should next focus on the remaining heaviest suite runtime surface, `browse`
+- no further single-skill promotion work remains in the current `gstack` lane until `browse` gets a new suite-to-subskill design that can establish a true minimal project-local runtime package
 
 ## Current Boundaries
 

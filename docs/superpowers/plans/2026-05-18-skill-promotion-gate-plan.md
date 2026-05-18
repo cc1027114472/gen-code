@@ -183,6 +183,7 @@ Current meaning:
 - no top-level `gstack` package is eligible for direct promotion in the current phase
 - the lightweight split lane is complete for `careful`, `freeze`, `unfreeze`, and the sibling-aware `guard`
 - the gstack-heavy preamble-retained lane is now complete for `setup-browser-cookies`, `connect-chrome`, `setup-deploy`, `qa`, `review`, `ship`, and `land-and-deploy`
+- `browse` has now been evaluated as the last runtime-heavy candidate and remains blocked because it still fails the minimal copied-package truth test
 
 ### `gstack` Suite Governance Truth
 
@@ -222,6 +223,14 @@ Stable blocker labels for future split candidates:
 - `localization pending`
 - `capability structure pending`
 
+`browse` current blocked conclusion:
+
+- the staged package can generate `browse.exe` and `find-browse.exe`, but the resulting retained package does not meet the current governed baseline
+- `find-browse` still prefers external install locations over package-local copied truth
+- the CLI / daemon path continues to carry suite-coupled runtime semantics such as `sidebar-agent` and adjacent source-tree expectations
+- the compiled binaries are runtime-heavy enough to violate the intended minimal retained-package rule for copied skills
+- therefore `browse` does not enter `catalog/cc`, and the correct current governance state is explicit `blocked`, not pending promotion
+
 Current product behavior lock:
 
 - do not add `catalog/cc/gstack`
@@ -231,9 +240,8 @@ Current product behavior lock:
 
 Next execution entry:
 
-- choose 1 to 3 of the lightest remaining nested `gstack` skill candidates
-- prioritize the remaining heaviest suite runtime surface, `browse`
-- for each candidate, define the minimal retained file set, suite-only exclusions, missing project-local truth, localization risk, and shared-infrastructure dependencies before starting trim or promotion work
+- no further `gstack` single-skill promotion candidate remains open in the current baseline
+- any future work must start with a redesigned runtime-truth strategy for `browse`, or keep the entire remaining suite in long-term defer
 
 ### Evidence behind current classification
 

@@ -357,6 +357,17 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		Executable:         true,
 	})
 	require.Contains(t, discovered.tools, tool.Descriptor{
+		ID:                 "config.check_env",
+		Name:               "Config Check Env",
+		Description:        "Validate a workspace .env file against gen-code runtime parsing rules using tools/check_config.py",
+		InputSchemaSummary: `{"envFile":"optional workspace-relative .env path","exampleFile":"optional workspace-relative .env.example path","strict":false}`,
+		PermissionMode:     policy.ReadOnly,
+		Source:             "runtime",
+		Kind:               "config.check_env",
+		ReadOnly:           true,
+		Executable:         true,
+	})
+	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.state",
 		Name:               "Browser State",
 		Description:        "Inspect the current browser workspace state",
@@ -443,16 +454,16 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		Transport:     "stdio-fixture",
 	})
 	require.Contains(t, discovered.mcp, mcp.ServerDescriptor{
-		ID:            "external-fixture",
-		Source:        "fixture",
-		Enabled:       true,
-		ToolCount:     3,
-		ResourceCount: 0,
-		Status:        "enabled",
-		Command:       mcpFixtureCommand(),
-		Tools:         []string{"echo", "fail", "sum"},
-		Transport:     "stdio-fixture",
-		ExecutionTier: "regression",
+		ID:               "external-fixture",
+		Source:           "fixture",
+		Enabled:          true,
+		ToolCount:        3,
+		ResourceCount:    0,
+		Status:           "enabled",
+		Command:          mcpFixtureCommand(),
+		Tools:            []string{"echo", "fail", "sum"},
+		Transport:        "stdio-fixture",
+		ExecutionTier:    "regression",
 		ExecutionSummary: "fixture regression lane",
 	})
 	require.Contains(t, discovered.mcp, mcp.ServerDescriptor{
@@ -533,6 +544,25 @@ func TestHeavyGstackCopiedSkillDocumentsExistInImportsAndCatalog(t *testing.T) {
 			require.NoErrorf(t, err, "expected copied skill document to exist for %s under %s", id, root)
 		}
 	}
+}
+
+func TestBrowseRemainsBlockedAsRuntimeHeavyGstackSurface(t *testing.T) {
+	workspace := workspaceRoot()
+
+	for _, path := range []string{
+		filepath.Join(workspace, "internal", "core", "skill", "imports", "cc", "gstack", "browse", "SKILL.md"),
+		filepath.Join(workspace, "internal", "core", "skill", "imports", "cc", "gstack", "browse", "SKILL.md.tmpl"),
+		filepath.Join(workspace, "internal", "core", "skill", "imports", "cc", "gstack", "browse", "bin", "find-browse"),
+		filepath.Join(workspace, "internal", "core", "skill", "imports", "cc", "gstack", "browse", "dist", "server-node.mjs"),
+		filepath.Join(workspace, "internal", "core", "skill", "imports", "cc", "gstack", "browse", "dist", "bun-polyfill.cjs"),
+	} {
+		_, err := os.Stat(path)
+		require.NoErrorf(t, err, "expected staged browse runtime-heavy evidence to exist: %s", path)
+	}
+
+	_, err := os.Stat(filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "browse", "SKILL.md"))
+	require.Error(t, err, "expected blocked browse skill to stay out of runtime-visible catalog")
+	require.True(t, os.IsNotExist(err), "expected blocked browse catalog path to be absent, got: %v", err)
 }
 
 func TestNewSkillResolverPreservesGroupingSemantics(t *testing.T) {
