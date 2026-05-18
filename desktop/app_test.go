@@ -317,10 +317,12 @@ func TestLocalSkillCatalogUsesProjectLocalCopiedSkills(t *testing.T) {
 		"cc:connect-chrome",
 		"cc:freeze",
 		"cc:guard",
+		"cc:land-and-deploy",
 		"cc:qa",
 		"cc:review",
 		"cc:setup-browser-cookies",
 		"cc:setup-deploy",
+		"cc:ship",
 		"cc:unfreeze",
 		"cc:writing-skills",
 	} {
@@ -338,7 +340,7 @@ func TestLocalSkillCatalogUsesProjectLocalCopiedSkills(t *testing.T) {
 	if !found["cc:writing-skills"].CapabilityVerified || found["cc:writing-skills"].CapabilitySummary == "" {
 		t.Fatal("expected project-local copied cc skill to expose capability verification")
 	}
-	if !found["cc:careful"].CapabilityVerified || found["cc:freeze"].CapabilitySummary == "" || !found["cc:guard"].CapabilityVerified || !found["cc:unfreeze"].CapabilityVerified || !found["cc:setup-browser-cookies"].CapabilityVerified || !found["cc:connect-chrome"].CapabilityVerified || !found["cc:setup-deploy"].CapabilityVerified || !found["cc:qa"].CapabilityVerified || !found["cc:review"].CapabilityVerified {
+	if !found["cc:careful"].CapabilityVerified || found["cc:freeze"].CapabilitySummary == "" || !found["cc:guard"].CapabilityVerified || !found["cc:unfreeze"].CapabilityVerified || !found["cc:setup-browser-cookies"].CapabilityVerified || !found["cc:connect-chrome"].CapabilityVerified || !found["cc:setup-deploy"].CapabilityVerified || !found["cc:qa"].CapabilityVerified || !found["cc:review"].CapabilityVerified || !found["cc:ship"].CapabilityVerified || !found["cc:land-and-deploy"].CapabilityVerified {
 		t.Fatal("expected promoted gstack copied skills to expose stable capability verification")
 	}
 	if _, ok := found["cc:gstack"]; ok {

@@ -147,11 +147,13 @@ Why:
 - `connect-chrome`
 - `freeze`
 - `guard`
+- `land-and-deploy`
 - `planning-with-files`
 - `setup-browser-cookies`
 - `setup-deploy`
 - `qa`
 - `review`
+- `ship`
 - `ui-ux-pro-max`
 - `unfreeze`
 - `use-my-browser`
@@ -166,6 +168,7 @@ Why:
 - `guard` followed as a sibling-aware copied skill that intentionally reuses the already promoted `careful` and `freeze` hook assets instead of duplicating them
 - `setup-browser-cookies`, `connect-chrome`, and `setup-deploy` were promoted as a gstack-heavy preamble-retained lane: the project-local copied truth is the cleaned and localized `SKILL.md`, while external browser, extension, user-state, and deploy-environment references remain documented as part of the workflow
 - `qa` and `review` now extend that same gstack-heavy preamble-retained lane with localized project-local `SKILL.md` copies plus their retained local markdown references and templates
+- `ship` and `land-and-deploy` now complete the release lane in that same gstack-heavy preamble-retained model, keeping only localized project-local `SKILL.md` truth while preserving external PR / CI / deploy / canary workflow semantics
 
 Promote target:
 
@@ -235,7 +238,7 @@ Stable blocker labels for future `gstack` split work:
 
 Future split entry rule:
 
-- future work should next focus on heavier remaining suite surfaces such as `ship`, `land-and-deploy`, or `browse`
+- future work should next focus on the remaining heaviest suite runtime surface, `browse`
 
 ## Current Boundaries
 

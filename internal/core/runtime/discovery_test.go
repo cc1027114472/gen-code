@@ -71,11 +71,13 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"react-vite-expert",
 		"review",
 		"requesting-code-review",
+		"ship",
 		"skill-creator",
 		"subagent-driven-development",
 		"systematic-debugging",
 		"tailwindcss",
 		"test-driven-development",
+		"land-and-deploy",
 		"setup-browser-cookies",
 		"setup-deploy",
 		"ui-ux-pro-max",
@@ -522,7 +524,7 @@ func TestGuardSiblingHookDependenciesResolveInProjectLocalCatalog(t *testing.T) 
 func TestHeavyGstackCopiedSkillDocumentsExistInImportsAndCatalog(t *testing.T) {
 	workspace := workspaceRoot()
 
-	for _, id := range []string{"setup-browser-cookies", "connect-chrome", "setup-deploy", "qa", "review"} {
+	for _, id := range []string{"setup-browser-cookies", "connect-chrome", "setup-deploy", "qa", "review", "ship", "land-and-deploy"} {
 		for _, root := range []string{
 			filepath.Join(workspace, "internal", "core", "skill", "imports", "cc"),
 			filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc"),
