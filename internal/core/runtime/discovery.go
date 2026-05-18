@@ -48,7 +48,7 @@ var builtinBrowserToolDescriptors = []tool.Descriptor{
 	{
 		ID:                 "browser.open",
 		Name:               "Browser Open",
-		Description:        "Open a controlled browser tab for an allowlisted local or verified HTTPS URL",
+		Description:        "Open a controlled browser tab for an allowlisted local URL, a managed authenticated session target, or a verified HTTPS read-only target",
 		InputSchemaSummary: `{"url":"http://127.0.0.1:3000/"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -59,7 +59,7 @@ var builtinBrowserToolDescriptors = []tool.Descriptor{
 	{
 		ID:                 "browser.navigate",
 		Name:               "Browser Navigate",
-		Description:        "Navigate an existing controlled browser tab to an allowlisted local or verified HTTPS URL",
+		Description:        "Navigate an existing controlled browser tab to an allowlisted local URL, a managed authenticated session target, or a verified HTTPS read-only target",
 		InputSchemaSummary: `{"tabId":"tab-1","url":"http://127.0.0.1:3000/"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -147,7 +147,7 @@ var builtinBrowserToolDescriptors = []tool.Descriptor{
 	{
 		ID:                 "browser.extract",
 		Name:               "Browser Extract",
-		Description:        "Extract text from a selector inside a controlled browser tab",
+		Description:        "Extract text from a selector inside a controlled browser tab, authenticated fixture target, or verified HTTPS read-only target",
 		InputSchemaSummary: `{"tabId":"tab-1","selector":"[data-testid='result']"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -158,7 +158,7 @@ var builtinBrowserToolDescriptors = []tool.Descriptor{
 	{
 		ID:                 "browser.screenshot",
 		Name:               "Browser Screenshot",
-		Description:        "Capture a screenshot for a controlled browser tab",
+		Description:        "Capture a screenshot for a controlled browser tab, authenticated fixture target, or verified HTTPS read-only target",
 		InputSchemaSummary: `{"tabId":"tab-1"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",

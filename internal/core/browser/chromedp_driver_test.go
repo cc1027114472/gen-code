@@ -43,6 +43,86 @@ func TestEnsureSessionBootstrapAppliesCookiesForMatchingHost(t *testing.T) {
 	require.Equal(t, 1, calls)
 }
 
+func TestEnsureSessionBootstrapAppliesNamedProfilePerHostOnce(t *testing.T) {
+	policy := newPolicyFromSources("", writePolicyFile(t, `{
+  "profiles": {
+    "acceptance-session": {
+      "cookies": [
+        {
+          "name": "session_id",
+          "value": "abc123",
+          "path": "/"
+        }
+      ]
+    }
+  },
+  "hosts": {
+    "localhost": {
+      "sessionRequired": true,
+      "profile": "acceptance-session"
+    }
+  }
+}`))
+	driver := newDriverWithPolicy(policy)
+	tab := &tabSession{id: "browser-tab-1"}
+	var calls int
+	driver.applySessionCookies = func(_ context.Context, _ *tabSession, target *url.URL, profile SessionProfile) error {
+		calls++
+		require.Equal(t, "localhost", target.Hostname())
+		require.Len(t, profile.Cookies, 1)
+		require.Equal(t, "session_id", profile.Cookies[0].Name)
+		require.Equal(t, "abc123", profile.Cookies[0].Value)
+		return nil
+	}
+
+	err := driver.ensureSessionBootstrap(context.Background(), tab, "http://localhost:4173/app")
+	require.NoError(t, err)
+	err = driver.ensureSessionBootstrap(context.Background(), tab, "http://localhost:4173/settings")
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+}
+
+func TestEnsureSessionBootstrapReusesNamedProfileAcrossHosts(t *testing.T) {
+	policy := newPolicyFromSources("", writePolicyFile(t, `{
+  "profiles": {
+    "acceptance-session": {
+      "cookies": [
+        {
+          "name": "gc_auth",
+          "value": "acceptance-session",
+          "path": "/"
+        }
+      ]
+    }
+  },
+  "hosts": {
+    "127.0.0.1": {
+      "sessionRequired": true,
+      "profile": "acceptance-session"
+    },
+    "localhost": {
+      "sessionRequired": true,
+      "profile": "acceptance-session"
+    }
+  }
+}`))
+	driver := newDriverWithPolicy(policy)
+	tab := &tabSession{id: "browser-tab-1"}
+	var appliedHosts []string
+	driver.applySessionCookies = func(_ context.Context, _ *tabSession, target *url.URL, profile SessionProfile) error {
+		appliedHosts = append(appliedHosts, target.Hostname())
+		require.Len(t, profile.Cookies, 1)
+		require.Equal(t, "gc_auth", profile.Cookies[0].Name)
+		return nil
+	}
+
+	err := driver.ensureSessionBootstrap(context.Background(), tab, "http://127.0.0.1:4173/app")
+	require.NoError(t, err)
+	err = driver.ensureSessionBootstrap(context.Background(), tab, "http://localhost:4173/app")
+	require.NoError(t, err)
+	require.Equal(t, []string{"127.0.0.1", "localhost"}, appliedHosts)
+}
+
 func TestEnsureSessionBootstrapSkipsHostsWithoutSessionProfile(t *testing.T) {
 	policy := newPolicyFromSources("example.com", "")
 	driver := newDriverWithPolicy(policy)
@@ -81,6 +161,21 @@ func TestEnsureSessionBootstrapFailsClosedWhenProfileMissing(t *testing.T) {
   "hosts": {
     "localhost": {
       "sessionRequired": true
+    }
+  }
+}`))
+	driver := newDriverWithPolicy(policy)
+
+	err := driver.ensureSessionBootstrap(context.Background(), &tabSession{id: "browser-tab-1"}, "http://localhost:4173/app")
+	require.ErrorIs(t, err, ErrSessionUnavailable)
+}
+
+func TestEnsureSessionBootstrapFailsClosedWhenNamedProfileMissing(t *testing.T) {
+	policy := newPolicyFromSources("", writePolicyFile(t, `{
+  "hosts": {
+    "localhost": {
+      "sessionRequired": true,
+      "profile": "missing-profile"
     }
   }
 }`))

@@ -42,12 +42,18 @@ type SessionCookie struct {
 }
 
 type policyFileConfig struct {
-	AllowedHosts []string                    `json:"allowedHosts"`
-	Hosts        map[string]hostPolicyConfig `json:"hosts"`
+	AllowedHosts []string                       `json:"allowedHosts"`
+	Profiles     map[string]profilePolicyConfig `json:"profiles"`
+	Hosts        map[string]hostPolicyConfig    `json:"hosts"`
+}
+
+type profilePolicyConfig struct {
+	Cookies []sessionCookieSpec `json:"cookies"`
 }
 
 type hostPolicyConfig struct {
 	SessionRequired bool                `json:"sessionRequired"`
+	Profile         string              `json:"profile"`
 	Cookies         []sessionCookieSpec `json:"cookies"`
 }
 
@@ -155,6 +161,7 @@ func (p *Policy) loadPolicyFile(path string) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return
 	}
+	namedProfiles, profileErrs := buildNamedSessionProfiles(config.Profiles)
 	for _, host := range config.AllowedHosts {
 		p.allowHost(host)
 	}
@@ -165,11 +172,11 @@ func (p *Policy) loadPolicyFile(path string) {
 		}
 		rule := p.hostRules[host]
 		rule.allowed = true
-		if hostConfig.SessionRequired || len(hostConfig.Cookies) > 0 {
+		if hostConfig.SessionRequired || len(hostConfig.Cookies) > 0 || strings.TrimSpace(hostConfig.Profile) != "" {
 			rule.sessionRequired = true
 		}
-		if len(hostConfig.Cookies) > 0 {
-			profile, err := buildSessionProfile(hostConfig.Cookies)
+		if rule.sessionRequired {
+			profile, err := resolveHostSessionProfile(host, hostConfig, namedProfiles, profileErrs)
 			if err != nil {
 				rule.sessionErr = err
 				rule.sessionProfile = nil
@@ -177,12 +184,59 @@ func (p *Policy) loadPolicyFile(path string) {
 				rule.sessionErr = nil
 				rule.sessionProfile = &profile
 			}
-		} else if hostConfig.SessionRequired {
-			rule.sessionErr = fmt.Errorf("missing cookie bootstrap profile for %s", host)
-			rule.sessionProfile = nil
 		}
 		p.hostRules[host] = rule
 	}
+}
+
+func buildNamedSessionProfiles(configs map[string]profilePolicyConfig) (map[string]SessionProfile, map[string]error) {
+	profiles := map[string]SessionProfile{}
+	errs := map[string]error{}
+	for rawName, config := range configs {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			errs[rawName] = fmt.Errorf("profile name is required")
+			continue
+		}
+		if len(config.Cookies) == 0 {
+			errs[name] = fmt.Errorf("missing cookie bootstrap profile for profile %q", name)
+			continue
+		}
+		profile, err := buildSessionProfile(config.Cookies)
+		if err != nil {
+			errs[name] = err
+			continue
+		}
+		profiles[name] = profile
+	}
+	return profiles, errs
+}
+
+func resolveHostSessionProfile(host string, config hostPolicyConfig, namedProfiles map[string]SessionProfile, profileErrs map[string]error) (SessionProfile, error) {
+	profileName := strings.TrimSpace(config.Profile)
+	if profileName != "" && len(config.Cookies) > 0 {
+		return SessionProfile{}, fmt.Errorf("host %s cannot define both profile and inline cookies", host)
+	}
+	if profileName != "" {
+		if err := profileErrs[profileName]; err != nil {
+			return SessionProfile{}, fmt.Errorf("invalid session profile %q for %s: %w", profileName, host, err)
+		}
+		profile, ok := namedProfiles[profileName]
+		if !ok {
+			return SessionProfile{}, fmt.Errorf("missing session profile %q for %s", profileName, host)
+		}
+		if len(profile.Cookies) == 0 {
+			return SessionProfile{}, fmt.Errorf("missing cookie bootstrap profile for %s", host)
+		}
+		return cloneSessionProfile(profile), nil
+	}
+	if len(config.Cookies) > 0 {
+		return buildSessionProfile(config.Cookies)
+	}
+	if config.SessionRequired {
+		return SessionProfile{}, fmt.Errorf("missing cookie bootstrap profile for %s", host)
+	}
+	return SessionProfile{}, nil
 }
 
 func buildSessionProfile(specs []sessionCookieSpec) (SessionProfile, error) {

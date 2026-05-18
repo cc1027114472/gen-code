@@ -26,6 +26,33 @@ func TestNormalizeURLAcceptsAllowlistedHTTPSURL(t *testing.T) {
 	require.Equal(t, "https://example.com/products?id=42", value)
 }
 
+func TestNormalizeURLAcceptsAllowlistedHTTPSURLFromPolicyFileWithProfiles(t *testing.T) {
+	policy := newPolicyFromSources("", writePolicyFile(t, `{
+  "allowedHosts": ["example.com"],
+  "profiles": {
+    "acceptance-session": {
+      "cookies": [
+        {
+          "name": "gc_auth",
+          "value": "acceptance-session",
+          "path": "/"
+        }
+      ]
+    }
+  },
+  "hosts": {
+    "localhost": {
+      "sessionRequired": true,
+      "profile": "acceptance-session"
+    }
+  }
+}`))
+
+	value, err := normalizeURLWithPolicy("https://example.com/products?id=42", policy)
+	require.NoError(t, err)
+	require.Equal(t, "https://example.com/products?id=42", value)
+}
+
 func TestAllowedURLRejectsHTTPForNonLocalHost(t *testing.T) {
 	policy := newPolicyFromSources("example.com", "")
 	parsed, err := url.Parse("http://example.com")

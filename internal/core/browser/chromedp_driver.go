@@ -499,10 +499,11 @@ func (d *Driver) applySessionCookiesForProfile(ctx context.Context, tab *tabSess
 	if target == nil {
 		return fmt.Errorf("missing navigation target")
 	}
+	if len(profile.Cookies) == 0 {
+		return fmt.Errorf("missing session cookies")
+	}
 	targetURL := target.Scheme + "://" + target.Host
 	actions := []chromedp.Action{
-		chromedp.Navigate(targetURL),
-		chromedp.WaitReady("body", chromedp.ByQuery),
 		network.Enable(),
 		chromedp.ActionFunc(func(actionCtx context.Context) error {
 			for _, cookie := range profile.Cookies {

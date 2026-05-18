@@ -1233,7 +1233,7 @@ func defaultBrowserWorkspaceState(summary string, actionErr string, extractText 
 
 func browserCapabilitySummary(runtimeSource string) string {
 	if strings.EqualFold(strings.TrimSpace(runtimeSource), "remote-app-server") {
-		return "browser workspace ready; verified-lanes=authenticated-controlled-session,public-web-read-only; compatibility=allowlist-only"
+		return "browser workspace ready; verified-lanes=managed-authenticated-session,multi-target-public-web-read-only; compatibility=allowlist-only"
 	}
 	return "browser workspace ready; verified-lanes=supporting-evidence-local-preview; compatibility=non-canonical"
 }

@@ -10,12 +10,15 @@ $env:GEN_CODE_API_BASE_URL = if ($env:GEN_CODE_API_BASE_URL) { $env:GEN_CODE_API
 $env:GEN_CODE_ACCEPTANCE_MODE = "full"
 $env:GEN_CODE_BROWSER_ONLY_ACCEPTANCE = if ($env:GEN_CODE_BROWSER_ONLY_ACCEPTANCE) { $env:GEN_CODE_BROWSER_ONLY_ACCEPTANCE } else { "0" }
 $env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE = if ($env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE) { $env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE } else { "required" }
-$env:GEN_CODE_BROWSER_PUBLIC_TARGETS = if ($env:GEN_CODE_BROWSER_PUBLIC_TARGETS) { $env:GEN_CODE_BROWSER_PUBLIC_TARGETS } else { "https://example.com/,https://example.org/" }
+$env:GEN_CODE_BROWSER_PUBLIC_TARGETS = if ($env:GEN_CODE_BROWSER_PUBLIC_TARGETS) { $env:GEN_CODE_BROWSER_PUBLIC_TARGETS } else { "https://example.com/,https://www.iana.org/domains/reserved" }
 $env:GEN_CODE_BROWSER_PUBLIC_BASE_URL = if ($env:GEN_CODE_BROWSER_PUBLIC_BASE_URL) { $env:GEN_CODE_BROWSER_PUBLIC_BASE_URL } else { (($env:GEN_CODE_BROWSER_PUBLIC_TARGETS -split ",")[0]).Trim() }
 $env:GOTOOLCHAIN = if ($env:GOTOOLCHAIN) { $env:GOTOOLCHAIN } else { "auto" }
 $env:PYTHONIOENCODING = if ($env:PYTHONIOENCODING) { $env:PYTHONIOENCODING } else { "utf-8" }
 $scriptPath = Join-Path $projectRoot "scripts\verify-desktop-live-refresh.py"
 $baselineLane = "canonical remote browser acceptance with desktop copy/runtime checks, richer authenticated fixture lane, and multi-site public-web read-only lanes (5174 + 10008)"
+$uiBaseUri = [System.Uri]$env:GEN_CODE_UI_BASE_URL
+$uiHost = $uiBaseUri.Host
+$uiPort = if ($uiBaseUri.IsDefaultPort) { if ($uiBaseUri.Scheme -eq "https") { 443 } else { 80 } } else { $uiBaseUri.Port }
 
 Write-Host "Desktop live refresh and copy/runtime alignment check"
 Write-Host "  project root : $projectRoot"
@@ -351,7 +354,7 @@ function Prepare-ProjectProcessOnPort {
     }
   }
 
-  if (-not $isProjectOwned -and $Port -eq 5174) {
+  if (-not $isProjectOwned -and $Port -eq $uiPort) {
     if (Test-DesktopUiIdentity -UiBaseUrl $env:GEN_CODE_UI_BASE_URL) {
       $isProjectOwned = $true
     }
@@ -399,7 +402,7 @@ try {
       Write-Host ("  existing API : reachable on 10008" + $(if ($baseline.Ready) { " with complete MCP baseline" } else { " but MCP baseline is incomplete: " + ($baseline.Missing -join ", ") }))
     }
     if ($uiReady) {
-      Write-Host "  existing UI  : reachable on 5174"
+      Write-Host "  existing UI  : reachable on $uiPort"
     }
 
     $serverDecision = Prepare-ProjectProcessOnPort -Port 10008 -Label "server" -AllowedCommandFragments @(
@@ -407,7 +410,7 @@ try {
       "go.exe run .\cmd\server",
       "gen-code"
     ) -ExpectedProjectRoot $projectRoot
-    $frontendDecision = Prepare-ProjectProcessOnPort -Port 5174 -Label "frontend" -AllowedCommandFragments @(
+    $frontendDecision = Prepare-ProjectProcessOnPort -Port $uiPort -Label "frontend" -AllowedCommandFragments @(
       "npm run dev",
       "vite",
       $frontendRoot,
@@ -427,7 +430,7 @@ try {
 
     if ($frontendDecision.StartNew) {
       $frontendProcess = Start-Process -FilePath $npmCommand.Source `
-        -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", "5174") `
+        -ArgumentList @("run", "dev", "--", "--host", $uiHost, "--port", [string]$uiPort) `
         -WorkingDirectory $frontendRoot `
         -RedirectStandardOutput $frontendStdout `
         -RedirectStandardError $frontendStderr `
@@ -454,21 +457,39 @@ try {
       Write-Host ("  baseline     : existing API instance missing MCP lanes: " + ($baseline.Missing -join ", "))
     }
 
-    $serverProcess = Start-Process -FilePath $goCommand.Source `
-      -ArgumentList @("run", ".\cmd\server") `
-      -WorkingDirectory $projectRoot `
-      -RedirectStandardOutput $serverStdout `
-      -RedirectStandardError $serverStderr `
-      -WindowStyle Hidden `
-      -PassThru
+    $serverDecision = Prepare-ProjectProcessOnPort -Port 10008 -Label "server" -AllowedCommandFragments @(
+      "go run .\cmd\server",
+      "go.exe run .\cmd\server",
+      "gen-code"
+    ) -ExpectedProjectRoot $projectRoot
+    $frontendDecision = Prepare-ProjectProcessOnPort -Port $uiPort -Label "frontend" -AllowedCommandFragments @(
+      "npm run dev",
+      "vite",
+      $frontendRoot,
+      "gen-code"
+    )
 
-    $frontendProcess = Start-Process -FilePath $npmCommand.Source `
-      -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", "5174") `
-      -WorkingDirectory $frontendRoot `
-      -RedirectStandardOutput $frontendStdout `
-      -RedirectStandardError $frontendStderr `
-      -WindowStyle Hidden `
-      -PassThru
+    if ($serverDecision.StartNew) {
+      $serverProcess = Start-Process -FilePath $goCommand.Source `
+        -ArgumentList @("run", ".\cmd\server") `
+        -WorkingDirectory $projectRoot `
+        -RedirectStandardOutput $serverStdout `
+        -RedirectStandardError $serverStderr `
+        -WindowStyle Hidden `
+        -PassThru
+      $startedServer = $true
+    }
+
+    if ($frontendDecision.StartNew) {
+      $frontendProcess = Start-Process -FilePath $npmCommand.Source `
+        -ArgumentList @("run", "dev", "--", "--host", $uiHost, "--port", [string]$uiPort) `
+        -WorkingDirectory $frontendRoot `
+        -RedirectStandardOutput $frontendStdout `
+        -RedirectStandardError $frontendStderr `
+        -WindowStyle Hidden `
+        -PassThru
+      $startedFrontend = $true
+    }
 
     if (-not (Wait-HttpOk -Url "$($env:GEN_CODE_API_BASE_URL)/api/runtime/status" -TimeoutSeconds 90)) {
       throw "Timed out waiting for $($env:GEN_CODE_API_BASE_URL)/api/runtime/status"
@@ -481,7 +502,7 @@ try {
     if (-not $baseline.Ready) {
       throw ("Bootstrapped canonical instance still missing MCP lanes: " + ($baseline.Missing -join ", "))
     }
-    $bootstrapStarted = $true
+    $bootstrapStarted = ($startedServer -or $startedFrontend)
   } else {
     Write-Host "  bootstrap    : using existing canonical instance with complete MCP baseline"
   }

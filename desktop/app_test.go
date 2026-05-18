@@ -149,7 +149,7 @@ func TestDesktopFallbackRuntimeStatusShowsManualRefreshMode(t *testing.T) {
 
 func TestBrowserCapabilitySummaryDifferentiatesRemoteAndFallback(t *testing.T) {
 	remote := browserCapabilitySummary("remote-app-server")
-	if !strings.Contains(remote, "verified-lanes=authenticated-controlled-session,public-web-read-only") {
+	if !strings.Contains(remote, "verified-lanes=managed-authenticated-session,multi-target-public-web-read-only") {
 		t.Fatalf("expected remote browser summary to advertise verified lanes, got %q", remote)
 	}
 	if !strings.Contains(remote, "compatibility=allowlist-only") {
@@ -195,7 +195,7 @@ func TestBrowserWorkspaceStateFromRemoteUsesVerifiedLaneFallbackSummary(t *testi
 			},
 		},
 	})
-	if !strings.Contains(state.LatestActionSummary, "verified-lanes=authenticated-controlled-session,public-web-read-only") {
+	if !strings.Contains(state.LatestActionSummary, "verified-lanes=managed-authenticated-session,multi-target-public-web-read-only") {
 		t.Fatalf("expected remote browser workspace summary fallback, got %q", state.LatestActionSummary)
 	}
 }
