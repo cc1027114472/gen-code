@@ -43,6 +43,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 Pass standard:
 
 - exits `0`
+- wrapper must either use an already-healthy canonical instance or bootstrap the current repo code before verification
 - `runtimeSource = remote-app-server`
 - `runtimeTrust = canonical`
 - `refreshMode` and `fallbackEvidenceMode` are recorded in the verifier output
