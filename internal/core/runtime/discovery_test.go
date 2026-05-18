@@ -48,6 +48,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"planning-with-files",
 		"receiving-code-review",
 		"ralph-loop",
+		"react-vite-expert",
 		"requesting-code-review",
 		"subagent-driven-development",
 		"systematic-debugging",

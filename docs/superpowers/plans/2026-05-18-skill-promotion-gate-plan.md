@@ -118,12 +118,11 @@
 - `kb-audit-flow-prototype`
 - `ralph-loop`
 - `tailwindcss`
-- `vercel-react-best-practices`
 - `vite`
 
 #### Ready-Structure But Localization-Pending: CC
 
-- `react-vite-expert`
+- `vercel-react-best-practices`
 
 Current first promoted CC batch:
 
@@ -149,6 +148,10 @@ Current first needs-trim CC batch promoted after trim + localization:
 - `agent-browser`
 - `planning-with-files`
 - `use-my-browser`
+
+Current ready-localization CC promotion result:
+
+- `react-vite-expert`
 
 #### Needs-Trim: CC
 

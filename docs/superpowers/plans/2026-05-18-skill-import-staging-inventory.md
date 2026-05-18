@@ -117,18 +117,27 @@ Project-internal staging path:
 - `kb-audit-flow-prototype`
 - `ralph-loop`
 - `tailwindcss`
-- `vercel-react-best-practices`
 - `vite`
 
 ### Ready-Structure But Localization-Pending: CC
 
-- `react-vite-expert`
+- `vercel-react-best-practices`
 
 Why:
 
 - the package structure is already small enough for promotion review
 - the copied project-local text has not yet completed the 1:1 Chinese localization gate
 - it should stay separate from the `needs-trim` lane so trim work and localization work do not drift together
+
+Promoted this round:
+
+- `react-vite-expert`
+
+Why:
+
+- the project-local copied package now passes the 1:1 Chinese localization audit
+- the copied package continues to pass static capability verification after localization
+- it is now runtime-visible from `internal/core/skill/catalog/cc`
 
 Notes:
 
