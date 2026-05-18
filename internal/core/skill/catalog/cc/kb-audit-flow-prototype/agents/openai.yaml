@@ -1,0 +1,4 @@
+interface:
+  display_name: "KB Audit Flow Prototype"
+  short_description: "Build staged prototypes from kb-audit docs."
+  default_prompt: "Use $kb-audit-flow-prototype to extend the staged prototype from the kb-audit documents and verify it still matches the documented business flows."

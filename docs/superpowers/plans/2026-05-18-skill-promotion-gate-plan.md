@@ -131,16 +131,24 @@ Current first promoted CC batch:
 - `tailwindcss`
 - `vite`
 
+Current second promoted CC batch:
+
+- `architecture-blueprint-generator`
+- `find-skills`
+- `frontend-design`
+- `go-backend-clean-architecture`
+- `kb-audit-flow-prototype`
+- `ralph-loop`
+- `web-design-guidelines`
+
 #### Needs-Trim: CC
 
 - `agent-browser`
 - `canvas-design`
-- `find-skills`
 - `planning-with-files`
 - `skill-creator`
 - `ui-ux-pro-max`
 - `use-my-browser`
-- `web-design-guidelines`
 
 #### Defer: CC
 
