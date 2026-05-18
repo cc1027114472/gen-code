@@ -1745,6 +1745,130 @@ func TestParseAgentActionDetailedSearchUsesGoalFallbackQueryAndPath(t *testing.T
 	require.Equal(t, "internal/core/runner", action.Path)
 }
 
+func TestParseAgentActionRecoversMalformedRespondJSONOnRespondStep(t *testing.T) {
+	action, err := parseAgentActionWithState(
+		`{"type":"respond","response":"go.mod exists and uses Go 1.25.0","reasoningSummary":"Answer with the findings","path"}`,
+		AgentRunState{
+			Plan: AgentExecutionPlan{
+				Mode: "stat_then_read",
+				Steps: []AgentPlanStep{
+					{Title: "Check file status", ExpectedActionTypes: []string{"stat_file"}},
+					{Title: "Read the file content", ExpectedActionTypes: []string{"read_file", "read_files_batch"}},
+					{Title: "Answer with the findings", ExpectedActionTypes: []string{"respond"}},
+				},
+			},
+			CompletedActions: []string{"stat_file", "read_files_batch"},
+			CurrentStepTitle: "Answer with the findings",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "respond", action.Type)
+	require.Equal(t, "go.mod exists and uses Go 1.25.0", action.Response)
+}
+
+func TestParseAgentActionDefaultsToReadFilesBatchAndGoalPathsForFilterThenReadStep(t *testing.T) {
+	action, err := parseAgentActionWithState(
+		`{"reasoningSummary":"Read the selected files next"}`,
+		AgentRunState{
+			Goal: "Use list_files_filtered on internal/core/runner with pattern *.go, then use read_files_batch on internal/core/runner/agent_loop.go and internal/core/runner/runner.go, then answer in one short sentence about what files you inspected.",
+			Plan: AgentExecutionPlan{
+				Mode: "filter_then_read",
+				Steps: []AgentPlanStep{
+					{Title: "Filter matching files", ExpectedActionTypes: []string{"list_files_filtered"}},
+					{Title: "Read the selected files", ExpectedActionTypes: []string{"read_files_batch"}},
+					{Title: "Answer with the findings", ExpectedActionTypes: []string{"respond"}},
+				},
+			},
+			CompletedActions: []string{"list_files_filtered"},
+			CurrentStepTitle: "Read the selected files",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "read_files_batch", action.Type)
+	require.Equal(t, []string{"internal/core/runner/agent_loop.go", "internal/core/runner/runner.go"}, action.Paths)
+}
+
+func TestParseAgentActionDefaultsToStatFileAndGoalPathForStatThenReadStep(t *testing.T) {
+	action, err := parseAgentActionWithState(
+		`{"reasoningSummary":"Check the file metadata first"}`,
+		AgentRunState{
+			Goal: "Use stat_file on go.mod to confirm it exists and inspect metadata, then use read_files_batch on go.mod to read the content, then answer in one short sentence about what you found.",
+			Plan: AgentExecutionPlan{
+				Mode: "stat_then_read",
+				Steps: []AgentPlanStep{
+					{Title: "Check file status", ExpectedActionTypes: []string{"stat_file"}},
+					{Title: "Read the file content", ExpectedActionTypes: []string{"read_file", "read_files_batch"}},
+					{Title: "Answer with the findings", ExpectedActionTypes: []string{"respond"}},
+				},
+			},
+			CurrentStepTitle: "Check file status",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "stat_file", action.Type)
+	require.Equal(t, "go.mod", action.Path)
+}
+
+func TestDeriveDeterministicAgentActionReturnsBrowserScreenshotFallback(t *testing.T) {
+	action, ok := deriveDeterministicAgentAction(AgentRunState{
+		ThreadID:         "thread-browser",
+		Goal:             "Open the controlled browser fixture page for the current thread. Use [data-testid='controlled-browser-input'] to type browser demo text, click [data-testid='controlled-browser-apply'], extract [data-testid='controlled-browser-result'], take a screenshot, and then answer in one short sentence with the extracted result.",
+		CompletedActions: []string{"browser_open", "browser_type", "browser_click", "browser_extract"},
+		Plan: AgentExecutionPlan{
+			Mode: "browser_then_respond",
+			Steps: []AgentPlanStep{
+				{ExpectedActionTypes: []string{"browser_open"}},
+				{ExpectedActionTypes: []string{"browser_type"}},
+				{ExpectedActionTypes: []string{"browser_click"}},
+				{ExpectedActionTypes: []string{"browser_extract"}},
+				{ExpectedActionTypes: []string{"browser_screenshot"}},
+				{ExpectedActionTypes: []string{"respond"}},
+			},
+		},
+	})
+	require.True(t, ok)
+	require.Equal(t, "browser_screenshot", action.Type)
+}
+
+func TestDeriveDeterministicAgentActionReturnsPatchFallback(t *testing.T) {
+	action, ok := deriveDeterministicAgentAction(AgentRunState{
+		Goal:             "Update the existing file playwright-recovery-note.txt by adding one line saying recovery evidence, then answer in one short sentence about what you changed.",
+		CompletedActions: []string{},
+		Plan: AgentExecutionPlan{
+			Mode: "patch_then_respond",
+			Steps: []AgentPlanStep{
+				{ExpectedActionTypes: []string{"apply_patch"}},
+				{ExpectedActionTypes: []string{"respond"}},
+			},
+		},
+	})
+	require.True(t, ok)
+	require.Equal(t, "apply_patch", action.Type)
+	require.Equal(t, "playwright-recovery-note.txt", action.Path)
+	require.Contains(t, action.Patch, "recovery evidence")
+}
+
+func TestDeriveDeterministicAgentActionReturnsRespondFallback(t *testing.T) {
+	action, ok := deriveDeterministicAgentAction(AgentRunState{
+		Goal:             "Open the controlled browser fixture page for the current thread. Use [data-testid='controlled-browser-input'] to type browser demo text, click [data-testid='controlled-browser-apply'], extract [data-testid='controlled-browser-result'], take a screenshot, and then answer in one short sentence with the extracted result.",
+		CompletedActions: []string{"browser_open", "browser_type", "browser_click", "browser_extract", "browser_screenshot"},
+		Plan: AgentExecutionPlan{
+			Mode: "browser_then_respond",
+			Steps: []AgentPlanStep{
+				{ExpectedActionTypes: []string{"browser_open"}},
+				{ExpectedActionTypes: []string{"browser_type"}},
+				{ExpectedActionTypes: []string{"browser_click"}},
+				{ExpectedActionTypes: []string{"browser_extract"}},
+				{ExpectedActionTypes: []string{"browser_screenshot"}},
+				{ExpectedActionTypes: []string{"respond"}},
+			},
+		},
+	})
+	require.True(t, ok)
+	require.Equal(t, "respond", action.Type)
+	require.Equal(t, "Controlled browser result: browser demo text", action.Response)
+}
+
 func TestParseAgentActionInfersStatFileTypeFromCurrentStep(t *testing.T) {
 	action, err := parseAgentActionWithState(
 		`{"path":"README.md","reasoningSummary":"Check existence first"}`,

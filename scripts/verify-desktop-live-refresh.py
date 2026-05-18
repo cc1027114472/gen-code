@@ -392,6 +392,17 @@ def write_png_artifact(name: str, payload: bytes) -> str:
     return path
 
 
+def remove_artifact_if_exists(name: str) -> None:
+    path = os.path.join(ensure_artifact_dir(), name)
+    if os.path.exists(path):
+        os.remove(path)
+
+
+def clear_stale_failure_artifacts() -> None:
+    remove_artifact_if_exists("desktop-smoke-failure.json")
+    remove_artifact_if_exists("desktop-smoke-failure.png")
+
+
 def api(method: str, path: str, data=None):
     body = None
     headers = {}
@@ -2113,6 +2124,7 @@ def main() -> int:
                     **run_smoke_acceptance(page, runtime_status, thread_id),
                 }
                 emit_release_baseline(result)
+                clear_stale_failure_artifacts()
                 write_json_artifact("desktop-smoke-summary.json", result)
                 print(json.dumps(result, ensure_ascii=False))
                 return 0
@@ -2343,6 +2355,7 @@ def main() -> int:
                     authenticated_browser_result=authenticated_browser_result,
                     public_web_browser_result=public_web_browser_result,
                 )
+                clear_stale_failure_artifacts()
                 write_json_artifact("desktop-full-summary.json", result)
                 print(json.dumps(result, ensure_ascii=False))
                 return 0
@@ -2768,6 +2781,7 @@ def main() -> int:
                 "acceptanceReport": acceptance_report,
             }
             emit_release_baseline(result)
+            clear_stale_failure_artifacts()
             write_json_artifact("desktop-full-summary.json", result)
             print(json.dumps(result, ensure_ascii=False))
             return 0
