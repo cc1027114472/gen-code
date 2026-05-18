@@ -991,6 +991,10 @@ func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) err
 	if err != nil {
 		return err
 	}
+	taskByID := make(map[string]runtimecontract.TaskDescriptor, len(items))
+	for _, item := range items {
+		taskByID[item.ID] = item
+	}
 
 	fmt.Println("tasks list")
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
@@ -1024,6 +1028,14 @@ func printTasks(ctx context.Context, facade *runtimeFacade, threadID string) err
 			fmt.Printf("    last reasoning: %s\n", fallbackText(item.AgentLastReasoning, "none"))
 			fmt.Printf("    progress: %d/%d\n", item.AgentStep, item.AgentMaxSteps)
 			fmt.Printf("    latest child: %s\n", fallbackText(item.LatestChildTaskID, "none"))
+			if browserSummary := describeBrowserChildTask(taskByID[item.LatestChildTaskID]); browserSummary != "" {
+				fmt.Printf("    browser child: %s\n", browserSummary)
+			}
+		}
+		if strings.HasPrefix(item.Kind, "browser.") {
+			if browserSummary := describeBrowserChildTask(item); browserSummary != "" {
+				fmt.Printf("    browser detail: %s\n", browserSummary)
+			}
 		}
 	}
 	return nil
@@ -1171,6 +1183,13 @@ func runAgentTask(ctx context.Context, facade *runtimeFacade, threadID string, t
 	fmt.Printf("  last reasoning: %s\n", fallbackText(result.AgentLastReasoning, "none"))
 	fmt.Printf("  progress: %d/%d\n", result.AgentStep, result.AgentMaxSteps)
 	fmt.Printf("  latest child: %s\n", fallbackText(result.LatestChildTaskID, "none"))
+	if strings.TrimSpace(result.LatestChildTaskID) != "" {
+		if child, err := lookupTaskByID(ctx, facade, threadID, result.LatestChildTaskID); err == nil {
+			if browserSummary := describeBrowserChildTask(child); browserSummary != "" {
+				fmt.Printf("  browser child: %s\n", browserSummary)
+			}
+		}
+	}
 	fmt.Printf("  result: %s\n", fallbackText(result.ResultSummary, "none"))
 	if result.Status == "waiting_for_approval" || result.WaitingStatus == "waiting_for_approval" {
 		fmt.Println("  next step: approve the child workspace.apply_patch task; the parent agent will auto-resume")
@@ -1400,7 +1419,7 @@ func printTools(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(facade.runtimeSource()))
 	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
 	if containsBrowserTool(items) {
-		fmt.Println("  browser verified baseline: allowlisted local pages, authenticated controlled session lane, and constrained verified HTTPS read-only lane")
+		fmt.Println("  browser verified baseline: allowlisted local pages, managed authenticated session lane, and multi-target verified HTTPS read-only lanes")
 	}
 	for _, item := range items {
 		fmt.Printf(
@@ -1568,6 +1587,39 @@ func fallbackText(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func lookupTaskByID(ctx context.Context, facade *runtimeFacade, threadID string, taskID string) (runtimecontract.TaskDescriptor, error) {
+	items, err := facade.tasks(ctx, threadID)
+	if err != nil {
+		return runtimecontract.TaskDescriptor{}, err
+	}
+	for _, item := range items {
+		if item.ID == taskID {
+			return item, nil
+		}
+	}
+	return runtimecontract.TaskDescriptor{}, fmt.Errorf("task %s not found", taskID)
+}
+
+func describeBrowserChildTask(item runtimecontract.TaskDescriptor) string {
+	kind := strings.TrimSpace(item.Kind)
+	result := strings.TrimSpace(item.ResultSummary)
+	if kind == "" || result == "" || !strings.HasPrefix(kind, "browser.") {
+		return ""
+	}
+	switch kind {
+	case "browser.extract":
+		return fmt.Sprintf("%s / extract summary: %s", kind, result)
+	case "browser.screenshot":
+		path := strings.TrimSpace(strings.TrimPrefix(result, "browser screenshot captured:"))
+		if path == "" {
+			return fmt.Sprintf("%s / %s", kind, result)
+		}
+		return fmt.Sprintf("%s / screenshot artifact: %s", kind, path)
+	default:
+		return fmt.Sprintf("%s / %s", kind, result)
+	}
 }
 
 func capabilityStatus(verified bool) string {

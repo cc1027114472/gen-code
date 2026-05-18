@@ -1073,6 +1073,7 @@ func TestRunnerExecutesAgentRunWithBrowserSequence(t *testing.T) {
 		results: []provider.ResponseResult{
 			{OutputText: `{"type":"browser_open","url":"http://127.0.0.1:3000","reasoningSummary":"Open the local preview"}`},
 			{OutputText: `{"type":"browser_type","tabId":"browser-tab-1","selector":"[data-testid=\"name\"]","text":"browser","reasoningSummary":"Fill the input"}`},
+			{OutputText: `{"type":"browser_click","tabId":"browser-tab-1","selector":"[data-testid=\"apply\"]","reasoningSummary":"Apply the form"}`},
 			{OutputText: `{"type":"browser_extract","tabId":"browser-tab-1","selector":"[data-testid=\"result\"]","reasoningSummary":"Read the result"}`},
 			{OutputText: `{"type":"browser_screenshot","tabId":"browser-tab-1","reasoningSummary":"Capture a screenshot"}`},
 			{OutputText: `{"type":"respond","response":"Browser workflow complete.","reasoningSummary":"Done"}`},
@@ -1084,15 +1085,19 @@ func TestRunnerExecutesAgentRunWithBrowserSequence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.Status)
 	require.Contains(t, result.ResultSummary, "agent completed")
+	resultState, err := parseAgentRunState(result.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, "browser_then_respond", resultState.Plan.Mode)
 
 	tasks, ok := registry.Tasks(thread.ID)
 	require.True(t, ok)
-	require.Len(t, tasks, 5)
+	require.Len(t, tasks, 6)
 	require.Equal(t, KindBrowserOpen, tasks[1].Kind)
 	require.Equal(t, KindBrowserType, tasks[2].Kind)
-	require.Equal(t, KindBrowserExtract, tasks[3].Kind)
-	require.Equal(t, KindBrowserScreenshot, tasks[4].Kind)
-	require.Equal(t, task.ID, tasks[4].ParentTaskID)
+	require.Equal(t, KindBrowserClick, tasks[3].Kind)
+	require.Equal(t, KindBrowserExtract, tasks[4].Kind)
+	require.Equal(t, KindBrowserScreenshot, tasks[5].Kind)
+	require.Equal(t, task.ID, tasks[5].ParentTaskID)
 
 	artifacts, ok := registry.Artifacts(thread.ID)
 	require.True(t, ok)
@@ -1103,6 +1108,49 @@ func TestRunnerExecutesAgentRunWithBrowserSequence(t *testing.T) {
 	require.True(t, ok)
 	require.NotEmpty(t, messages)
 	require.Equal(t, "Browser workflow complete.", messages[len(messages)-1].Content)
+}
+
+func TestDeriveAgentExecutionPlanUsesBrowserThenRespondForControlledBrowserGoal(t *testing.T) {
+	plan := DeriveAgentExecutionPlanForRuntime("Open the controlled browser fixture, type browser demo text, click apply, extract the result, and reply.")
+	require.Equal(t, "browser_then_respond", plan.Mode)
+	require.Equal(t, []string{"browser_open", "browser_type", "browser_click", "browser_extract", "respond"}, plan.RequiredSequence)
+	require.Equal(t, "Open the controlled browser page", plan.Steps[0].Title)
+	require.Equal(t, "Answer with the browser result", plan.Steps[len(plan.Steps)-1].Title)
+}
+
+func TestDeriveAgentExecutionPlanAddsOptionalBrowserScreenshotStep(t *testing.T) {
+	plan := DeriveAgentExecutionPlanForRuntime("Open the local preview, type into the form, click apply, extract the result, take a screenshot, and reply.")
+	require.Equal(t, "browser_then_respond", plan.Mode)
+	require.Equal(t, []string{"browser_open", "browser_type", "browser_click", "browser_extract", "browser_screenshot", "respond"}, plan.RequiredSequence)
+	require.Equal(t, "Capture a browser screenshot", plan.Steps[4].Title)
+}
+
+func TestValidateAgentActionSequenceRejectsBrowserClickBeforeType(t *testing.T) {
+	err := validateAgentActionSequence(
+		AgentRunState{
+			Plan: AgentExecutionPlan{
+				Mode:             "browser_then_respond",
+				RequiredSequence: []string{"browser_open", "browser_type", "browser_click", "browser_extract", "respond"},
+			},
+			CompletedActions: []string{"browser_open"},
+		},
+		AgentAction{Type: "browser_click"},
+	)
+	require.EqualError(t, err, "agent action violates required sequence: browser_type must happen before browser_click")
+}
+
+func TestValidateAgentActionSequenceRejectsBrowserRespondBeforeExtract(t *testing.T) {
+	err := validateAgentActionSequence(
+		AgentRunState{
+			Plan: AgentExecutionPlan{
+				Mode:             "browser_then_respond",
+				RequiredSequence: []string{"browser_open", "browser_type", "browser_click", "browser_extract", "respond"},
+			},
+			CompletedActions: []string{"browser_open", "browser_type", "browser_click"},
+		},
+		AgentAction{Type: "respond", Response: "done"},
+	)
+	require.EqualError(t, err, "agent action violates required sequence: browser_extract must happen before respond")
 }
 
 func TestRunnerExecutesAgentRunWithSecondBatchReadTools(t *testing.T) {
@@ -1653,6 +1701,25 @@ func TestBuildAgentPromptGuidesPatchThenRespondPlan(t *testing.T) {
 	require.Contains(t, prompt, "Mode guidance: If the goal explicitly asks you to modify a file and then report the outcome")
 	require.Contains(t, prompt, "apply_patch when the goal explicitly asks for a code or file modification")
 	require.Contains(t, prompt, "call apply_patch before respond")
+}
+
+func TestBuildAgentPromptGuidesBrowserThenRespondPlan(t *testing.T) {
+	prompt := buildAgentPrompt(nil, nil, AgentRunState{
+		Goal:      "Open the controlled browser page, type browser demo text, click apply, extract the result, capture a screenshot, then answer.",
+		StepIndex: 0,
+		MaxSteps:  6,
+		Plan: AgentExecutionPlan{
+			Summary:          "Open the controlled browser page, interact with it, extract the stable result, and then answer.",
+			Mode:             "browser_then_respond",
+			RequiredSequence: []string{"browser_open", "browser_type", "browser_click", "browser_extract", "browser_screenshot", "respond"},
+		},
+		CurrentStepTitle: "Open the controlled browser page",
+	})
+
+	require.Contains(t, prompt, "Plan mode: browser_then_respond")
+	require.Contains(t, prompt, "Required action sequence: browser_open -> browser_type -> browser_click -> browser_extract -> browser_screenshot -> respond")
+	require.Contains(t, prompt, "Mode guidance: If the goal asks you to open a controlled page, type, click, extract the result, and then answer")
+	require.Contains(t, prompt, "browser_* actions only for controlled browser workflows on allowlisted local or verified HTTPS pages")
 }
 
 func TestParseAgentActionUsesContentFallbackForRespond(t *testing.T) {

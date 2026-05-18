@@ -109,7 +109,7 @@ func TestToolsListPrintsExecutionMetadata(t *testing.T) {
 	require.Contains(t, output, "source: remote-app-server")
 	require.Contains(t, output, "source trust: canonical")
 	require.Contains(t, output, "source detail: canonical shared runtime served by the app-server entry")
-	require.Contains(t, output, "browser verified baseline: allowlisted local pages, authenticated controlled session lane, and constrained verified HTTPS read-only lane")
+	require.Contains(t, output, "browser verified baseline: allowlisted local pages, managed authenticated session lane, and multi-target verified HTTPS read-only lanes")
 	require.Contains(t, output, "permission=read-only")
 	require.Contains(t, output, "kind=workspace.read_file")
 	require.Contains(t, output, "kind=workspace.stat_file")
@@ -146,7 +146,7 @@ func TestToolsListIncludesRepresentativeBrowserTools(t *testing.T) {
 	require.Contains(t, output, "browser.state")
 	require.Contains(t, output, "browser.open")
 	require.Contains(t, output, "browser.navigate")
-	require.Contains(t, output, "browser verified baseline: allowlisted local pages, authenticated controlled session lane, and constrained verified HTTPS read-only lane")
+	require.Contains(t, output, "browser verified baseline: allowlisted local pages, managed authenticated session lane, and multi-target verified HTTPS read-only lanes")
 	require.Contains(t, output, "permission=ask-user")
 	require.Contains(t, output, "kind=browser.open")
 }
@@ -313,12 +313,42 @@ func TestTasksListPrintsAgentPlanMetadata(t *testing.T) {
 	require.Contains(t, output, "kind=workspace.read_files_batch")
 }
 
+func TestTasksListPrintsBrowserChildDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/threads/thread-1/tasks":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"task-agent-browser","threadId":"thread-1","title":"Browser agent run","status":"running","kind":"agent.run","resultSummary":"agent step 4/6: Extract the controlled page result","parentTaskId":"","waitingStatus":"waiting_for_task","agentStep":4,"agentMaxSteps":6,"latestChildTaskId":"task-browser-extract","agentPlanSummary":"Open the controlled browser page, interact with it, extract the stable result, and then answer.","agentPlanMode":"browser_then_respond","agentCurrentStepTitle":"Answer with the browser result","agentLastReasoning":"Read the controlled result","createdAt":"2026-05-18T00:00:00Z","updatedAt":"2026-05-18T00:00:04Z"},{"id":"task-browser-open","threadId":"thread-1","title":"Open browser tab","status":"completed","kind":"browser.open","resultSummary":"browser tab opened: browser-tab-1","parentTaskId":"task-agent-browser","createdAt":"2026-05-18T00:00:01Z","updatedAt":"2026-05-18T00:00:01Z"},{"id":"task-browser-extract","threadId":"thread-1","title":"Extract browser result","status":"completed","kind":"browser.extract","resultSummary":"browser extract completed: browser-tab-1 => browser demo result","parentTaskId":"task-agent-browser","createdAt":"2026-05-18T00:00:03Z","updatedAt":"2026-05-18T00:00:03Z"},{"id":"task-browser-shot","threadId":"thread-1","title":"Capture browser screenshot","status":"completed","kind":"browser.screenshot","resultSummary":"browser screenshot captured: tmp/desktop-smoke-artifacts/browser-agent.png","parentTaskId":"task-agent-browser","createdAt":"2026-05-18T00:00:04Z","updatedAt":"2026-05-18T00:00:04Z"}]}}`))
+		case "/api/runtime/status":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":4,"eventCount":0}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"tasks", "list", "--thread=thread-1"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "plan mode: browser_then_respond")
+	require.Contains(t, output, "latest child: task-browser-extract")
+	require.Contains(t, output, "browser child: browser.extract / extract summary: browser extract completed: browser-tab-1 => browser demo result")
+	require.Contains(t, output, "browser detail: browser.screenshot / screenshot artifact: tmp/desktop-smoke-artifacts/browser-agent.png")
+}
+
 func TestAgentRunPrintsDefaultWorkflowGuidance(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/threads/thread-1/tasks":
-			require.Equal(t, http.MethodPost, r.Method)
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-agent","threadId":"thread-1","title":"Goal run","status":"queued","kind":"agent.run","createdAt":"2026-05-17T00:00:00Z","updatedAt":"2026-05-17T00:00:00Z"}}`))
+			if r.Method == http.MethodPost {
+				_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-agent","threadId":"thread-1","title":"Goal run","status":"queued","kind":"agent.run","createdAt":"2026-05-17T00:00:00Z","updatedAt":"2026-05-17T00:00:00Z"}}`))
+				return
+			}
+			require.Equal(t, http.MethodGet, r.Method)
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"task-agent","threadId":"thread-1","title":"Goal run","status":"waiting_for_approval","kind":"agent.run","waitingStatus":"waiting_for_approval","resultSummary":"approval required for workspace.apply_patch on README.md; 2 patch line(s)","agentPlanSummary":"Apply the requested patch first, then answer with the result.","agentPlanMode":"patch_then_respond","agentCurrentStepTitle":"Answer with the result","agentLastReasoning":"Prepared a patch for README.md","agentStep":1,"agentMaxSteps":4,"latestChildTaskId":"task-child-patch","updatedAt":"2026-05-17T00:00:03Z"},{"id":"task-child-patch","threadId":"thread-1","title":"Apply README patch","status":"needs_approval","kind":"workspace.apply_patch","resultSummary":"approval required for workspace.apply_patch on README.md; 2 patch line(s)","parentTaskId":"task-agent","updatedAt":"2026-05-17T00:00:02Z"}]}}`))
 		case "/api/threads/thread-1/tasks/task-agent/run":
 			require.Equal(t, http.MethodPost, r.Method)
 			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-agent","threadId":"thread-1","title":"Goal run","status":"waiting_for_approval","kind":"agent.run","waitingStatus":"waiting_for_approval","resultSummary":"approval required for workspace.apply_patch on README.md; 2 patch line(s)","agentPlanSummary":"Apply the requested patch first, then answer with the result.","agentPlanMode":"patch_then_respond","agentCurrentStepTitle":"Answer with the result","agentLastReasoning":"Prepared a patch for README.md","agentStep":1,"agentMaxSteps":4,"latestChildTaskId":"task-child-patch","updatedAt":"2026-05-17T00:00:03Z"}}`))
@@ -347,6 +377,45 @@ func TestAgentRunPrintsDefaultWorkflowGuidance(t *testing.T) {
 	require.Contains(t, output, "current step: Answer with the result")
 	require.Contains(t, output, "next step: approve the child workspace.apply_patch task; the parent agent will auto-resume")
 	require.Contains(t, output, "inspect: gen-code tasks list --thread=thread-1")
+}
+
+func TestAgentRunPrintsBrowserWorkflowGuidance(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/threads/thread-1/tasks":
+			if r.Method == http.MethodPost {
+				_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-agent-browser","threadId":"thread-1","title":"Browser goal run","status":"queued","kind":"agent.run","createdAt":"2026-05-18T00:00:00Z","updatedAt":"2026-05-18T00:00:00Z"}}`))
+				return
+			}
+			require.Equal(t, http.MethodGet, r.Method)
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"task-agent-browser","threadId":"thread-1","title":"Browser goal run","status":"completed","kind":"agent.run","resultSummary":"agent completed: Browser workflow complete.","agentPlanSummary":"Open the controlled browser page, interact with it, extract the stable result, and then answer.","agentPlanMode":"browser_then_respond","agentCurrentStepTitle":"Answer with the browser result","agentLastReasoning":"Captured the browser screenshot after extracting the result","agentStep":6,"agentMaxSteps":6,"latestChildTaskId":"task-browser-shot","updatedAt":"2026-05-18T00:00:06Z"},{"id":"task-browser-shot","threadId":"thread-1","title":"Capture browser screenshot","status":"completed","kind":"browser.screenshot","resultSummary":"browser screenshot captured: tmp/desktop-smoke-artifacts/browser-agent.png","parentTaskId":"task-agent-browser","updatedAt":"2026-05-18T00:00:05Z"}]}}`))
+		case "/api/threads/thread-1/tasks/task-agent-browser/run":
+			require.Equal(t, http.MethodPost, r.Method)
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"id":"task-agent-browser","threadId":"thread-1","title":"Browser goal run","status":"completed","kind":"agent.run","waitingStatus":"","resultSummary":"agent completed: Browser workflow complete.","agentPlanSummary":"Open the controlled browser page, interact with it, extract the stable result, and then answer.","agentPlanMode":"browser_then_respond","agentCurrentStepTitle":"Answer with the browser result","agentLastReasoning":"Captured the browser screenshot after extracting the result","agentStep":6,"agentMaxSteps":6,"latestChildTaskId":"task-browser-shot","updatedAt":"2026-05-18T00:00:06Z"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{
+			"agent", "run",
+			"--thread=thread-1",
+			"--title=Browser goal run",
+			"--goal=Open the controlled page, type browser demo text, click apply, extract the result, take a screenshot, then answer.",
+		})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "workflow: default goal-oriented workflow")
+	require.Contains(t, output, "plan mode: browser_then_respond")
+	require.Contains(t, output, "current step: Answer with the browser result")
+	require.Contains(t, output, "latest child: task-browser-shot")
+	require.Contains(t, output, "browser child: browser.screenshot / screenshot artifact: tmp/desktop-smoke-artifacts/browser-agent.png")
+	require.Contains(t, output, "result: agent completed: Browser workflow complete.")
 }
 
 func TestProvidersListPrintsRecommendedAPIStyle(t *testing.T) {

@@ -992,7 +992,7 @@ export default function App() {
                       <span className="flow-item__meta">{latestAgentTask ? formatTaskStatus(latestAgentTask.status) : "就绪"}</span>
                     </div>
                     <h4>{latestAgentTask ? formatTaskHeadline(latestAgentTask) : "默认目标工作流"}</h4>
-                    <p>{formatAgentWorkflowOverview(latestAgentTask)}</p>
+                    <p>{formatAgentWorkflowOverview(latestAgentTask, taskMap)}</p>
                   </article>
                 </div>
               </section>
@@ -1942,6 +1942,17 @@ function formatTaskDisplaySummary(task: ExtendedRuntimeTask, parentTask?: Extend
     return formatAgentDetails(task) || task.waitingSummary || task.resultSummary || task.input || "等待 Agent 执行";
   }
 
+  const browserSummary = formatBrowserTaskSummary(task);
+  if (browserSummary) {
+    const parts = [
+      browserSummary,
+      task.workflowLabel,
+      formatTaskLinkSummary(task),
+      task.waitingSummary,
+    ].filter(Boolean) as string[];
+    return parts.join("\n");
+  }
+
   const signal = getTaskStateSignal(task);
   const parts = [
     signal?.summary,
@@ -1973,7 +1984,7 @@ function getTaskCardClassName(task: ExtendedRuntimeTask) {
   return "";
 }
 
-function formatAgentWorkflowOverview(task: ExtendedRuntimeTask | null) {
+function formatAgentWorkflowOverview(task: ExtendedRuntimeTask | null, taskMap?: Map<string, ExtendedRuntimeTask>) {
   if (!task) {
     return "默认入口是 agent.run：围绕目标自动派生读取、写入、审批和最终回复。";
   }
@@ -1992,6 +2003,10 @@ function formatAgentWorkflowOverview(task: ExtendedRuntimeTask | null) {
   }
   if (task.latestChildTaskId) {
     parts.push(`最新子任务：${task.latestChildTaskId}。`);
+    const latestChildBrowserSummary = formatBrowserTaskSummary(taskMap?.get(task.latestChildTaskId));
+    if (latestChildBrowserSummary) {
+      parts.push(`${latestChildBrowserSummary}。`);
+    }
   }
   if (task.resultSummary) {
     parts.push(task.resultSummary);
@@ -1999,6 +2014,24 @@ function formatAgentWorkflowOverview(task: ExtendedRuntimeTask | null) {
     parts.push(`当前步骤：${task.agentCurrentStepTitle}。`);
   }
   return parts.join(" ") || "默认入口是 agent.run：围绕目标自动派生读取、写入、审批和最终回复。";
+}
+
+function formatBrowserTaskSummary(task?: ExtendedRuntimeTask | null) {
+  if (!task || !task.kind.startsWith("browser.")) {
+    return "";
+  }
+  const resultSummary = (task.resultSummary || "").trim();
+  if (!resultSummary) {
+    return task.kind;
+  }
+  if (task.kind === "browser.extract") {
+    return `browser.extract / 提取结果：${resultSummary}`;
+  }
+  if (task.kind === "browser.screenshot") {
+    const artifactPath = resultSummary.replace("browser screenshot captured:", "").trim();
+    return artifactPath ? `browser.screenshot / 截图产物：${artifactPath}` : `browser.screenshot / ${resultSummary}`;
+  }
+  return `${task.kind} / ${resultSummary}`;
 }
 
 function ApprovalActions({
@@ -2244,36 +2277,55 @@ function EmbeddedPreviewPage({
 }) {
   const [controlledInput, setControlledInput] = useState("browser demo text");
   const [controlledResult, setControlledResult] = useState("等待受控浏览器动作");
-  const readAuthenticatedCookie = () => {
+  const readCookieValue = (name: string) => {
     if (typeof document === "undefined") {
       return "";
     }
     const cookie = document.cookie
       .split(";")
       .map((item) => item.trim())
-      .find((item) => item.startsWith("gc_auth="));
+      .find((item) => item.startsWith(`${name}=`));
     if (!cookie) {
       return "";
     }
-    return decodeURIComponent(cookie.slice("gc_auth=".length));
+    return decodeURIComponent(cookie.slice(name.length + 1));
   };
-  const [authenticatedCookieValue, setAuthenticatedCookieValue] = useState(() => readAuthenticatedCookie());
+  const readAuthenticatedFixtureState = () => ({
+    session: readCookieValue("gc_auth"),
+    profile: readCookieValue("gc_auth_profile"),
+    role: readCookieValue("gc_auth_role"),
+    scope: readCookieValue("gc_auth_scope"),
+    transport: readCookieValue("gc_auth_transport"),
+  });
+  const [authenticatedFixtureState, setAuthenticatedFixtureState] = useState(() => readAuthenticatedFixtureState());
   useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
     }
-    const syncCookie = () => setAuthenticatedCookieValue(readAuthenticatedCookie());
+    const syncCookie = () => setAuthenticatedFixtureState(readAuthenticatedFixtureState());
     syncCookie();
     const timer = window.setInterval(syncCookie, 500);
     return () => window.clearInterval(timer);
   }, []);
-  const authenticatedSessionActive = authenticatedCookieValue === "acceptance-session";
+  const authenticatedSessionActive = authenticatedFixtureState.session === "acceptance-session";
   const authenticatedSessionLabel = authenticatedSessionActive
     ? "session=acceptance-session"
     : "session=missing";
+  const authenticatedProfileLabel = authenticatedFixtureState.profile
+    ? `profile=${authenticatedFixtureState.profile}`
+    : "profile=missing";
+  const authenticatedRoleLabel = authenticatedFixtureState.role
+    ? `role=${authenticatedFixtureState.role}`
+    : "role=missing";
+  const authenticatedScopeLabel = authenticatedFixtureState.scope
+    ? `scope=${authenticatedFixtureState.scope}`
+    : "scope=missing";
+  const authenticatedTransportLabel = authenticatedFixtureState.transport
+    ? `transport=${authenticatedFixtureState.transport}`
+    : "transport=missing";
   const authenticatedResult = authenticatedSessionActive
-    ? "identity=authenticated-browser;session=acceptance-session;scope=controlled"
-    : "identity=authenticated-browser;session=missing;scope=controlled";
+    ? `identity=authenticated-browser;session=acceptance-session;profile=${authenticatedFixtureState.profile || "missing"};role=${authenticatedFixtureState.role || "missing"};scope=${authenticatedFixtureState.scope || "missing"};transport=${authenticatedFixtureState.transport || "missing"}`
+    : `identity=authenticated-browser;session=missing;profile=${authenticatedFixtureState.profile || "missing"};role=${authenticatedFixtureState.role || "missing"};scope=${authenticatedFixtureState.scope || "missing"};transport=${authenticatedFixtureState.transport || "missing"}`;
   const paneTitle =
     pane === "thread-one" ? "线程一预览" : pane === "thread-two" ? "线程二预览" : "本地预览";
 
@@ -2368,6 +2420,10 @@ function EmbeddedPreviewPage({
                   <h4 data-testid="authenticated-browser-heading">Authenticated browser acceptance panel</h4>
                   <p>这个面板通过稳定 cookie 展示 authenticated session baseline，供 browser policy 与 canonical acceptance 验证。</p>
                   <p data-testid="authenticated-browser-session">{authenticatedSessionLabel}</p>
+                  <p data-testid="authenticated-browser-profile">{authenticatedProfileLabel}</p>
+                  <p data-testid="authenticated-browser-role">{authenticatedRoleLabel}</p>
+                  <p data-testid="authenticated-browser-scope">{authenticatedScopeLabel}</p>
+                  <p data-testid="authenticated-browser-transport">{authenticatedTransportLabel}</p>
                   <p data-testid="authenticated-browser-result">{authenticatedResult}</p>
                 </article>
               </div>

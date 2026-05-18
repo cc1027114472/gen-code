@@ -685,6 +685,34 @@ func deriveAgentExecutionPlan(goal string) AgentExecutionPlan {
 		Summary: "Use the minimal allowed actions needed to complete the goal.",
 	}
 
+	if isBrowserThenRespondGoal(normalized) {
+		requiredSequence := []string{"browser_open", "browser_type", "browser_click", "browser_extract", "respond"}
+		steps := []AgentPlanStep{
+			{Title: "Open the controlled browser page", ExpectedActionTypes: []string{"browser_open"}, Status: "pending"},
+			{Title: "Type into the controlled page", ExpectedActionTypes: []string{"browser_type"}, Status: "pending"},
+			{Title: "Click the controlled page action", ExpectedActionTypes: []string{"browser_click"}, Status: "pending"},
+			{Title: "Extract the controlled page result", ExpectedActionTypes: []string{"browser_extract"}, Status: "pending"},
+			{Title: "Answer with the browser result", ExpectedActionTypes: []string{"respond"}, Status: "pending"},
+		}
+		if wantsBrowserScreenshot(normalized) {
+			requiredSequence = []string{"browser_open", "browser_type", "browser_click", "browser_extract", "browser_screenshot", "respond"}
+			steps = []AgentPlanStep{
+				{Title: "Open the controlled browser page", ExpectedActionTypes: []string{"browser_open"}, Status: "pending"},
+				{Title: "Type into the controlled page", ExpectedActionTypes: []string{"browser_type"}, Status: "pending"},
+				{Title: "Click the controlled page action", ExpectedActionTypes: []string{"browser_click"}, Status: "pending"},
+				{Title: "Extract the controlled page result", ExpectedActionTypes: []string{"browser_extract"}, Status: "pending"},
+				{Title: "Capture a browser screenshot", ExpectedActionTypes: []string{"browser_screenshot"}, Status: "pending"},
+				{Title: "Answer with the browser result", ExpectedActionTypes: []string{"respond"}, Status: "pending"},
+			}
+		}
+		return AgentExecutionPlan{
+			Summary:          "Open the controlled browser page, interact with it, extract the stable result, and then answer.",
+			Mode:             "browser_then_respond",
+			Steps:            steps,
+			RequiredSequence: requiredSequence,
+		}
+	}
+
 	if isPatchThenRespondGoal(normalized) {
 		return AgentExecutionPlan{
 			Summary: "Apply the requested patch first, then answer with the result.",
@@ -799,6 +827,47 @@ func isPatchThenRespondGoal(normalized string) bool {
 	return !containsAnySubstring(normalized, readFirstSignals...)
 }
 
+func isBrowserThenRespondGoal(normalized string) bool {
+	if normalized == "" {
+		return false
+	}
+	browserSignals := []string{
+		"browser",
+		"controlled browser",
+		"controlled page",
+		"local preview",
+		"preview page",
+		"fixture page",
+		"open the page",
+		"open the controlled",
+		"open the local preview",
+		"打开受控页面",
+		"打开本地页面",
+		"打开预览页",
+		"浏览器",
+		"受控页面",
+		"本地预览",
+	}
+	interactionSignals := []string{
+		"type",
+		"click",
+		"extract",
+		"fill",
+		"input",
+		"form",
+		"结果",
+		"输入",
+		"点击",
+		"提取",
+		"填写",
+	}
+	return containsAnySubstring(normalized, browserSignals...) && containsAnySubstring(normalized, interactionSignals...)
+}
+
+func wantsBrowserScreenshot(normalized string) bool {
+	return containsAnySubstring(normalized, "screenshot", "capture a screenshot", "take a screenshot", "截图", "截屏")
+}
+
 func DeriveAgentExecutionPlanForRuntime(goal string) AgentExecutionPlan {
 	return deriveAgentExecutionPlan(goal)
 }
@@ -833,6 +902,11 @@ func validateAgentActionSequence(state AgentRunState, action AgentAction) error 
 	if len(state.Plan.RequiredSequence) == 0 {
 		return nil
 	}
+	if strings.TrimSpace(state.Plan.Mode) == "browser_then_respond" {
+		if err := validateBrowserAgentActionSequence(state, action); err != nil {
+			return err
+		}
+	}
 	expectedIndex := len(state.CompletedActions)
 	if expectedIndex >= len(state.Plan.RequiredSequence) {
 		return nil
@@ -845,6 +919,50 @@ func validateAgentActionSequence(state AgentRunState, action AgentAction) error 
 		return fmt.Errorf("agent action skipped required discovery step")
 	}
 	return fmt.Errorf("agent action violates required sequence: expected %s, got %s", expected, action.Type)
+}
+
+func validateBrowserAgentActionSequence(state AgentRunState, action AgentAction) error {
+	completed := state.CompletedActions
+	if len(completed) == 0 && action.Type != "browser_open" {
+		return fmt.Errorf("agent action skipped required browser_open step")
+	}
+	if action.Type == "respond" {
+		hasExtract := false
+		for _, item := range completed {
+			if item == "browser_extract" {
+				hasExtract = true
+				break
+			}
+		}
+		if !hasExtract {
+			return fmt.Errorf("agent action violates required sequence: browser_extract must happen before respond")
+		}
+	}
+	if action.Type == "browser_click" {
+		hasType := false
+		for _, item := range completed {
+			if item == "browser_type" {
+				hasType = true
+				break
+			}
+		}
+		if !hasType {
+			return fmt.Errorf("agent action violates required sequence: browser_type must happen before browser_click")
+		}
+	}
+	if action.Type == "browser_screenshot" {
+		hasExtract := false
+		for _, item := range completed {
+			if item == "browser_extract" {
+				hasExtract = true
+				break
+			}
+		}
+		if !hasExtract {
+			return fmt.Errorf("agent action violates required sequence: browser_extract must happen before browser_screenshot")
+		}
+	}
+	return nil
 }
 
 func agentActionMatchesSequence(actionType string, expected string) bool {
@@ -868,6 +986,8 @@ func buildAgentModeGuidance(mode string) string {
 		return "If the goal asks for broad search before line-level detail, your first action must be search_text. Only then use search_text_detailed, then respond."
 	case "stat_then_read":
 		return "If the goal asks to confirm existence or inspect metadata before reading, your first action must be stat_file. Only then read the file, then respond."
+	case "browser_then_respond":
+		return "If the goal asks you to open a controlled page, type, click, extract the result, and then answer, your first action must be browser_open. Then browser_type, browser_click, browser_extract, optional browser_screenshot, and finally respond."
 	default:
 		return "Use the minimal allowed actions needed to complete the goal."
 	}

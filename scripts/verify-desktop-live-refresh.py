@@ -874,6 +874,7 @@ def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
         thread_id,
         lambda item: item["toolId"] == scenario["kind"] and item["status"] == "completed" and expected_summary in item["summary"],
     )
+    refresh_thread_view(page, thread_id)
     visibility = {
         "taskCardVisible": False,
         "toolKindVisible": False,
@@ -909,7 +910,11 @@ def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
                 assert_result_card_contains(page, "latest-task-card", completed_task["resultSummary"], timeout=10000)
                 visibility["latestTaskCardVisible"] = True
             except Exception:
-                pass
+                try:
+                    assert_result_card_contains(page, "latest-task-card", expected_summary, timeout=10000)
+                    visibility["latestTaskCardVisible"] = True
+                except Exception:
+                    pass
 
     if not is_scenario_visible(visibility):
         try:
@@ -1605,6 +1610,109 @@ def run_agent_scenario(page, thread_id: str, scenario: dict) -> dict:
             "childVisible": child_visible,
             "childVisibilityMode": child_visibility_mode,
             "assistantMessageVisible": True,
+        },
+    }
+
+
+def run_ui_first_browser_agent_scenario(page, thread_id: str, thread_name: str, run_id: str) -> dict:
+    title = f"UI-first browser agent {run_id}"
+    baseline_assistant_messages = len(
+        [item for item in api("GET", f"/api/threads/{thread_id}/messages")["items"] if item.get("role") == "assistant"]
+    )
+    goal = (
+        "Open the controlled browser fixture page for the current thread, type browser demo text into the controlled input, "
+        "click the apply control, extract the stable result text, take a screenshot, and then answer in one short sentence "
+        "with the extracted result. Do not write files."
+    )
+    created_task = create_agent_task_via_ui(page, thread_id, title, goal, max_steps=6)
+    task_id = created_task["id"]
+    run_trigger_mode = run_task_via_ui(page, thread_id, task_id, title)
+
+    parent_task = wait_for_task_terminal(thread_id, task_id, timeout_seconds=90.0)
+    if parent_task.get("status") != "completed":
+        raise AssertionError(f"expected UI-first browser agent parent completed, got {parent_task.get('status')!r}")
+    if parent_task.get("agentPlanMode") != "browser_then_respond":
+        raise AssertionError(
+            f"expected UI-first browser agent plan mode browser_then_respond, got {parent_task.get('agentPlanMode')!r}"
+        )
+
+    child_tasks = api("GET", f"/api/threads/{thread_id}/tasks")["items"]
+    completed_children = [
+        item
+        for item in child_tasks
+        if item.get("parentTaskId") == task_id and item.get("status") == "completed"
+    ]
+    child_kinds = [item["kind"] for item in completed_children]
+    assert_required_child_sequence(
+        child_kinds,
+        [
+            {"browser.open"},
+            {"browser.type"},
+            {"browser.click"},
+            {"browser.extract"},
+            {"browser.screenshot"},
+        ],
+    )
+
+    latest_message = wait_for_new_assistant_message(thread_id, baseline_assistant_messages, timeout_seconds=30.0)
+    extract_child = next((item for item in completed_children if item.get("kind") == "browser.extract"), None)
+    screenshot_child = next((item for item in completed_children if item.get("kind") == "browser.screenshot"), None)
+    if extract_child is None:
+        raise AssertionError("expected browser.extract child task for UI-first browser agent scenario")
+    if screenshot_child is None:
+        raise AssertionError("expected browser.screenshot child task for UI-first browser agent scenario")
+
+    screenshot_artifact = wait_for_artifact(
+        thread_id,
+        lambda item: item["kind"] == "browser.screenshot" and item["path"] in screenshot_child["resultSummary"],
+        timeout_seconds=30.0,
+    )
+
+    refresh_thread_view(page, thread_id)
+    assert_article_contains(page, title, timeout=12000)
+    latest_agent_card = page.get_by_test_id("latest-agent-card")
+    latest_child_card = page.get_by_test_id("latest-child-task-card")
+    latest_message_card = page.get_by_test_id("latest-message-card")
+
+    expect(latest_agent_card).to_contain_text(title, timeout=15000)
+    expect(latest_agent_card).to_contain_text("browser_then_respond", timeout=15000)
+    expect(latest_child_card).to_contain_text(screenshot_child["id"], timeout=15000)
+    expect(latest_child_card).to_contain_text("browser.screenshot", timeout=15000)
+    expect(latest_child_card).to_contain_text(screenshot_artifact["path"], timeout=15000)
+    expect(latest_message_card).to_contain_text(latest_message["content"], timeout=15000)
+
+    child_visible = False
+    child_visibility_mode = ""
+    for child in [extract_child, screenshot_child]:
+        try:
+            expected_text = screenshot_artifact["path"] if child["kind"] == "browser.screenshot" else child["resultSummary"]
+            assert_article_contains(page, child["title"], expected_text, timeout=12000)
+            child_visible = True
+            child_visibility_mode = "title+browser-summary"
+        except Exception:
+            continue
+
+    return {
+        "parentTaskId": task_id,
+        "parentTitle": title,
+        "parentStatus": parent_task["status"],
+        "planMode": parent_task.get("agentPlanMode", ""),
+        "runTriggerMode": run_trigger_mode,
+        "uiRunTriggered": run_trigger_mode == "desktop-ui",
+        "childTaskIds": [item["id"] for item in completed_children],
+        "childKinds": child_kinds,
+        "extractSummary": extract_child["resultSummary"],
+        "assistantMessageId": latest_message["id"],
+        "assistantMessage": latest_message["content"],
+        "screenshotArtifactPath": screenshot_artifact["path"],
+        "visibility": {
+            "parentVisible": True,
+            "latestAgentCardVisible": latest_agent_card.is_visible(),
+            "latestChildCardVisible": latest_child_card.is_visible(),
+            "latestMessageCardVisible": latest_message_card.is_visible(),
+            "childVisible": child_visible,
+            "childVisibilityMode": child_visibility_mode,
+            "toolCallsVisible": True,
         },
     }
 
@@ -2327,6 +2435,7 @@ def main() -> int:
                     },
                 )
             )
+            ui_first_browser_agent_result = run_ui_first_browser_agent_scenario(page, thread_id, thread_name, run_id)
             recovery_result = run_recovery_continuation_scenario(page, thread_id, run_id)
             approval_rejected_result = run_agent_approval_rejected_scenario(page, thread_id, run_id)
             created_task = create_task(
@@ -2433,6 +2542,7 @@ def main() -> int:
                         "childTaskFailed": child_failed_result,
                     },
                     "uiFirstCanonicalAgentScenario": recovery_result,
+                    "uiFirstCanonicalBrowserAgentScenario": ui_first_browser_agent_result,
                     "recoveryContinuation": recovery_result,
                     "approvalVisibility": {
                         "applyApprovalVisible": approval_visible_before_approve,
@@ -2579,6 +2689,7 @@ def main() -> int:
                 ],
                 "agentFailureMatrix": acceptance_report["remote"]["agentFailureMatrix"],
                 "uiFirstCanonicalAgentScenario": recovery_result,
+                "uiFirstCanonicalBrowserAgentScenario": ui_first_browser_agent_result,
                 "recoveryContinuation": recovery_result,
                 "runtimeSource": runtime_status.get("runtimeSource", ""),
                 "runtimeTrust": runtime_status.get("runtimeTrust", ""),
@@ -2636,6 +2747,20 @@ def validate_release_baseline(result: dict) -> None:
             raise AssertionError(f"missing remote acceptance key: {key}")
     if "uiFirstCanonicalAgentScenario" not in remote_report:
         raise AssertionError("missing UI-first canonical agent scenario in remote acceptance report")
+    if "uiFirstCanonicalBrowserAgentScenario" not in remote_report:
+        raise AssertionError("missing UI-first canonical browser agent scenario in remote acceptance report")
+    browser_agent_scenario = remote_report.get("uiFirstCanonicalBrowserAgentScenario") or {}
+    for key in (
+        "parentTaskId",
+        "childTaskIds",
+        "childKinds",
+        "extractSummary",
+        "assistantMessage",
+        "screenshotArtifactPath",
+        "visibility",
+    ):
+        if key not in browser_agent_scenario:
+            raise AssertionError(f"missing UI-first browser agent acceptance key: {key}")
     browser_visibility = remote_report.get("browserNavigationVisibility") or {}
     if browser_visibility.get("scenarioCount", 0) < 1:
         raise AssertionError("missing browser navigation canonical acceptance evidence")
