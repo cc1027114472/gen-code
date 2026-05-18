@@ -12,11 +12,11 @@
 - smoke summary / failure artifact 逻辑：
   - [verify-desktop-live-refresh.py](/D:/GOWorks/gen-code-heji/gen-code/scripts/verify-desktop-live-refresh.py)
 
-当前环境限制：
+当前环境现状：
 
 - 本机已安装 `gh`
-- 但当前 **未登录 GitHub**
-- 因此本轮不能伪装成“已经触发了远端 workflow_dispatch”
+- 已登录 GitHub 账号 `cc1027114472`
+- 当前仓库已绑定 GitHub 远端 `https://github.com/cc1027114472/gen-code.git`
 
 ## 首次真实运行步骤
 
@@ -167,8 +167,33 @@ gh run watch <run-id>
 当前真实状态：
 
 - 本机已安装 `gh`
-- 但当前尚未登录 GitHub
-- 因此这份手册当前只覆盖“如何首跑”和“如何记录结果”，不伪装成“已经完成远端 workflow 首跑”
+- 已完成 `gh auth login`
+- 当前仓库已绑定 GitHub 远端
+- 已完成一次真实远端 `desktop-smoke.yml` 首跑
+
+## 首次真实远端运行记录
+
+- 运行日期：2026-05-18
+- branch / ref：`master`
+- workflow：`desktop-smoke.yml`
+- run id：`26040617047`
+- run URL：[desktop-smoke #26040617047](https://github.com/cc1027114472/gen-code/actions/runs/26040617047)
+- 结论：`success`
+- `desktop-smoke-summary` artifact：可下载，已核对
+- summary 关键字段：
+  - `acceptanceMode=smoke`
+  - `runtimeSource=remote-app-server`
+  - `runtimeTrust=canonical`
+  - `canonicalRuntimeUrl=http://127.0.0.1:10008`
+  - `refreshMode.label=SSE 已连接`
+  - `threadId=thread-1`
+- 首个有效证据：
+  - 远端 artifact `desktop-smoke-summary.json`
+  - 本地下载核对路径：`tmp/gh-run-26040617047/desktop-smoke-summary.json`
+- CI-only 问题：本次未触发功能性 CI-only 失败
+- 额外观察：
+  - GitHub Actions 给出 Node.js 20 deprecation annotation，当前不影响通过
+  - `windows-latest` 正在向 `windows-2025-vs2026` 重定向，当前不影响通过
 
 ## 与本地对等入口的关系
 

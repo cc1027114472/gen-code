@@ -167,12 +167,19 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 - 本地 smoke/full 对等入口
 - summary / logs / screenshot artifact 语义
 
-但当前机器上的真实阻塞仍需明确记录：
+当前真实状态已更新为：
 
-- `gh` 已安装，但尚未 `gh auth login`
-- 当前仓库仅绑定 `gitee` 远端，尚未绑定 GitHub 远端
+- `gh` 已安装并已完成 `gh auth login`
+- 当前仓库已绑定 GitHub 远端 `https://github.com/cc1027114472/gen-code.git`
+- 已完成一次真实远端 `desktop-smoke.yml` 首跑
+- 首跑 run id：`26040617047`
+- 首跑结论：`success`
+- `desktop-smoke-summary` artifact 已成功下载并核对
 
-因此当前只能说“远端 smoke 首跑手册和本地对等入口已准备好”，不能写成“已经完成真实 GitHub 首跑”。
+因此当前可以明确说：
+
+- 远端 smoke 首跑手册和本地对等入口已准备好
+- 真实 GitHub 远端 smoke 首跑也已经完成并留有证据
 
 失败分类当前统一围绕：
 

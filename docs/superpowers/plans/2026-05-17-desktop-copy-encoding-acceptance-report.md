@@ -96,7 +96,15 @@
 - full lane 仍保留为更重的完整链路验收，当前更适合作为手动触发或发布前检查。
 - full lane 现在会额外记录 `agent.run` failure-state matrix：remote canonical live 覆盖 success / approval rejected / child task failed，`recovered_as_failed` 继续通过 evidence-only 方式收口。
 - smoke summary 中的 `refreshMode` 已从不稳定的 `unknown` 收敛为可用的连接态信号，例如 `SSE 已连接`。
-- 当前尚未完成真实 GitHub 远端首跑；`gh` 未登录这一事实必须继续在 closeout 和 runbook 中明确记录。
+- 2026-05-18 已完成一次真实 GitHub 远端 `desktop-smoke.yml` 首跑，run id 为 `26040617047`。
+- 首跑结果为 `success`，并已下载核对 `desktop-smoke-summary` artifact。
+- summary 已确认：
+  - `runtimeSource=remote-app-server`
+  - `runtimeTrust=canonical`
+  - `refreshMode.label=SSE 已连接`
+- 当前 closeout 仍应明确记录：
+  - 远端默认 gate 已有真实证据
+  - full lane 仍是手动 / 发布前检查，不是默认 CI gate
 
 ## 通过标准
 
