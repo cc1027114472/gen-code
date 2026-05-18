@@ -175,6 +175,7 @@ func TestSkillsListPrintsGovernanceBaseline(t *testing.T) {
 	require.Contains(t, output, "localization=checked")
 	require.Contains(t, output, "capability=")
 	require.Contains(t, output, "isolation=shared-common")
+	require.NotContains(t, output, "gstack")
 }
 
 func TestSkillsListUsesRemoteRuntimeSourceWhenServerIsAvailable(t *testing.T) {
