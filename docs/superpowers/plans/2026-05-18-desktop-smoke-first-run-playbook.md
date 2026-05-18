@@ -6,6 +6,8 @@
 
 - 默认 smoke gate workflow：
   - [.github/workflows/desktop-smoke.yml](/D:/GOWorks/gen-code-heji/gen-code/.github/workflows/desktop-smoke.yml)
+- 手动 full workflow：
+  - [.github/workflows/desktop-full.yml](/D:/GOWorks/gen-code-heji/gen-code/.github/workflows/desktop-full.yml)
 - 本地对等入口：
   - [run-desktop-smoke-check.ps1](/D:/GOWorks/gen-code-heji/gen-code/scripts/run-desktop-smoke-check.ps1)
   - [run-desktop-smoke-with-bootstrap.ps1](/D:/GOWorks/gen-code-heji/gen-code/scripts/run-desktop-smoke-with-bootstrap.ps1)
@@ -204,6 +206,43 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-with-bootst
 ```
 
 它是当前 smoke gate 的本地对等路径。若这条都不通过，远端 workflow 大概率也不会通过。
+
+对于手动远端 full workflow，建议先执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-check.ps1
+```
+
+它是当前 full lane 的本地对等路径。若这条不通过，不应直接把远端 full workflow 失败归因为 CI-only 问题。
+
+## 手动远端 Full Workflow 记录模板
+
+当触发 `.github/workflows/desktop-full.yml` 后，固定记录：
+
+- run 日期
+- branch / ref
+- workflow：`desktop-full.yml`
+- run id
+- 结论：success / failed
+- `desktop-full-summary` artifact 是否可下载
+- summary 关键字段是否存在并通过核对：
+  - `runtimeSource=remote-app-server`
+  - `runtimeTrust=canonical`
+  - `refreshMode`
+  - `fallbackEvidenceMode`
+  - `uiFirstCanonicalAgentScenario`
+  - `uiFirstCanonicalBrowserAgentScenario`
+  - `agentFailureMatrix`
+  - `mcpVerifiedLanePreflight`
+- 若失败：
+  - `desktop-full-failure.json` 的失败分类
+  - 首个有效定位证据
+  - 是否属于 CI-only 问题
+
+当前状态：
+
+- 手动远端 full workflow 入口已补齐
+- 真实 full 远端首跑记录尚未生成
 
 ## 通过标准
 

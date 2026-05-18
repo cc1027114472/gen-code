@@ -94,6 +94,7 @@
 - `powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-with-bootstrap.ps1` 是默认 smoke gate 的本地对等入口。
 - smoke lane 适合作为本地快速预检和默认 CI smoke gate。
 - full lane 仍保留为更重的完整链路验收，当前更适合作为手动触发或发布前检查。
+- 手动远端 full workflow 入口已补齐，继续保持“手动 / 发布前检查”定位，不升级为默认 CI gate。
 - full lane 现在会额外记录 `agent.run` failure-state matrix：remote canonical live 覆盖 success / approval rejected / child task failed，`recovered_as_failed` 继续通过 evidence-only 方式收口。
 - smoke summary 中的 `refreshMode` 已从不稳定的 `unknown` 收敛为可用的连接态信号，例如 `SSE 已连接`。
 - 2026-05-18 已完成一次真实 GitHub 远端 `desktop-smoke.yml` 首跑，run id 为 `26040617047`。

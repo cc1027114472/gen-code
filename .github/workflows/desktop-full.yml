@@ -1,33 +1,12 @@
-name: desktop-smoke
+name: desktop-full
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
-    paths:
-      - ".github/workflows/desktop-smoke.yml"
-      - "cmd/**"
-      - "desktop/**"
-      - "internal/**"
-      - "scripts/**"
-      - "go.mod"
-      - "go.sum"
-  pull_request:
-    paths:
-      - ".github/workflows/desktop-smoke.yml"
-      - "cmd/**"
-      - "desktop/**"
-      - "internal/**"
-      - "scripts/**"
-      - "go.mod"
-      - "go.sum"
 
 jobs:
-  smoke:
+  full:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -60,37 +39,37 @@ jobs:
       - name: Install Playwright browser
         run: python -m playwright install chromium
 
-      - name: Run desktop smoke acceptance
+      - name: Run desktop full acceptance
         shell: powershell
-        run: powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-smoke-with-bootstrap.ps1
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-check.ps1
 
-      - name: Upload smoke logs
+      - name: Upload full logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-smoke-logs
+          name: desktop-full-logs
           if-no-files-found: ignore
           path: |
-            server-smoke.stdout.log
-            server-smoke.stderr.log
-            desktop/frontend/vite-smoke.stdout.log
-            desktop/frontend/vite-smoke.stderr.log
+            server-full.stdout.log
+            server-full.stderr.log
+            desktop/frontend/vite-full.stdout.log
+            desktop/frontend/vite-full.stderr.log
 
-      - name: Upload smoke summary
+      - name: Upload full summary
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-smoke-summary
+          name: desktop-full-summary
           if-no-files-found: ignore
           path: |
-            tmp/desktop-smoke-artifacts/desktop-smoke-summary.json
-            tmp/desktop-smoke-artifacts/desktop-smoke-failure.json
+            tmp/desktop-smoke-artifacts/desktop-full-summary.json
+            tmp/desktop-smoke-artifacts/desktop-full-failure.json
 
-      - name: Upload smoke screenshot
+      - name: Upload full screenshot
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-smoke-screenshot
+          name: desktop-full-screenshot
           if-no-files-found: ignore
           path: |
-            tmp/desktop-smoke-artifacts/desktop-smoke-failure.png
+            tmp/desktop-smoke-artifacts/desktop-full-failure.png

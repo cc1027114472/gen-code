@@ -401,6 +401,20 @@ def remove_artifact_if_exists(name: str) -> None:
 def clear_stale_failure_artifacts() -> None:
     remove_artifact_if_exists("desktop-smoke-failure.json")
     remove_artifact_if_exists("desktop-smoke-failure.png")
+    remove_artifact_if_exists("desktop-full-failure.json")
+    remove_artifact_if_exists("desktop-full-failure.png")
+
+
+def current_failure_json_name() -> str:
+    if ACCEPTANCE_MODE == "full":
+        return "desktop-full-failure.json"
+    return "desktop-smoke-failure.json"
+
+
+def current_failure_png_name() -> str:
+    if ACCEPTANCE_MODE == "full":
+        return "desktop-full-failure.png"
+    return "desktop-smoke-failure.png"
 
 
 def api(method: str, path: str, data=None):
@@ -2072,7 +2086,7 @@ def run_smoke_acceptance(page, runtime_status: dict, thread_id: str) -> dict:
 def write_failure_screenshot(page) -> str | None:
     try:
       screenshot = page.screenshot(full_page=True)
-      return write_png_artifact("desktop-smoke-failure.png", screenshot)
+      return write_png_artifact(current_failure_png_name(), screenshot)
     except Exception:
       return None
 
@@ -3020,7 +3034,7 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as exc:
         parsed = normalize_failure(exc)
-        write_json_artifact("desktop-smoke-failure.json", parsed)
+        write_json_artifact(current_failure_json_name(), parsed)
         if "page" in globals():
             try:
                 write_failure_screenshot(globals()["page"])

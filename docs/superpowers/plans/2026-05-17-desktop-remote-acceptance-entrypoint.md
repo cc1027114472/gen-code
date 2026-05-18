@@ -159,6 +159,32 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 - `desktop-smoke-screenshot`
   - 失败时上传页面截图
 
+## 手动远端 Full Workflow
+
+仓库新增手动远端 full workflow：
+
+- [.github/workflows/desktop-full.yml](/D:/GOWorks/gen-code-heji/gen-code/.github/workflows/desktop-full.yml)
+
+当前定位：
+
+- 只支持 `workflow_dispatch`
+- 不接入 `push` / `pull_request`
+- 不替代默认 `desktop-smoke.yml`
+- 作为 canonical remote `5174 + 10008` 的发布前 / 大改动后完整回归入口
+- 复用：
+  - [run-desktop-live-refresh-check.ps1](/D:/GOWorks/gen-code-heji/gen-code/scripts/run-desktop-live-refresh-check.ps1)
+  - [verify-desktop-live-refresh.py](/D:/GOWorks/gen-code-heji/gen-code/scripts/verify-desktop-live-refresh.py)
+
+当前 artifact 语义固定为：
+
+- `desktop-full-summary`
+  - 成功时至少应包含 `desktop-full-summary.json`
+  - 失败时仍应保留 `desktop-full-failure.json`
+- `desktop-full-logs`
+  - 失败时上传前后端启动日志
+- `desktop-full-screenshot`
+  - 失败时上传页面截图
+
 ## 真实 GitHub 远端首跑状态
 
 当前仓库已经具备：
@@ -180,6 +206,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 
 - 远端 smoke 首跑手册和本地对等入口已准备好
 - 真实 GitHub 远端 smoke 首跑也已经完成并留有证据
+- 手动远端 full workflow 已具备执行入口，但尚未形成真实首跑记录
 
 失败分类当前统一围绕：
 
@@ -201,5 +228,5 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 下一步若要继续推进，优先顺序固定为：
 
 1. 完成第一次真实 GitHub 远端 smoke 首跑并记录结果
-2. 若远端首跑通过，再决定是否补 full lane 的手动/发布前 runbook
+2. 完成第一次真实 GitHub 远端 full 手动 workflow 首跑并记录结果
 3. fallback lane 继续只补证据链，不升级为同级 browser 自动化
