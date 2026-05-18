@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	defaultAgentMaxSteps = 6
+	defaultAgentMaxSteps  = 6
 	waitingStatusApproval = "waiting_for_approval"
 	waitingStatusTask     = "waiting_for_task"
 )
@@ -40,33 +40,33 @@ type AgentRunInput struct {
 
 type AgentAction struct {
 	Type             string   `json:"type"`
-	ReasoningSummary string `json:"reasoningSummary,omitempty"`
-	Path             string `json:"path,omitempty"`
+	ReasoningSummary string   `json:"reasoningSummary,omitempty"`
+	Path             string   `json:"path,omitempty"`
 	Paths            []string `json:"paths,omitempty"`
 	Pattern          string   `json:"pattern,omitempty"`
 	Query            string   `json:"query,omitempty"`
-	Limit            int    `json:"limit,omitempty"`
+	Limit            int      `json:"limit,omitempty"`
 	Patch            string   `json:"patch,omitempty"`
 	Response         string   `json:"response,omitempty"`
 }
 
 type AgentRunState struct {
-	TaskID             string      `json:"taskId"`
-	ThreadID           string      `json:"threadId"`
-	StepIndex          int         `json:"stepIndex"`
-	MaxSteps           int         `json:"maxSteps"`
-	WaitingChildTaskID string      `json:"waitingChildTaskId,omitempty"`
-	LastAction         AgentAction `json:"lastAction,omitempty"`
-	Status             string      `json:"status"`
-	FailureReason      string      `json:"failureReason,omitempty"`
-	Goal               string      `json:"goal"`
-	Provider           string      `json:"provider,omitempty"`
-	Model              string      `json:"model,omitempty"`
-	MaxOutputTokens    int         `json:"maxOutputTokens,omitempty"`
+	TaskID             string             `json:"taskId"`
+	ThreadID           string             `json:"threadId"`
+	StepIndex          int                `json:"stepIndex"`
+	MaxSteps           int                `json:"maxSteps"`
+	WaitingChildTaskID string             `json:"waitingChildTaskId,omitempty"`
+	LastAction         AgentAction        `json:"lastAction,omitempty"`
+	Status             string             `json:"status"`
+	FailureReason      string             `json:"failureReason,omitempty"`
+	Goal               string             `json:"goal"`
+	Provider           string             `json:"provider,omitempty"`
+	Model              string             `json:"model,omitempty"`
+	MaxOutputTokens    int                `json:"maxOutputTokens,omitempty"`
 	Plan               AgentExecutionPlan `json:"plan,omitempty"`
-	CurrentStepTitle   string      `json:"currentStepTitle,omitempty"`
-	LastReasoning      string      `json:"lastReasoning,omitempty"`
-	CompletedActions   []string    `json:"completedActions,omitempty"`
+	CurrentStepTitle   string             `json:"currentStepTitle,omitempty"`
+	LastReasoning      string             `json:"lastReasoning,omitempty"`
+	CompletedActions   []string           `json:"completedActions,omitempty"`
 }
 
 func parseAgentRunInput(raw string) (AgentRunInput, error) {
@@ -326,11 +326,21 @@ func (r *Runner) runAgentLoop(ctx context.Context, thread session.Thread, parent
 				state.FailureReason = "agent action path is required for apply_patch"
 				return "", fmt.Errorf("agent action path is required for apply_patch")
 			}
-			waiting, err := r.runAgentPatchTask(ctx, thread, parent, &state, path, action.Patch)
+			waiting, waitingSummary, err := r.runAgentPatchTask(ctx, thread, parent, &state, path, action.Patch)
 			if err != nil {
 				return "", err
 			}
 			if waiting {
+				state.CompletedActions = append(state.CompletedActions, action.Type)
+				state.CurrentStepTitle = currentAgentStepTitle(state.Plan, state.CompletedActions)
+				if _, err := r.registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
+					Status:        "waiting_for_approval",
+					ResultSummary: waitingSummary,
+					WaitingStatus: strPtr(waitingStatusApproval),
+					AgentState:    strPtr(marshalAgentRunState(state)),
+				}); err != nil {
+					return "", err
+				}
 				return "agent waiting for approval", nil
 			}
 		default:
@@ -443,13 +453,13 @@ func (r *Runner) runAgentChildTask(ctx context.Context, thread session.Thread, p
 	return err
 }
 
-func (r *Runner) runAgentPatchTask(ctx context.Context, thread session.Thread, parent session.Task, state *AgentRunState, path string, patch string) (bool, error) {
+func (r *Runner) runAgentPatchTask(ctx context.Context, thread session.Thread, parent session.Task, state *AgentRunState, path string, patch string) (bool, string, error) {
 	raw, err := json.Marshal(map[string]string{
 		"path":  path,
 		"patch": patch,
 	})
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	childStatus := "queued"
 	childApproval := "direct"
@@ -462,7 +472,7 @@ func (r *Runner) runAgentPatchTask(ctx context.Context, thread session.Thread, p
 	if thread.PermissionMode == policy.AskUser || thread.PermissionMode == "" {
 		targets, err := ExtractPatchTargets(patch)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 		if len(targets) == 0 {
 			targets = []string{path}
@@ -482,13 +492,13 @@ func (r *Runner) runAgentPatchTask(ctx context.Context, thread session.Thread, p
 		ParentTaskID:   parent.ID,
 	})
 	if !ok {
-		return false, session.ErrThreadNotFound
+		return false, "", session.ErrThreadNotFound
 	}
 	state.WaitingChildTaskID = child.ID
 	if childStatus == "needs_approval" {
 		targets, err := ExtractPatchTargets(patch)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 		if len(targets) == 0 {
 			targets = []string{path}
@@ -500,7 +510,7 @@ func (r *Runner) runAgentPatchTask(ctx context.Context, thread session.Thread, p
 			Summary:     childSummary,
 			TargetPaths: targets,
 		}); err != nil {
-			return false, err
+			return false, "", err
 		}
 		state.Status = waitingStatusApproval
 		if _, err := r.registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
@@ -509,17 +519,17 @@ func (r *Runner) runAgentPatchTask(ctx context.Context, thread session.Thread, p
 			WaitingStatus: strPtr(waitingStatusApproval),
 			AgentState:    strPtr(marshalAgentRunState(*state)),
 		}); err != nil {
-			return false, err
+			return false, "", err
 		}
 		if recorder, ok := r.registry.(interface {
 			AppendRuntimeEvent(threadID string, eventType string, message string) error
 		}); ok {
 			_ = recorder.AppendRuntimeEvent(thread.ID, "task.approval_required", childSummary)
 		}
-		return true, nil
+		return true, childSummary, nil
 	}
 	if childStatus == "failed" {
-		return false, fmt.Errorf("agent child task failed: %s", childSummary)
+		return false, "", fmt.Errorf("agent child task failed: %s", childSummary)
 	}
 	state.Status = waitingStatusTask
 	if _, err := r.registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
@@ -528,14 +538,14 @@ func (r *Runner) runAgentPatchTask(ctx context.Context, thread session.Thread, p
 		WaitingStatus: strPtr(waitingStatusTask),
 		AgentState:    strPtr(marshalAgentRunState(*state)),
 	}); err != nil {
-		return false, err
+		return false, "", err
 	}
 	childResult, err := r.RunTask(ctx, thread.ID, child.ID)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	if childResult.Status != "completed" {
-		return false, fmt.Errorf("agent child task failed: %s", childResult.ResultSummary)
+		return false, "", fmt.Errorf("agent child task failed: %s", childResult.ResultSummary)
 	}
 	state.WaitingChildTaskID = ""
 	state.Status = "running"
@@ -545,9 +555,9 @@ func (r *Runner) runAgentPatchTask(ctx context.Context, thread session.Thread, p
 		WaitingStatus: strPtr(""),
 		AgentState:    strPtr(marshalAgentRunState(*state)),
 	}); err != nil {
-		return false, err
+		return false, "", err
 	}
-	return false, nil
+	return false, childResult.ResultSummary, nil
 }
 
 func (r *Runner) failAgentParent(threadID string, parent session.Task, execErr error) (session.Task, error) {
@@ -617,6 +627,18 @@ func deriveAgentExecutionPlan(goal string) AgentExecutionPlan {
 		Summary: "Use the minimal allowed actions needed to complete the goal.",
 	}
 
+	if isPatchThenRespondGoal(normalized) {
+		return AgentExecutionPlan{
+			Summary: "Apply the requested patch first, then answer with the result.",
+			Mode:    "patch_then_respond",
+			Steps: []AgentPlanStep{
+				{Title: "Apply the requested patch", ExpectedActionTypes: []string{"apply_patch"}, Status: "pending"},
+				{Title: "Answer with the result", ExpectedActionTypes: []string{"respond"}, Status: "pending"},
+			},
+			RequiredSequence: []string{"apply_patch", "respond"},
+		}
+	}
+
 	if strings.Contains(normalized, "*.") && (strings.Contains(normalized, "filter") || strings.Contains(normalized, "筛") || strings.Contains(normalized, "pattern")) {
 		return AgentExecutionPlan{
 			Summary: "Filter matching files first, then read the selected files, then answer.",
@@ -673,6 +695,50 @@ func deriveAgentExecutionPlan(goal string) AgentExecutionPlan {
 	}
 
 	return plan
+}
+
+func isPatchThenRespondGoal(normalized string) bool {
+	if normalized == "" {
+		return false
+	}
+	writeSignals := []string{
+		"apply a patch",
+		"apply patch",
+		"patch ",
+		"patch the",
+		"patch this",
+		"modify",
+		"update",
+		"edit",
+		"change",
+		"fix",
+		"rewrite",
+		"replace",
+		"修改",
+		"更新",
+		"编辑",
+		"变更",
+		"修复",
+		"重写",
+		"补丁",
+		"替换",
+	}
+	if !containsAnySubstring(normalized, writeSignals...) {
+		return false
+	}
+	readFirstSignals := []string{
+		"先读",
+		"先读取",
+		"先看",
+		"先检查",
+		"first read",
+		"read first",
+		"inspect first",
+		"check first",
+		"before patching",
+		"before applying",
+	}
+	return !containsAnySubstring(normalized, readFirstSignals...)
 }
 
 func DeriveAgentExecutionPlanForRuntime(goal string) AgentExecutionPlan {
@@ -734,6 +800,8 @@ func agentActionMatchesSequence(actionType string, expected string) bool {
 
 func buildAgentModeGuidance(mode string) string {
 	switch strings.TrimSpace(mode) {
+	case "patch_then_respond":
+		return "If the goal explicitly asks you to modify a file and then report the outcome, your first action must be apply_patch. After the write task succeeds, respond with the result."
 	case "filter_then_read":
 		return "If the goal asks to filter by pattern first, your first action must be list_files_filtered. After filtering, read the selected files, then respond."
 	case "list_then_read":
@@ -772,7 +840,7 @@ func buildAgentPrompt(messages []session.MessageRecord, tasks []session.Task, st
 	}
 	modeGuidance := buildAgentModeGuidance(state.Plan.Mode)
 	return fmt.Sprintf(
-		"You are a minimal coding agent for a single thread.\nGoal: %s\nCurrent step: %d of %d.\nAllowed actions: respond, read_file, list_files, stat_file, read_files_batch, list_files_filtered, search_text, search_text_detailed, apply_patch.\nChoose actions deliberately: use stat_file for one file's existence or metadata, read_files_batch for multiple text files, list_files_filtered for directory filtering by pattern, search_text_detailed when you need file and line matches, and search_text for lightweight path-only discovery.\nPlan mode: %s\nPlan summary: %s\nRequired action sequence: %s\nCurrent required step: %s\nMode guidance: %s\nSequence guidance: when the goal asks you to filter a directory by pattern and then inspect specific files, first call list_files_filtered, then call read_files_batch for the selected files, then respond. Do not skip the filtering step when the goal explicitly asks for it. If you violate the required action sequence, the run fails immediately.\nReturn JSON only with keys type, reasoningSummary, path, paths, pattern, query, limit, patch, response.\nDo not include markdown fences, prose outside JSON, or unsupported keys.\nNever use any action outside the allowed set.\nRecent messages:\n%s\nRecent tasks:\n%s\n",
+		"You are a minimal coding agent for a single thread.\nGoal: %s\nCurrent step: %d of %d.\nAllowed actions: respond, read_file, list_files, stat_file, read_files_batch, list_files_filtered, search_text, search_text_detailed, apply_patch.\nChoose actions deliberately: use stat_file for one file's existence or metadata, read_files_batch for multiple text files, list_files_filtered for directory filtering by pattern, search_text_detailed when you need file and line matches, search_text for lightweight path-only discovery, and apply_patch when the goal explicitly asks for a code or file modification.\nPlan mode: %s\nPlan summary: %s\nRequired action sequence: %s\nCurrent required step: %s\nMode guidance: %s\nSequence guidance: when the goal asks you to filter a directory by pattern and then inspect specific files, first call list_files_filtered, then call read_files_batch for the selected files, then respond. When the goal explicitly asks you to modify files and then report the outcome, call apply_patch before respond. Do not skip the required step when the goal explicitly asks for it. If you violate the required action sequence, the run fails immediately.\nReturn JSON only with keys type, reasoningSummary, path, paths, pattern, query, limit, patch, response.\nDo not include markdown fences, prose outside JSON, or unsupported keys.\nNever use any action outside the allowed set.\nRecent messages:\n%s\nRecent tasks:\n%s\n",
 		state.Goal,
 		state.StepIndex+1,
 		state.MaxSteps,
@@ -833,7 +901,10 @@ func parseAgentActionWithState(raw string, state AgentRunState) (AgentAction, er
 			return AgentAction{}, fmt.Errorf("agent action parse error: %w", err)
 		}
 		if err := json.Unmarshal([]byte(extracted), &action); err != nil {
-			return AgentAction{}, fmt.Errorf("agent action parse error: %w", err)
+			sanitized := sanitizeLooseJSONStringLiterals(extracted)
+			if sanitizeErr := json.Unmarshal([]byte(sanitized), &action); sanitizeErr != nil {
+				return AgentAction{}, fmt.Errorf("agent action parse error: %w", err)
+			}
 		}
 	}
 	action.Type = strings.TrimSpace(action.Type)
@@ -852,6 +923,7 @@ func parseAgentActionWithState(raw string, state AgentRunState) (AgentAction, er
 		action.Type = inferred
 	}
 	action = inheritAgentActionContext(action, state)
+	action = populateAgentResponseFallback(normalized, action)
 	switch action.Type {
 	case "respond", "read_file", "list_files", "stat_file", "read_files_batch", "list_files_filtered", "search_text", "search_text_detailed", "apply_patch":
 		return action, nil
@@ -881,6 +953,30 @@ func normalizeAgentActionType(value string) string {
 	default:
 		return strings.TrimSpace(value)
 	}
+}
+
+func populateAgentResponseFallback(raw string, action AgentAction) AgentAction {
+	if action.Type != "respond" || strings.TrimSpace(action.Response) != "" {
+		return action
+	}
+	payload := map[string]any{}
+	decoded := strings.TrimSpace(raw)
+	if err := json.Unmarshal([]byte(decoded), &payload); err != nil {
+		if extracted, extractErr := extractFirstJSONObject(decoded); extractErr == nil {
+			_ = json.Unmarshal([]byte(extracted), &payload)
+		}
+	}
+	for _, key := range []string{"content", "answer", "final", "message"} {
+		value, ok := payload[key].(string)
+		if ok && strings.TrimSpace(value) != "" {
+			action.Response = strings.TrimSpace(value)
+			return action
+		}
+	}
+	if strings.TrimSpace(action.ReasoningSummary) != "" {
+		action.Response = strings.TrimSpace(action.ReasoningSummary)
+	}
+	return action
 }
 
 func inheritAgentActionContext(action AgentAction, state AgentRunState) AgentAction {
@@ -986,6 +1082,58 @@ func extractFirstJSONObject(raw string) (string, error) {
 	}
 
 	return "", fmt.Errorf("json object is not closed")
+}
+
+func containsAnySubstring(value string, candidates ...string) bool {
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if strings.Contains(value, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeLooseJSONStringLiterals(raw string) string {
+	var builder strings.Builder
+	builder.Grow(len(raw) + 16)
+	inString := false
+	escaped := false
+	for index := 0; index < len(raw); index++ {
+		ch := raw[index]
+		if inString {
+			if escaped {
+				builder.WriteByte(ch)
+				escaped = false
+				continue
+			}
+			switch ch {
+			case '\\':
+				builder.WriteByte(ch)
+				escaped = true
+			case '"':
+				builder.WriteByte(ch)
+				inString = false
+			case '\n':
+				builder.WriteString(`\n`)
+			case '\r':
+				builder.WriteString(`\r`)
+			case '\t':
+				builder.WriteString(`\t`)
+			default:
+				builder.WriteByte(ch)
+			}
+			continue
+		}
+		if ch == '"' {
+			inString = true
+		}
+		builder.WriteByte(ch)
+	}
+	return builder.String()
 }
 
 func childTaskTitle(prefix string, suffix string) string {

@@ -332,6 +332,33 @@ def ensure_canonical_runtime() -> dict:
     return status
 
 
+def ensure_mcp_verified_lanes() -> dict:
+    payload = api("GET", "/api/mcp/servers")
+    items = payload.get("items", [])
+    by_id = {item.get("id", ""): item for item in items}
+    required_ids = [
+        "external-fixture",
+        "sdk-external-fixture",
+        "third-party-time",
+    ]
+    missing = [server_id for server_id in required_ids if server_id not in by_id]
+    if missing:
+        fail(
+            "canonical runtime instance missing expected MCP verified lanes",
+            category="environment-mcp-baseline-mismatch",
+            details={
+                "requiredServerIds": required_ids,
+                "missingServerIds": missing,
+                "discoveredServerIds": sorted([server_id for server_id in by_id.keys() if server_id]),
+                "apiBaseUrl": API_BASE_URL,
+            },
+        )
+    return {
+        "requiredServerIds": required_ids,
+        "discoveredServerIds": sorted([server_id for server_id in by_id.keys() if server_id]),
+    }
+
+
 def create_thread(name: str, permission_mode: str = "ask-user") -> dict:
     return api(
         "POST",
@@ -802,11 +829,15 @@ def run_agent_scenario(page, thread_id: str, scenario: dict) -> dict:
 
 def run_recovery_continuation_scenario(page, thread_id: str, run_id: str) -> dict:
     title = f"Agent recovery continuation {run_id}"
+    baseline_note_path = os.path.join(os.getcwd(), "playwright-recovery-note.txt")
+    if not os.path.exists(baseline_note_path):
+        with open(baseline_note_path, "w", encoding="utf-8") as handle:
+            handle.write("baseline recovery note\n")
     baseline_assistant_messages = len(
         [item for item in api("GET", f"/api/threads/{thread_id}/messages")["items"] if item.get("role") == "assistant"]
     )
     goal = (
-        "Apply a patch to playwright-recovery-note.txt that adds one line saying recovery evidence, "
+        "Update the existing file playwright-recovery-note.txt by adding one line saying recovery evidence, "
         "then answer in one short sentence about what you changed. Do not do any extra work."
     )
     created_task = create_agent_task_via_ui(page, thread_id, title, goal, max_steps=4)
@@ -1087,6 +1118,7 @@ def main() -> int:
     rollback_task_title = "Rollback latest write execution"
 
     runtime_status = ensure_canonical_runtime()
+    mcp_verified_lanes = ensure_mcp_verified_lanes()
     created_thread = create_thread(thread_name)
     thread_id = created_thread["id"]
     activate_thread(thread_id)
@@ -1206,48 +1238,33 @@ def main() -> int:
                 )
             )
             mcp_execution_results = []
-            mcp_execution_results.append(
-                run_mcp_execution_scenario(
-                    page,
-                    thread_id,
-                    {
-                        "title": f"Invoke MCP fixture echo {run_id}",
-                        "kind": "mcp.tool.invoke",
-                        "input": {"serverId": "external-fixture", "toolName": "echo", "arguments": {"message": "hello"}},
-                        "summary_contains": "mcp tool external-fixture/echo executed",
-                        "transport": "stdio-fixture",
-                        "lane": "fixture regression lane",
-                    },
-                )
-            )
-            mcp_execution_results.append(
-                run_mcp_execution_scenario(
-                    page,
-                    thread_id,
-                    {
-                        "title": f"Invoke MCP sdk echo {run_id}",
-                        "kind": "mcp.tool.invoke",
-                        "input": {"serverId": "sdk-external-fixture", "toolName": "echo", "arguments": {"message": "hello-sdk"}},
-                        "summary_contains": "mcp tool sdk-external-fixture/echo executed",
-                        "transport": "stdio-sdk",
-                        "lane": "official SDK external lane",
-                    },
-                )
-            )
-            mcp_execution_results.append(
-                run_mcp_execution_scenario(
-                    page,
-                    thread_id,
-                    {
-                        "title": f"Invoke MCP third-party time {run_id}",
-                        "kind": "mcp.tool.invoke",
-                        "input": {"serverId": "third-party-time", "toolName": "get_current_time", "arguments": {"timezone": "UTC"}},
-                        "summary_contains": "mcp tool third-party-time/get_current_time executed",
-                        "transport": "stdio-third-party",
-                        "lane": "third-party time lane",
-                    },
-                )
-            )
+            for scenario in [
+                {
+                    "title": f"Invoke MCP fixture echo {run_id}",
+                    "kind": "mcp.tool.invoke",
+                    "input": {"serverId": "external-fixture", "toolName": "echo", "arguments": {"message": "hello"}},
+                    "summary_contains": "mcp tool external-fixture/echo executed",
+                    "transport": "stdio-fixture",
+                    "lane": "fixture regression lane",
+                },
+                {
+                    "title": f"Invoke MCP sdk echo {run_id}",
+                    "kind": "mcp.tool.invoke",
+                    "input": {"serverId": "sdk-external-fixture", "toolName": "echo", "arguments": {"message": "hello-sdk"}},
+                    "summary_contains": "mcp tool sdk-external-fixture/echo executed",
+                    "transport": "stdio-sdk",
+                    "lane": "official SDK external lane",
+                },
+                {
+                    "title": f"Invoke MCP third-party time {run_id}",
+                    "kind": "mcp.tool.invoke",
+                    "input": {"serverId": "third-party-time", "toolName": "get_current_time", "arguments": {"timezone": "UTC"}},
+                    "summary_contains": "mcp tool third-party-time/get_current_time executed",
+                    "transport": "stdio-third-party",
+                    "lane": "third-party time lane",
+                },
+            ]:
+                mcp_execution_results.append(run_mcp_execution_scenario(page, thread_id, scenario))
             thread_mutation_results = []
             thread_mutation_results.append(
                 run_thread_mutation_scenario(
@@ -1509,6 +1526,7 @@ def main() -> int:
                             1 for item in mcp_execution_results if item["visibility"]["toolKindVisible"]
                         ),
                     },
+                    "mcpVerifiedLanePreflight": mcp_verified_lanes,
                 },
                 "fallback": {
                     "mode": "evidence-only",

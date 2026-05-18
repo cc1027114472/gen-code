@@ -1259,6 +1259,19 @@ func TestParseAgentActionUsesContentFallbackForRespond(t *testing.T) {
 	require.Equal(t, "Final answer from content", action.Response)
 }
 
+func TestParseAgentActionSanitizesLiteralNewlinesInsidePatchJSON(t *testing.T) {
+	action, err := parseAgentActionWithState(`{"type":"apply_patch","path":"README.md","patch":"*** Begin Patch
+*** Update File: README.md
+@@
+-old
++new
+*** End Patch","reasoningSummary":"Apply patch"}`, AgentRunState{})
+	require.NoError(t, err)
+	require.Equal(t, "apply_patch", action.Type)
+	require.Contains(t, action.Patch, "*** Update File: README.md")
+	require.Contains(t, action.Patch, "+new")
+}
+
 func TestRunnerCorrectsAgentRunAfterSequenceViolation(t *testing.T) {
 	projectRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("TODO one\n"), 0o644))

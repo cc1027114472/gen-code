@@ -327,20 +327,21 @@ export default function App() {
 
   const tasks: ExtendedRuntimeTask[] = extendedRuntime?.tasks ?? [];
   const taskMap = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
-  const executableKinds = runtimeStatus?.executableKinds?.length
-    ? runtimeStatus.executableKinds
-    : [
-        "agent.run",
-        "model.response.create",
-        "thread.message.append",
-        "workspace.list_files",
-        "workspace.read_file",
-        "workspace.search_text",
-        "workspace.stat_file",
-        "workspace.read_files_batch",
-        "workspace.list_files_filtered",
-        "workspace.search_text_detailed",
-      ];
+  const executableKinds = useMemo(() => {
+    const defaults = [
+      "agent.run",
+      "model.response.create",
+      "thread.message.append",
+      "workspace.list_files",
+      "workspace.read_file",
+      "workspace.search_text",
+      "workspace.stat_file",
+      "workspace.read_files_batch",
+      "workspace.list_files_filtered",
+      "workspace.search_text_detailed",
+    ];
+    return [...new Set([...(runtimeStatus?.executableKinds ?? []), ...defaults])].sort((left, right) => left.localeCompare(right));
+  }, [runtimeStatus?.executableKinds]);
   const approvals = runtimeStatus?.approvals ?? [];
   const writeExecutions = runtimeStatus?.writeExecutions ?? [];
   const messages = runtimeStatus?.messages ?? [];
@@ -643,7 +644,7 @@ export default function App() {
       });
       const next = (await CreateTask(runtimeStatus.activeThreadId, payload)) as RuntimeStatus;
       setRuntimeStatus(next as ExtendedRuntimeStatus);
-      setStatusMessage("已创建 task");
+      setStatusMessage(draft.kind === "agent.run" ? "已创建 agent.run，请点击“运行任务”开始默认工作流" : "已创建 task");
       setLastCheckedAt(formatTime(next.updatedAt));
       setDraft((current) => ({ ...current, title: "", input: "" }));
     } catch (err) {
@@ -659,9 +660,10 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
+      const targetTask = (runtimeStatus.tasks ?? []).find((task) => task.id === taskID);
       const next = (await AdvanceTask(taskID)) as RuntimeStatus;
       setRuntimeStatus(next as ExtendedRuntimeStatus);
-      setStatusMessage("task 已触发执行");
+      setStatusMessage(targetTask?.kind === "agent.run" ? "agent.run 已触发执行，正在派生子任务" : "task 已触发执行");
       setLastCheckedAt(formatTime(next.updatedAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "执行 task 失败");
@@ -986,14 +988,14 @@ export default function App() {
 
                 <label className="field">
                   <span className="field__label">输入</span>
-                  <textarea
-                    data-testid="task-input-textarea"
-                    value={draft.input}
-                    onChange={(event) => setDraft((current) => ({ ...current, input: event.target.value }))}
-                    placeholder='可直接输入 prompt 或 JSON；例如 agent.run 用 {"goal":"请先筛出 *.go，再查 TODO 行号"}，stat 用 {"path":"go.mod"}，batch 用 {"paths":["README.md","go.mod"]}'
-                    rows={4}
-                  />
-                </label>
+                    <textarea
+                      data-testid="task-input-textarea"
+                      value={draft.input}
+                      onChange={(event) => setDraft((current) => ({ ...current, input: event.target.value }))}
+                      placeholder='默认推荐直接输入 agent.run 目标，例如“更新 README 并回复结果”；也支持 JSON，如 {"goal":"请先筛出 *.go，再查 TODO 行号"}、{"path":"go.mod"}、{"paths":["README.md","go.mod"]}'
+                      rows={4}
+                    />
+                  </label>
 
                 <div className="composer-actions">
                   <button className="primary-action" data-testid="create-task-button" onClick={handleCreateTask} disabled={loading || !runtimeStatus?.activeThreadId} type="button">
