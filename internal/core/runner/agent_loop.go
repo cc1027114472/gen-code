@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 
 	"llmtrace/internal/core/policy"
@@ -12,9 +14,15 @@ import (
 )
 
 const (
-	defaultAgentMaxSteps  = 6
-	waitingStatusApproval = "waiting_for_approval"
-	waitingStatusTask     = "waiting_for_task"
+	defaultAgentMaxSteps    = 6
+	waitingStatusApproval   = "waiting_for_approval"
+	waitingStatusTask       = "waiting_for_task"
+	agentBrowserFixtureURL  = "http://127.0.0.1:5174/"
+	agentBrowserFixtureKey  = "gcPreview"
+	agentBrowserFixturePane = "acceptance-browser"
+	controlledBrowserInputSelector  = "[data-testid='controlled-browser-input']"
+	controlledBrowserApplySelector  = "[data-testid='controlled-browser-apply']"
+	controlledBrowserResultSelector = "[data-testid='controlled-browser-result']"
 )
 
 type AgentExecutionPlan struct {
@@ -1017,8 +1025,9 @@ func buildAgentPrompt(messages []session.MessageRecord, tasks []session.Task, st
 		currentStepLine = state.CurrentStepTitle
 	}
 	modeGuidance := buildAgentModeGuidance(state.Plan.Mode)
+	browserFixtureLine := buildAgentBrowserFixtureGuidance(state)
 	return fmt.Sprintf(
-		"You are a minimal coding agent for a single thread.\nGoal: %s\nCurrent step: %d of %d.\nAllowed actions: respond, read_file, list_files, stat_file, read_files_batch, list_files_filtered, search_text, search_text_detailed, apply_patch, browser_open, browser_state, browser_click, browser_type, browser_extract, browser_screenshot.\nChoose actions deliberately: use stat_file for one file's existence or metadata, read_files_batch for multiple text files, list_files_filtered for directory filtering by pattern, search_text_detailed when you need file and line matches, search_text for lightweight path-only discovery, apply_patch when the goal explicitly asks for a code or file modification, and browser_* actions only for controlled browser workflows on allowlisted local or verified HTTPS pages.\nPlan mode: %s\nPlan summary: %s\nRequired action sequence: %s\nCurrent required step: %s\nMode guidance: %s\nSequence guidance: when the goal asks you to filter a directory by pattern and then inspect specific files, first call list_files_filtered, then call read_files_batch for the selected files, then respond. When the goal explicitly asks you to modify files and then report the outcome, call apply_patch before respond. Do not skip the required step when the goal explicitly asks for it. If you violate the required action sequence, the run fails immediately.\nReturn JSON only with keys type, reasoningSummary, url, tabId, selector, text, path, paths, pattern, query, limit, patch, response.\nDo not include markdown fences, prose outside JSON, or unsupported keys.\nNever use any action outside the allowed set.\nRecent messages:\n%s\nRecent tasks:\n%s\n",
+		"You are a minimal coding agent for a single thread.\nGoal: %s\nCurrent step: %d of %d.\nAllowed actions: respond, read_file, list_files, stat_file, read_files_batch, list_files_filtered, search_text, search_text_detailed, apply_patch, browser_open, browser_state, browser_click, browser_type, browser_extract, browser_screenshot.\nChoose actions deliberately: use stat_file for one file's existence or metadata, read_files_batch for multiple text files, list_files_filtered for directory filtering by pattern, search_text_detailed when you need file and line matches, search_text for lightweight path-only discovery, apply_patch when the goal explicitly asks for a code or file modification, and browser_* actions only for controlled browser workflows on allowlisted local or verified HTTPS pages.\nPlan mode: %s\nPlan summary: %s\nRequired action sequence: %s\nCurrent required step: %s\nMode guidance: %s\nBrowser fixture guidance: %s\nSequence guidance: when the goal asks you to filter a directory by pattern and then inspect specific files, first call list_files_filtered, then call read_files_batch for the selected files, then respond. When the goal explicitly asks you to modify files and then report the outcome, call apply_patch before respond. Do not skip the required step when the goal explicitly asks for it. If you violate the required action sequence, the run fails immediately.\nReturn JSON only with keys type, reasoningSummary, url, tabId, selector, text, path, paths, pattern, query, limit, patch, response.\nDo not include markdown fences, prose outside JSON, or unsupported keys.\nNever use any action outside the allowed set.\nRecent messages:\n%s\nRecent tasks:\n%s\n",
 		state.Goal,
 		state.StepIndex+1,
 		state.MaxSteps,
@@ -1027,6 +1036,7 @@ func buildAgentPrompt(messages []session.MessageRecord, tasks []session.Task, st
 		sequenceLine,
 		currentStepLine,
 		modeGuidance,
+		browserFixtureLine,
 		strings.Join(messageLines, "\n"),
 		strings.Join(taskLines, "\n"),
 	)
@@ -1047,8 +1057,9 @@ func buildAgentCorrectionPrompt(messages []session.MessageRecord, tasks []sessio
 	if len(taskLines) == 0 {
 		taskLines = []string{"- no tasks yet"}
 	}
+	browserFixtureLine := buildAgentBrowserFixtureGuidance(state)
 	return fmt.Sprintf(
-		"Your previous agent action was rejected.\nGoal: %s\nPlan mode: %s\nCurrent required step: %s\nRequired action sequence: %s\nRejected action type: %s\nRejected reasoning: %s\nValidation error: %s\nCorrection rule: return one corrected JSON action for the current required step only. Do not explain the mistake. Do not repeat the rejected action unless it matches the current required step. For this correction, choose only from: %s.\nMode guidance: %s\nReturn JSON only with keys type, reasoningSummary, url, tabId, selector, text, path, paths, pattern, query, limit, patch, response.\nRecent messages:\n%s\nRecent tasks:\n%s\n",
+		"Your previous agent action was rejected.\nGoal: %s\nPlan mode: %s\nCurrent required step: %s\nRequired action sequence: %s\nRejected action type: %s\nRejected reasoning: %s\nValidation error: %s\nCorrection rule: return one corrected JSON action for the current required step only. Do not explain the mistake. Do not repeat the rejected action unless it matches the current required step. For this correction, choose only from: %s.\nMode guidance: %s\nBrowser fixture guidance: %s\nReturn JSON only with keys type, reasoningSummary, url, tabId, selector, text, path, paths, pattern, query, limit, patch, response.\nRecent messages:\n%s\nRecent tasks:\n%s\n",
 		state.Goal,
 		fallbackAgentText(state.Plan.Mode, "freeform"),
 		fallbackAgentText(state.CurrentStepTitle, "current step"),
@@ -1058,6 +1069,7 @@ func buildAgentCorrectionPrompt(messages []session.MessageRecord, tasks []sessio
 		validationErr.Error(),
 		strings.Join(expectedActionTypesForCurrentStep(state.Plan, state.CompletedActions), ", "),
 		buildAgentModeGuidance(state.Plan.Mode),
+		browserFixtureLine,
 		strings.Join(messageLines, "\n"),
 		strings.Join(taskLines, "\n"),
 	)
@@ -1086,7 +1098,7 @@ func parseAgentActionWithState(raw string, state AgentRunState) (AgentAction, er
 		}
 	}
 	action.Type = strings.TrimSpace(action.Type)
-	if action.Type == "response" || action.Type == "result" {
+	if action.Type == "response" || action.Type == "result" || action.Type == "tool_result" {
 		action.Type = "respond"
 	}
 	if action.Type == "tool_call" {
@@ -1101,6 +1113,7 @@ func parseAgentActionWithState(raw string, state AgentRunState) (AgentAction, er
 		action.Type = inferred
 	}
 	action = inheritAgentActionContext(action, state)
+	action = normalizeAgentActionForState(action, state)
 	action = populateAgentResponseFallback(normalized, action)
 	switch action.Type {
 	case "respond", "read_file", "list_files", "stat_file", "read_files_batch", "list_files_filtered", "search_text", "search_text_detailed", "apply_patch", "browser_open", "browser_state", "browser_click", "browser_type", "browser_extract", "browser_screenshot":
@@ -1257,6 +1270,131 @@ func inferAgentActionType(action AgentAction, state AgentRunState) string {
 		}
 	}
 	return ""
+}
+
+func buildAgentBrowserFixtureGuidance(state AgentRunState) string {
+	if strings.TrimSpace(state.Plan.Mode) != "browser_then_respond" {
+		return "No fixed browser fixture URL."
+	}
+	return fmt.Sprintf(
+		"Use the controlled local fixture for this thread. The canonical browser_open URL is %s. Use these stable selectors: browser_type -> %s, browser_click -> %s, browser_extract -> %s. Do not substitute another localhost port such as 3000 or generic selectors such as input, button, or #result.",
+		buildControlledBrowserFixtureURL(state.ThreadID),
+		controlledBrowserInputSelector,
+		controlledBrowserApplySelector,
+		controlledBrowserResultSelector,
+	)
+}
+
+func normalizeAgentActionForState(action AgentAction, state AgentRunState) AgentAction {
+	switch strings.TrimSpace(state.Plan.Mode) {
+	case "browser_then_respond":
+		if action.Type == "browser_open" {
+			canonicalURL := buildControlledBrowserFixtureURL(state.ThreadID)
+			if !isCanonicalControlledBrowserURL(strings.TrimSpace(action.URL), state.ThreadID) {
+				action.URL = canonicalURL
+				if strings.TrimSpace(action.ReasoningSummary) == "" {
+					action.ReasoningSummary = "Open the controlled browser fixture for the current thread"
+				}
+			}
+		}
+		switch action.Type {
+		case "browser_type":
+			if shouldNormalizeControlledBrowserSelector(action.Selector, action.Type) {
+				action.Selector = controlledBrowserInputSelector
+			}
+		case "browser_click":
+			if shouldNormalizeControlledBrowserSelector(action.Selector, action.Type) {
+				action.Selector = controlledBrowserApplySelector
+			}
+		case "browser_extract":
+			if shouldNormalizeControlledBrowserSelector(action.Selector, action.Type) {
+				action.Selector = controlledBrowserResultSelector
+			}
+		}
+	case "search_then_detailed":
+		if action.Type == "search_text" || action.Type == "search_text_detailed" {
+			if strings.TrimSpace(action.Query) == "" {
+				action.Query = inferSearchGoalQuery(state.Goal)
+			}
+			if strings.TrimSpace(action.Path) == "" {
+				action.Path = inferSearchGoalPath(state.Goal)
+			}
+		}
+	}
+	return action
+}
+
+var (
+	agentGoalPathPattern  = regexp.MustCompile(`[A-Za-z0-9._-]+(?:[\\/][A-Za-z0-9._-]+)+`)
+	agentGoalQueryPattern = regexp.MustCompile(`(?i)\bfor\s+["'` + "`" + `]?([A-Za-z0-9_.:-]+)`)
+)
+
+func inferSearchGoalPath(goal string) string {
+	return strings.TrimSpace(agentGoalPathPattern.FindString(goal))
+}
+
+func inferSearchGoalQuery(goal string) string {
+	matches := agentGoalQueryPattern.FindStringSubmatch(goal)
+	if len(matches) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(matches[1])
+}
+
+func buildControlledBrowserFixtureURL(threadID string) string {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return fmt.Sprintf("%s?%s=1&pane=%s", agentBrowserFixtureURL, agentBrowserFixtureKey, agentBrowserFixturePane)
+	}
+	return fmt.Sprintf(
+		"%s?%s=1&pane=%s&threadId=%s",
+		agentBrowserFixtureURL,
+		agentBrowserFixtureKey,
+		agentBrowserFixturePane,
+		threadID,
+	)
+}
+
+func isCanonicalControlledBrowserURL(raw string, threadID string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "http" {
+		return false
+	}
+	if parsed.Host != "127.0.0.1:5174" && parsed.Host != "localhost:5174" {
+		return false
+	}
+	query := parsed.Query()
+	if query.Get(agentBrowserFixtureKey) != "1" {
+		return false
+	}
+	if query.Get("pane") != agentBrowserFixturePane {
+		return false
+	}
+	if strings.TrimSpace(threadID) == "" {
+		return true
+	}
+	return query.Get("threadId") == threadID
+}
+
+func shouldNormalizeControlledBrowserSelector(selector string, actionType string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(selector))
+	switch actionType {
+	case "browser_type":
+		return normalized == "" || normalized == "input" || normalized == "#input" || normalized == "textarea" || strings.Contains(normalized, "stable-input")
+	case "browser_click":
+		return normalized == "" || normalized == "button" || normalized == "#apply" || normalized == ".apply" || strings.Contains(normalized, "stable-apply")
+	case "browser_extract":
+		return normalized == "" || normalized == "#result" || normalized == ".result" || normalized == "result" || strings.Contains(normalized, "stable-result")
+	default:
+		return false
+	}
 }
 
 func extractFirstJSONObject(raw string) (string, error) {

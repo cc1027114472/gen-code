@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import socket
@@ -279,31 +280,49 @@ def preflight_public_web_target(target_url: str) -> dict:
         headers={"User-Agent": "gen-code-desktop-acceptance"},
         method="GET",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            return {
-                "targetUrl": target_url,
-                "statusCode": getattr(response, "status", 200),
-                "finalUrl": response.geturl(),
-            }
-    except urllib.error.HTTPError as exc:
+    last_error = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return {
+                    "targetUrl": target_url,
+                    "statusCode": getattr(response, "status", 200),
+                    "finalUrl": response.geturl(),
+                }
+        except urllib.error.HTTPError as exc:
+            fail(
+                f"public-web preflight failed for {target_url}",
+                category="public-web-preflight-network",
+                details={
+                    "targetUrl": target_url,
+                    "statusCode": exc.code,
+                    "reason": str(exc),
+                },
+            )
+        except (urllib.error.URLError, socket.timeout, ConnectionResetError, OSError) as exc:
+            last_error = exc
+            if attempt == 2:
+                fail(
+                    f"public-web preflight failed for {target_url}",
+                    category="public-web-preflight-network",
+                    details={
+                        "targetUrl": target_url,
+                        "exceptionType": type(exc).__name__,
+                        "exception": str(exc),
+                        "attempts": attempt + 1,
+                    },
+                )
+            time.sleep(1.0 + attempt)
+
+    if last_error is not None:
         fail(
             f"public-web preflight failed for {target_url}",
             category="public-web-preflight-network",
             details={
                 "targetUrl": target_url,
-                "statusCode": exc.code,
-                "reason": str(exc),
-            },
-        )
-    except (urllib.error.URLError, socket.timeout, ConnectionResetError, OSError) as exc:
-        fail(
-            f"public-web preflight failed for {target_url}",
-            category="public-web-preflight-network",
-            details={
-                "targetUrl": target_url,
-                "exceptionType": type(exc).__name__,
-                "exception": str(exc),
+                "exceptionType": type(last_error).__name__,
+                "exception": str(last_error),
+                "attempts": 3,
             },
         )
 
@@ -1029,6 +1048,45 @@ def run_browser_navigation_scenario(page, thread_id: str, scenario: dict) -> dic
     }
 
 
+def run_browser_navigation_scenario_with_retry(page, thread_id: str, scenario: dict, retry_count: int = 2) -> dict:
+    last_error = None
+    current_scenario = copy.deepcopy(scenario)
+    for attempt in range(retry_count + 1):
+        try:
+            return run_browser_navigation_scenario(page, thread_id, current_scenario)
+        except AssertionError as exc:
+            last_error = exc
+            if attempt >= retry_count:
+                raise
+            message = str(exc)
+            if "browser: session unavailable" not in message and "context deadline exceeded" not in message:
+                raise
+            current_input = current_scenario.setdefault("input", {})
+            current_tab_id = (current_input.get("tabId") or "").strip()
+            if current_tab_id:
+                current_input["tabId"] = refresh_browser_tab_id(current_tab_id)
+            time.sleep(1.0 + attempt)
+    if last_error is not None:
+        raise last_error
+    raise AssertionError(f"browser navigation retry failed without result for scenario {scenario.get('title', '')}")
+
+
+def refresh_browser_tab_id(current_tab_id: str, fallback_exclude_ids: set[str] | None = None) -> str:
+    target_tab_id = (current_tab_id or "").strip()
+    if target_tab_id:
+        try:
+            snapshot = wait_for_browser_snapshot(
+                lambda item: any(tab.get("id", "") == target_tab_id for tab in item.get("tabs", [])),
+                timeout_seconds=3.0,
+            )
+            for tab in snapshot.get("tabs", []):
+                if tab.get("id", "") == target_tab_id:
+                    return target_tab_id
+        except Exception:
+            pass
+    return get_latest_browser_tab_id(exclude_ids=fallback_exclude_ids or set())
+
+
 def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_id: str) -> dict:
     results = []
     fixture_url = build_controlled_browser_fixture_url(thread_id, thread_name)
@@ -1086,7 +1144,7 @@ def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_
                 },
             )
         )
-        controlled_tab_id = resolve_browser_tab_id(results[-1])
+        controlled_tab_id = refresh_browser_tab_id(resolve_browser_tab_id(results[-1], fallback_exclude_ids=set()))
 
     extract_result = next(item for item in results if item["task"]["kind"] == "browser.extract")
     screenshot_result = next(item for item in results if item["task"]["kind"] == "browser.screenshot")
@@ -1139,6 +1197,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
             "ui_optional": True,
         },
     )
+    authenticated_tab_id = refresh_browser_tab_id(authenticated_tab_id)
     if AUTHENTICATED_SESSION_LABEL not in session_result["record"]["summary"]:
         fail(
             "authenticated browser session extract did not return the expected session label",
@@ -1160,6 +1219,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
             "ui_optional": True,
         },
     )
+    authenticated_tab_id = refresh_browser_tab_id(authenticated_tab_id)
     if AUTHENTICATED_PROFILE_LABEL not in profile_result["record"]["summary"]:
         fail(
             "authenticated browser profile extract did not return the expected profile label",
@@ -1181,6 +1241,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
             "ui_optional": True,
         },
     )
+    authenticated_tab_id = refresh_browser_tab_id(authenticated_tab_id)
     if AUTHENTICATED_ROLE_LABEL not in role_result["record"]["summary"]:
         fail(
             "authenticated browser role extract did not return the expected role label",
@@ -1202,6 +1263,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
             "ui_optional": True,
         },
     )
+    authenticated_tab_id = refresh_browser_tab_id(authenticated_tab_id)
     if AUTHENTICATED_SCOPE_LABEL not in scope_result["record"]["summary"]:
         fail(
             "authenticated browser scope extract did not return the expected scope label",
@@ -1223,6 +1285,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
             "ui_optional": True,
         },
     )
+    authenticated_tab_id = refresh_browser_tab_id(authenticated_tab_id)
     if AUTHENTICATED_TRANSPORT_LABEL not in transport_result["record"]["summary"]:
         fail(
             "authenticated browser transport extract did not return the expected transport label",
@@ -1244,6 +1307,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
             "ui_optional": True,
         },
     )
+    authenticated_tab_id = refresh_browser_tab_id(authenticated_tab_id)
     if AUTHENTICATED_RESULT_TEXT not in identity_result["record"]["summary"]:
         fail(
             "authenticated browser extract did not return the expected stable identity token",
@@ -1365,7 +1429,7 @@ def run_public_web_browser_scenario(page, thread_id: str, run_id: str) -> dict:
                 },
             )
         else:
-            navigation_result = run_browser_navigation_scenario(
+            navigation_result = run_browser_navigation_scenario_with_retry(
                 page,
                 thread_id,
                 {
@@ -1620,8 +1684,10 @@ def run_ui_first_browser_agent_scenario(page, thread_id: str, thread_name: str, 
         [item for item in api("GET", f"/api/threads/{thread_id}/messages")["items"] if item.get("role") == "assistant"]
     )
     goal = (
-        "Open the controlled browser fixture page for the current thread, type browser demo text into the controlled input, "
-        "click the apply control, extract the stable result text, take a screenshot, and then answer in one short sentence "
+        "Open the controlled browser fixture page for the current thread. Use "
+        "[data-testid='controlled-browser-input'] to type browser demo text, click "
+        "[data-testid='controlled-browser-apply'], extract "
+        "[data-testid='controlled-browser-result'], take a screenshot, and then answer in one short sentence "
         "with the extracted result. Do not write files."
     )
     created_task = create_agent_task_via_ui(page, thread_id, title, goal, max_steps=6)

@@ -261,6 +261,58 @@ function Get-RuntimeStatusSnapshot {
   }
 }
 
+function Test-BrowserCoreReady {
+  param(
+    [Parameter(Mandatory = $true)][string]$ApiBaseUrl,
+    [Parameter(Mandatory = $true)][string]$UiBaseUrl
+  )
+
+  $threadName = "browser-preflight-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
+  try {
+    $threadPayload = @{ name = $threadName; permissionMode = "ask-user" } | ConvertTo-Json -Compress
+    $threadResponse = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/threads" -ContentType "application/json" -Body $threadPayload -TimeoutSec 15
+    $threadID = [string]$threadResponse.data.id
+    if ([string]::IsNullOrWhiteSpace($threadID)) {
+      return @{
+        Ready = $false
+        Reason = "browser preflight could not create a thread"
+      }
+    }
+
+    $taskPayload = @{
+      title = "Browser preflight open"
+      kind = "browser.open"
+      input = (@{ url = $UiBaseUrl } | ConvertTo-Json -Compress)
+    } | ConvertTo-Json -Compress
+    $taskResponse = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/threads/$threadID/tasks" -ContentType "application/json" -Body $taskPayload -TimeoutSec 15
+    $taskID = [string]$taskResponse.data.id
+    if ([string]::IsNullOrWhiteSpace($taskID)) {
+      return @{
+        Ready = $false
+        Reason = "browser preflight could not create a browser.open task"
+      }
+    }
+
+    $runResponse = Invoke-RestMethod -Method Post -Uri "$ApiBaseUrl/api/threads/$threadID/tasks/$taskID/run" -ContentType "application/json" -Body "{}" -TimeoutSec 45
+    $task = $runResponse.data
+    $status = [string]$task.status
+    $summary = [string]$task.resultSummary
+    return @{
+      Ready = ($status -eq "completed" -and $summary -like "browser tab opened:*")
+      Status = $status
+      Summary = $summary
+      ThreadId = $threadID
+      TaskId = $taskID
+      Reason = if ($status -eq "completed" -and $summary -like "browser tab opened:*") { "" } else { "browser preflight did not complete successfully" }
+    }
+  } catch {
+    return @{
+      Ready = $false
+      Reason = $_.Exception.Message
+    }
+  }
+}
+
 function Test-DesktopUiIdentity {
   param(
     [Parameter(Mandatory = $true)][string]$UiBaseUrl
@@ -390,11 +442,31 @@ $frontendProcess = $null
 $bootstrapStarted = $false
 $startedServer = $false
 $startedFrontend = $false
+$usedExistingCanonicalInstance = $false
+
+function Stop-BootstrapProcesses {
+  param(
+    $FrontendProcess,
+    $ServerProcess
+  )
+
+  foreach ($proc in @($FrontendProcess, $ServerProcess)) {
+    if ($null -ne $proc) {
+      try {
+        $targetId = $proc.Id
+        Stop-Process -Id $targetId -Force -ErrorAction SilentlyContinue
+        Wait-Process -Id $targetId -Timeout 15 -ErrorAction SilentlyContinue
+      } catch {
+      }
+    }
+  }
+}
 
 try {
   $apiReady = Wait-HttpOk -Url "$($env:GEN_CODE_API_BASE_URL)/api/runtime/status" -TimeoutSeconds 5
   $uiReady = Wait-HttpOk -Url $env:GEN_CODE_UI_BASE_URL -TimeoutSeconds 5
   $baseline = if ($apiReady) { Test-MCPBaselineReady -ApiBaseUrl $env:GEN_CODE_API_BASE_URL } else { @{ Ready = $false; Missing = @("external-fixture", "sdk-external-fixture", "third-party-time"); ServerIds = @() } }
+  $browserPreflight = if ($apiReady -and $uiReady -and $baseline.Ready) { Test-BrowserCoreReady -ApiBaseUrl $env:GEN_CODE_API_BASE_URL -UiBaseUrl $env:GEN_CODE_UI_BASE_URL } else { @{ Ready = $false; Reason = "skipped until API, UI, and MCP baseline are ready" } }
 
   if ($forceCurrentBootstrap) {
     Write-Host "  bootstrap    : forcing current repo bootstrap for full acceptance"
@@ -404,6 +476,14 @@ try {
     if ($uiReady) {
       Write-Host "  existing UI  : reachable on $uiPort"
     }
+    if ($browserPreflight.Ready) {
+      Write-Host "  browser gate : existing browser preflight is healthy"
+    } else {
+      Write-Host "  browser gate : existing browser preflight is not healthy, forcing fresh bootstrap"
+      if ($browserPreflight.Reason) {
+        Write-Host "  browser note : $($browserPreflight.Reason)"
+      }
+    }
 
     $serverDecision = Prepare-ProjectProcessOnPort -Port 10008 -Label "server" -AllowedCommandFragments @(
       "go run .\cmd\server",
@@ -450,12 +530,19 @@ try {
     if (-not $baseline.Ready) {
       throw ("Bootstrapped canonical instance still missing MCP lanes: " + ($baseline.Missing -join ", "))
     }
+    $browserPreflight = Test-BrowserCoreReady -ApiBaseUrl $env:GEN_CODE_API_BASE_URL -UiBaseUrl $env:GEN_CODE_UI_BASE_URL
+    if (-not $browserPreflight.Ready) {
+      throw ("Bootstrapped canonical instance failed browser preflight: " + $browserPreflight.Reason + $(if ($browserPreflight.Summary) { " / " + $browserPreflight.Summary } else { "" }))
+    }
     $bootstrapStarted = ($startedServer -or $startedFrontend)
-  } elseif (-not ($apiReady -and $uiReady -and $baseline.Ready)) {
+  } elseif (-not ($apiReady -and $uiReady -and $baseline.Ready -and $browserPreflight.Ready)) {
     Write-Host "  bootstrap    : starting current-code server/frontend because existing canonical instance is missing or incomplete"
     if ($apiReady -and -not $baseline.Ready) {
       Write-Host ("  baseline     : existing API instance missing MCP lanes: " + ($baseline.Missing -join ", "))
     }
+    if ($apiReady -and $uiReady -and $baseline.Ready -and -not $browserPreflight.Ready) {
+      Write-Host ("  browser gate : existing canonical browser preflight failed: " + $browserPreflight.Reason + $(if ($browserPreflight.Summary) { " / " + $browserPreflight.Summary } else { "" }))
+    }
 
     $serverDecision = Prepare-ProjectProcessOnPort -Port 10008 -Label "server" -AllowedCommandFragments @(
       "go run .\cmd\server",
@@ -502,28 +589,34 @@ try {
     if (-not $baseline.Ready) {
       throw ("Bootstrapped canonical instance still missing MCP lanes: " + ($baseline.Missing -join ", "))
     }
+    $browserPreflight = Test-BrowserCoreReady -ApiBaseUrl $env:GEN_CODE_API_BASE_URL -UiBaseUrl $env:GEN_CODE_UI_BASE_URL
+    if (-not $browserPreflight.Ready) {
+      throw ("Bootstrapped canonical instance failed browser preflight: " + $browserPreflight.Reason + $(if ($browserPreflight.Summary) { " / " + $browserPreflight.Summary } else { "" }))
+    }
     $bootstrapStarted = ($startedServer -or $startedFrontend)
   } else {
-    Write-Host "  bootstrap    : using existing canonical instance with complete MCP baseline"
+    Write-Host "  bootstrap    : using existing canonical instance with complete MCP baseline and healthy browser preflight"
+    $usedExistingCanonicalInstance = $true
   }
 
   & $pythonCommand.Source $scriptPath
   $exitCode = $LASTEXITCODE
+  if ($exitCode -ne 0 -and $usedExistingCanonicalInstance -and -not $forceCurrentBootstrap) {
+    Write-Host "  retry        : existing canonical instance failed during verification, retrying with current repo bootstrap"
+    $env:GEN_CODE_FORCE_CURRENT_BOOTSTRAP = "1"
+    if ($bootstrapStarted) {
+      Stop-BootstrapProcesses -FrontendProcess $frontendProcess -ServerProcess $serverProcess
+      $bootstrapStarted = $false
+    }
+    & powershell -ExecutionPolicy Bypass -File $PSCommandPath
+    $exitCode = $LASTEXITCODE
+  }
   if ($exitCode -ne 0) {
     Write-Error "Verification failed with exit code $exitCode"
     exit $exitCode
   }
 } finally {
   if ($bootstrapStarted) {
-    foreach ($proc in @($frontendProcess, $serverProcess)) {
-      if ($null -ne $proc) {
-        try {
-          $targetId = $proc.Id
-          Stop-Process -Id $targetId -Force -ErrorAction SilentlyContinue
-          Wait-Process -Id $targetId -Timeout 15 -ErrorAction SilentlyContinue
-        } catch {
-        }
-      }
-    }
+    Stop-BootstrapProcesses -FrontendProcess $frontendProcess -ServerProcess $serverProcess
   }
 }

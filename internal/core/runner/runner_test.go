@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1072,9 +1073,9 @@ func TestRunnerExecutesAgentRunWithBrowserSequence(t *testing.T) {
 	models := &scriptedModelExecutor{
 		results: []provider.ResponseResult{
 			{OutputText: `{"type":"browser_open","url":"http://127.0.0.1:3000","reasoningSummary":"Open the local preview"}`},
-			{OutputText: `{"type":"browser_type","tabId":"browser-tab-1","selector":"[data-testid=\"name\"]","text":"browser","reasoningSummary":"Fill the input"}`},
-			{OutputText: `{"type":"browser_click","tabId":"browser-tab-1","selector":"[data-testid=\"apply\"]","reasoningSummary":"Apply the form"}`},
-			{OutputText: `{"type":"browser_extract","tabId":"browser-tab-1","selector":"[data-testid=\"result\"]","reasoningSummary":"Read the result"}`},
+			{OutputText: `{"type":"browser_type","tabId":"browser-tab-1","selector":"input","text":"browser","reasoningSummary":"Fill the input"}`},
+			{OutputText: `{"type":"browser_click","tabId":"browser-tab-1","selector":"button","reasoningSummary":"Apply the form"}`},
+			{OutputText: `{"type":"browser_extract","tabId":"browser-tab-1","selector":"#result","reasoningSummary":"Read the result"}`},
 			{OutputText: `{"type":"browser_screenshot","tabId":"browser-tab-1","reasoningSummary":"Capture a screenshot"}`},
 			{OutputText: `{"type":"respond","response":"Browser workflow complete.","reasoningSummary":"Done"}`},
 		},
@@ -1093,9 +1094,21 @@ func TestRunnerExecutesAgentRunWithBrowserSequence(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, tasks, 6)
 	require.Equal(t, KindBrowserOpen, tasks[1].Kind)
+	var browserOpenPayload map[string]string
+	require.NoError(t, json.Unmarshal([]byte(tasks[1].Input), &browserOpenPayload))
+	require.Equal(t, "http://127.0.0.1:5174/?gcPreview=1&pane=acceptance-browser&threadId=thread-1", browserOpenPayload["url"])
 	require.Equal(t, KindBrowserType, tasks[2].Kind)
+	var browserTypePayload map[string]string
+	require.NoError(t, json.Unmarshal([]byte(tasks[2].Input), &browserTypePayload))
+	require.Equal(t, "[data-testid='controlled-browser-input']", browserTypePayload["selector"])
 	require.Equal(t, KindBrowserClick, tasks[3].Kind)
+	var browserClickPayload map[string]string
+	require.NoError(t, json.Unmarshal([]byte(tasks[3].Input), &browserClickPayload))
+	require.Equal(t, "[data-testid='controlled-browser-apply']", browserClickPayload["selector"])
 	require.Equal(t, KindBrowserExtract, tasks[4].Kind)
+	var browserExtractPayload map[string]string
+	require.NoError(t, json.Unmarshal([]byte(tasks[4].Input), &browserExtractPayload))
+	require.Equal(t, "[data-testid='controlled-browser-result']", browserExtractPayload["selector"])
 	require.Equal(t, KindBrowserScreenshot, tasks[5].Kind)
 	require.Equal(t, task.ID, tasks[5].ParentTaskID)
 
@@ -1123,6 +1136,69 @@ func TestDeriveAgentExecutionPlanAddsOptionalBrowserScreenshotStep(t *testing.T)
 	require.Equal(t, "browser_then_respond", plan.Mode)
 	require.Equal(t, []string{"browser_open", "browser_type", "browser_click", "browser_extract", "browser_screenshot", "respond"}, plan.RequiredSequence)
 	require.Equal(t, "Capture a browser screenshot", plan.Steps[4].Title)
+}
+
+func TestNormalizeAgentActionForStateRewritesBrowserOpenToCanonicalFixture(t *testing.T) {
+	action := normalizeAgentActionForState(
+		AgentAction{
+			Type: "browser_open",
+			URL:  "http://127.0.0.1:3000",
+		},
+		AgentRunState{
+			ThreadID: "thread-acceptance",
+			Plan: AgentExecutionPlan{
+				Mode: "browser_then_respond",
+			},
+		},
+	)
+
+	require.Equal(t, "http://127.0.0.1:5174/?gcPreview=1&pane=acceptance-browser&threadId=thread-acceptance", action.URL)
+}
+
+func TestBuildAgentPromptIncludesCanonicalBrowserFixtureGuidance(t *testing.T) {
+	prompt := buildAgentPrompt(nil, nil, AgentRunState{
+		ThreadID: "thread-browser",
+		Goal:     "Open the controlled browser fixture and reply.",
+		MaxSteps: 6,
+		Plan: AgentExecutionPlan{
+			Summary:          "Open the controlled browser page, interact with it, extract the stable result, and then answer.",
+			Mode:             "browser_then_respond",
+			RequiredSequence: []string{"browser_open", "browser_type", "browser_click", "browser_extract", "respond"},
+		},
+		CurrentStepTitle: "Open the controlled browser page",
+	})
+
+	require.Contains(t, prompt, "Browser fixture guidance:")
+	require.Contains(t, prompt, "http://127.0.0.1:5174/?gcPreview=1&pane=acceptance-browser&threadId=thread-browser")
+	require.Contains(t, prompt, "Do not substitute another localhost port such as 3000")
+	require.Contains(t, prompt, "[data-testid='controlled-browser-input']")
+	require.Contains(t, prompt, "[data-testid='controlled-browser-apply']")
+	require.Contains(t, prompt, "[data-testid='controlled-browser-result']")
+}
+
+func TestNormalizeAgentActionForStateRewritesGenericControlledBrowserSelectors(t *testing.T) {
+	state := AgentRunState{
+		ThreadID: "thread-browser",
+		Plan: AgentExecutionPlan{
+			Mode: "browser_then_respond",
+		},
+	}
+
+	typeExpectation := map[string]string{
+		"browser_type":    "[data-testid='controlled-browser-input']",
+		"browser_click":   "[data-testid='controlled-browser-apply']",
+		"browser_extract": "[data-testid='controlled-browser-result']",
+	}
+	inputSelectors := map[string]string{
+		"browser_type":    "input",
+		"browser_click":   "button",
+		"browser_extract": "[data-testid='stable-result']",
+	}
+
+	for actionType, expectedSelector := range typeExpectation {
+		action := normalizeAgentActionForState(AgentAction{Type: actionType, Selector: inputSelectors[actionType]}, state)
+		require.Equal(t, expectedSelector, action.Selector)
+	}
 }
 
 func TestValidateAgentActionSequenceRejectsBrowserClickBeforeType(t *testing.T) {
@@ -1552,6 +1628,13 @@ func TestParseAgentActionAcceptsResultAlias(t *testing.T) {
 	require.Equal(t, "done", action.Response)
 }
 
+func TestParseAgentActionAcceptsToolResultAlias(t *testing.T) {
+	action, err := parseAgentAction(`{"type":"tool_result","response":"done","reasoningSummary":"ok"}`)
+	require.NoError(t, err)
+	require.Equal(t, "respond", action.Type)
+	require.Equal(t, "done", action.Response)
+}
+
 func TestParseAgentActionTreatsToolCallAsInferableAlias(t *testing.T) {
 	action, err := parseAgentActionWithState(
 		`{"type":"tool_call","path":"go.mod","reasoningSummary":"Inspect file metadata first"}`,
@@ -1604,6 +1687,49 @@ func TestParseAgentActionDetailedSearchInheritsPreviousQueryAndPath(t *testing.T
 				Path:  "internal/core/runner",
 			},
 			Plan: AgentExecutionPlan{
+				Steps: []AgentPlanStep{
+					{Title: "Search for broad matches", ExpectedActionTypes: []string{"search_text"}},
+					{Title: "Inspect detailed matches", ExpectedActionTypes: []string{"search_text_detailed"}},
+				},
+			},
+			CompletedActions: []string{"search_text"},
+			CurrentStepTitle: "Inspect detailed matches",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "search_text_detailed", action.Type)
+	require.Equal(t, "KindWorkspaceStat", action.Query)
+	require.Equal(t, "internal/core/runner", action.Path)
+}
+
+func TestParseAgentActionSearchUsesGoalFallbackQueryAndPath(t *testing.T) {
+	action, err := parseAgentActionWithState(
+		`{"type":"search_text","reasoningSummary":"Search broadly first"}`,
+		AgentRunState{
+			Goal: "Use search_text in internal/core/runner for KindWorkspaceStat, then use search_text_detailed in internal/core/runner for KindWorkspaceStat with line details, then answer in one short sentence.",
+			Plan: AgentExecutionPlan{
+				Mode: "search_then_detailed",
+				Steps: []AgentPlanStep{
+					{Title: "Search for broad matches", ExpectedActionTypes: []string{"search_text"}},
+					{Title: "Inspect detailed matches", ExpectedActionTypes: []string{"search_text_detailed"}},
+				},
+			},
+			CurrentStepTitle: "Search for broad matches",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "search_text", action.Type)
+	require.Equal(t, "KindWorkspaceStat", action.Query)
+	require.Equal(t, "internal/core/runner", action.Path)
+}
+
+func TestParseAgentActionDetailedSearchUsesGoalFallbackQueryAndPath(t *testing.T) {
+	action, err := parseAgentActionWithState(
+		`{"type":"search_text_detailed","limit":20,"reasoningSummary":"Inspect line hits"}`,
+		AgentRunState{
+			Goal: "Use search_text in internal/core/runner for KindWorkspaceStat, then use search_text_detailed in internal/core/runner for KindWorkspaceStat with line details, then answer in one short sentence.",
+			Plan: AgentExecutionPlan{
+				Mode: "search_then_detailed",
 				Steps: []AgentPlanStep{
 					{Title: "Search for broad matches", ExpectedActionTypes: []string{"search_text"}},
 					{Title: "Inspect detailed matches", ExpectedActionTypes: []string{"search_text_detailed"}},
