@@ -277,7 +277,26 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "internal", "core", "skill", "catalog", "codex", "code-review"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "writing-plans"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "planning-with-files"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "andrej-karpathy-skills.md"), []byte(""), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "planning-with-files", "SKILL.md"), []byte(`---
+name: planning-with-files
+description: planning
+---
+
+## Capability
+- capability verified
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "planning-with-files", "skill.tools.json"), []byte(`{
+  "tools": [
+    {
+      "name": "session-catchup",
+      "description": "Recover planning context from the previous session.",
+      "command": ["python", "scripts/session-catchup.py"],
+      "readOnly": true
+    }
+  ]
+}`), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(parent, "CC ibwhale", "ibwhale", "tools", "deploy-helper"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(parent, "CC ibwhale", "node_modules", "@modelcontextprotocol", "server-filesystem"), 0o755))
 
@@ -331,6 +350,26 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		CapabilityVerified:  false,
 		CapabilitySummary:   "missing primary skill document",
 	})
+	require.Contains(t, discovered.skills, skill.Descriptor{
+		ID:                  "planning-with-files",
+		Group:               skill.CC,
+		Name:                "Planning With Files",
+		Description:         "Discovered from cc skills",
+		Source:              "cc",
+		VerificationStatus:  "implemented",
+		LocalizationChecked: false,
+		IsolationStatus:     "isolated",
+		CapabilityVerified:  true,
+		CapabilitySummary:   "capability verified",
+		LocalTools: []skill.LocalToolDescriptor{
+			{
+				Name:        "session-catchup",
+				Description: "Recover planning context from the previous session.",
+				Command:     []string{"python", "scripts/session-catchup.py"},
+				ReadOnly:    true,
+			},
+		},
+	})
 	for _, item := range discovered.skills {
 		require.NotEqual(t, "gstack", item.ID)
 	}
@@ -375,6 +414,28 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
 		Kind:               "runtime.check_prerequisites",
+		ReadOnly:           true,
+		Executable:         true,
+	})
+	require.Contains(t, discovered.tools, tool.Descriptor{
+		ID:                 "workspace.check_structure",
+		Name:               "Workspace Check Structure",
+		Description:        "Validate workspace structure and Python tool inventory using tools/check_workspace.py",
+		InputSchemaSummary: `{"workspace":"optional workspace root path","strict":false}`,
+		PermissionMode:     policy.ReadOnly,
+		Source:             "runtime",
+		Kind:               "workspace.check_structure",
+		ReadOnly:           true,
+		Executable:         true,
+	})
+	require.Contains(t, discovered.tools, tool.Descriptor{
+		ID:                 "providers.check_config",
+		Name:               "Providers Check Config",
+		Description:        "Validate provider-oriented configuration fields using tools/check_providers.py",
+		InputSchemaSummary: `{"envFile":"optional workspace-relative .env path","exampleFile":"optional workspace-relative .env.example path","strict":false}`,
+		PermissionMode:     policy.ReadOnly,
+		Source:             "runtime",
+		Kind:               "providers.check_config",
 		ReadOnly:           true,
 		Executable:         true,
 	})

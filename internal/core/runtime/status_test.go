@@ -578,7 +578,7 @@ func TestServiceTaskDescriptorExposesAgentPlanMetadata(t *testing.T) {
 	require.NoError(t, err)
 
 	agentState := `{"taskId":"task-1","threadId":"thread-1","stepIndex":2,"maxSteps":4,"waitingChildTaskId":"task-2","lastAction":{"type":"read_files_batch","reasoningSummary":"Read selected files"},"status":"running","goal":"Inspect files","plan":{"summary":"Filter matching files first, then read the selected files, then answer.","mode":"filter_then_read","steps":[{"title":"Filter matching files","expectedActionTypes":["list_files_filtered"]},{"title":"Read the selected files","expectedActionTypes":["read_files_batch","read_file"]},{"title":"Answer with the findings","expectedActionTypes":["respond"]}],"requiredSequence":["list_files_filtered","read_files_batch|read_file","respond"]},"currentStepTitle":"Answer with the findings","lastReasoning":"Read selected files","completedActions":["list_files_filtered","read_files_batch"]}`
-		_, ok := sessions.CreateTask(thread.ID, session.CreateTaskInput{
+	_, ok := sessions.CreateTask(thread.ID, session.CreateTaskInput{
 		Title:      "Agent run",
 		Kind:       runner.KindAgentRun,
 		Input:      `{"goal":"Inspect files","maxSteps":4}`,
@@ -635,21 +635,82 @@ func TestServiceCreateAgentTaskSeedsPlanMode(t *testing.T) {
 	require.Equal(t, "Check file status", task.AgentCurrentStepTitle)
 }
 
+func TestServiceCreateSkillToolTaskRespectsReadOnlyAndApproval(t *testing.T) {
+	projectRoot := t.TempDir()
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	sessions, err := session.NewRegistryWithStore(projectRoot, store)
+	require.NoError(t, err)
+
+	service := NewService(
+		"0.1.0",
+		skill.Codex,
+		policy.DefaultMode(),
+		projectRoot,
+		tool.NewRegistry(),
+		skill.NewManager([]skill.Descriptor{
+			{
+				ID:    "skill-creator",
+				Group: skill.Codex,
+				LocalTools: []skill.LocalToolDescriptor{
+					{Name: "quick-validate", Command: []string{"python", "scripts/quick_validate.py"}, ReadOnly: true},
+				},
+			},
+			{
+				ID:    "plugin-creator",
+				Group: skill.Codex,
+				LocalTools: []skill.LocalToolDescriptor{
+					{Name: "create-basic-plugin", Command: []string{"python", "scripts/create_basic_plugin.py"}, ReadOnly: false},
+				},
+			},
+		}),
+		mcp.NewManager(nil),
+		provider.NewRegistry(""),
+		sessions,
+	)
+
+	readThread := service.session.CreateThread(session.CreateThreadInput{
+		Name:           "Read skill tool",
+		PermissionMode: policy.ReadOnly,
+	})
+	readTask, err := service.CreateTask(context.Background(), readThread.ID, runtimecontract.CreateTaskRequest{
+		Kind:  runner.KindSkillToolInvoke,
+		Input: `{"skillId":"skill-creator","toolName":"quick-validate","args":["."]}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "queued", readTask.Status)
+
+	writeThread := service.session.CreateThread(session.CreateThreadInput{
+		Name:           "Write skill tool",
+		PermissionMode: policy.AskUser,
+	})
+	writeTask, err := service.CreateTask(context.Background(), writeThread.ID, runtimecontract.CreateTaskRequest{
+		Kind:  runner.KindSkillToolInvoke,
+		Input: `{"skillId":"plugin-creator","toolName":"create-basic-plugin","args":["demo-plugin"]}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "needs_approval", writeTask.Status)
+	require.Equal(t, "pending", writeTask.ApprovalStatus)
+	require.Contains(t, writeTask.ResultSummary, "approval required for plugin-creator/create-basic-plugin")
+}
+
 func TestTaskDescriptorAgentWorkflowSummary(t *testing.T) {
 	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 
 	t.Run("waiting for approval prefers explicit runtime summary", func(t *testing.T) {
 		descriptor := toTaskDescriptor(session.Task{
-			ID:             "task-agent",
-			ThreadID:       "thread-1",
-			Title:          "Agent run",
-			Status:         "waiting_for_approval",
-			Kind:           runner.KindAgentRun,
-			ResultSummary:  "agent step 2/4: waiting for approval for child task task-child",
-			WaitingStatus:  "waiting_for_approval",
-			CreatedAt:      now,
-			UpdatedAt:      now,
-			AgentState:     runner.MarshalAgentRunStateForRuntime(runner.AgentRunState{TaskID: "task-agent", ThreadID: "thread-1", StepIndex: 2, MaxSteps: 4, WaitingChildTaskID: "task-child", Status: "waiting_for_approval"}),
+			ID:            "task-agent",
+			ThreadID:      "thread-1",
+			Title:         "Agent run",
+			Status:        "waiting_for_approval",
+			Kind:          runner.KindAgentRun,
+			ResultSummary: "agent step 2/4: waiting for approval for child task task-child",
+			WaitingStatus: "waiting_for_approval",
+			CreatedAt:     now,
+			UpdatedAt:     now,
+			AgentState:    runner.MarshalAgentRunStateForRuntime(runner.AgentRunState{TaskID: "task-agent", ThreadID: "thread-1", StepIndex: 2, MaxSteps: 4, WaitingChildTaskID: "task-child", Status: "waiting_for_approval"}),
 		})
 
 		require.Equal(t, "task-child", descriptor.LatestChildTaskID)

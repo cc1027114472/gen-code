@@ -36,3 +36,23 @@ func TestManagerListIncludesCommonAndTargetGroup(t *testing.T) {
 	require.Len(t, ccSkills, 2)
 	require.ElementsMatch(t, []Group{Common, CC}, []Group{ccSkills[0].Group, ccSkills[1].Group})
 }
+
+func TestManagerFindLocalTool(t *testing.T) {
+	manager := NewManager([]Descriptor{
+		{
+			ID:    "skill-a",
+			Group: Codex,
+			LocalTools: []LocalToolDescriptor{
+				{Name: "tool-a", Command: []string{"python", "scripts/tool_a.py"}, ReadOnly: true},
+			},
+		},
+	})
+
+	skillItem, toolItem, ok := manager.FindLocalTool(Codex, "skill-a", "tool-a")
+	require.True(t, ok)
+	require.Equal(t, "skill-a", skillItem.ID)
+	require.Equal(t, "tool-a", toolItem.Name)
+
+	_, _, ok = manager.FindLocalTool(Codex, "skill-a", "missing")
+	require.False(t, ok)
+}

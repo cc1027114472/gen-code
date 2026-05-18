@@ -229,6 +229,11 @@ func (r *Runner) runAgentLoop(ctx context.Context, thread session.Thread, parent
 			}
 			action = corrected
 		}
+		if strings.TrimSpace(action.TabID) == "" && strings.TrimSpace(state.LastAction.TabID) != "" {
+			if strings.HasPrefix(action.Type, "browser_") || action.Type == "respond" {
+				action.TabID = strings.TrimSpace(state.LastAction.TabID)
+			}
+		}
 		state.LastAction = action
 		state.LastReasoning = strings.TrimSpace(action.ReasoningSummary)
 		state.StepIndex++
@@ -515,6 +520,7 @@ func (r *Runner) runAgentChildTask(ctx context.Context, thread session.Thread, p
 	if childResult.Status != "completed" {
 		return fmt.Errorf("agent child task failed: %s", childResult.ResultSummary)
 	}
+	r.syncAgentBrowserContext(ctx, state, kind, childResult)
 	state.WaitingChildTaskID = ""
 	state.Status = "running"
 	_, err = r.registry.UpdateTaskStatus(thread.ID, parent.ID, session.UpdateTaskStatusInput{
@@ -524,6 +530,58 @@ func (r *Runner) runAgentChildTask(ctx context.Context, thread session.Thread, p
 		AgentState:    strPtr(marshalAgentRunState(*state)),
 	})
 	return err
+}
+
+func (r *Runner) syncAgentBrowserContext(ctx context.Context, state *AgentRunState, kind string, child session.Task) {
+	if !isAgentBrowserTaskKind(kind) {
+		return
+	}
+	if snapshot, err := r.browserCore().State(ctx); err == nil {
+		if tabID := strings.TrimSpace(browserSummaryTabID(snapshot.ActiveTabID, snapshot.Tabs)); tabID != "" {
+			state.LastAction.TabID = tabID
+			return
+		}
+	}
+	if tabID := extractBrowserTabIDFromSummary(child.ResultSummary); tabID != "" {
+		state.LastAction.TabID = tabID
+	}
+}
+
+func isAgentBrowserTaskKind(kind string) bool {
+	switch strings.TrimSpace(kind) {
+	case KindBrowserOpen, KindBrowserNavigate, KindBrowserBack, KindBrowserForward, KindBrowserReload, KindBrowserCloseTab, KindBrowserActivateTab, KindBrowserClick, KindBrowserType, KindBrowserExtract, KindBrowserScreenshot:
+		return true
+	default:
+		return false
+	}
+}
+
+func extractBrowserTabIDFromSummary(summary string) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return ""
+	}
+	for _, marker := range []string{
+		"browser tab opened: ",
+		"browser tab navigated: ",
+		"browser tab went back: ",
+		"browser tab went forward: ",
+		"browser tab reloaded: ",
+		"browser tab closed: ",
+		"browser tab activated: ",
+		"browser click executed: ",
+		"browser type executed: ",
+		"browser extract completed: ",
+	} {
+		if strings.HasPrefix(summary, marker) {
+			value := strings.TrimSpace(strings.TrimPrefix(summary, marker))
+			if idx := strings.Index(value, " | "); idx >= 0 {
+				value = strings.TrimSpace(value[:idx])
+			}
+			return value
+		}
+	}
+	return ""
 }
 
 func (r *Runner) runAgentPatchTask(ctx context.Context, thread session.Thread, parent session.Task, state *AgentRunState, path string, patch string) (bool, string, error) {

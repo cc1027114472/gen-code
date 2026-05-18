@@ -1,0 +1,13 @@
+{
+  "tools": [
+    {
+      "name": "quick-validate",
+      "description": "Run fast validation for a skill directory.",
+      "command": [
+        "python",
+        "scripts/quick_validate.py"
+      ],
+      "readOnly": true
+    }
+  ]
+}

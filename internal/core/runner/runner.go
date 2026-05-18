@@ -21,6 +21,7 @@ import (
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/provider"
 	"llmtrace/internal/core/session"
+	"llmtrace/internal/core/skill"
 )
 
 const (
@@ -35,6 +36,9 @@ const (
 	KindWorkspaceReadBatch          = "workspace.read_files_batch"
 	KindConfigCheckEnv              = "config.check_env"
 	KindRuntimeCheckPrerequisites   = "runtime.check_prerequisites"
+	KindWorkspaceCheckStructure     = "workspace.check_structure"
+	KindProvidersCheckConfig        = "providers.check_config"
+	KindSkillToolInvoke             = "skill.tool.invoke"
 	KindWorkspaceListFiltered       = "workspace.list_files_filtered"
 	KindWorkspaceSearchDetailed     = "workspace.search_text_detailed"
 	KindWorkspaceApplyPatch         = "workspace.apply_patch"
@@ -92,6 +96,7 @@ type Runner struct {
 	models   ModelExecutor
 	mcp      *mcp.Manager
 	browser  browser.Core
+	skills   *skill.Manager
 }
 
 type ModelExecutor interface {
@@ -113,6 +118,11 @@ func (r *Runner) WithMCP(manager *mcp.Manager) *Runner {
 
 func (r *Runner) WithBrowser(core browser.Core) *Runner {
 	r.browser = core
+	return r
+}
+
+func (r *Runner) WithSkills(manager *skill.Manager) *Runner {
+	r.skills = manager
 	return r
 }
 
@@ -710,6 +720,18 @@ func (r *Runner) execute(ctx context.Context, threadID string, task session.Task
 			return "", err
 		}
 		return r.executeRuntimeCheckPrerequisites(ctx, task.Input)
+	case KindWorkspaceCheckStructure:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		return r.executeWorkspaceCheckStructure(ctx, task.Input)
+	case KindProvidersCheckConfig:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		return r.executeProvidersCheckConfig(ctx, task.Input)
+	case KindSkillToolInvoke:
+		return r.executeSkillToolInvoke(ctx, thread, task)
 	case KindWorkspaceListFiltered:
 		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
 			return "", err
@@ -1145,6 +1167,194 @@ func (r *Runner) executeRuntimeCheckPrerequisites(ctx context.Context, raw strin
 		return "", fmt.Errorf("runtime check failed: %s", summary)
 	}
 	return fmt.Sprintf("runtime check passed: %s", summary), nil
+}
+
+func (r *Runner) executeWorkspaceCheckStructure(ctx context.Context, raw string) (string, error) {
+	var input struct {
+		Workspace string `json:"workspace"`
+		Strict    bool   `json:"strict"`
+	}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &input); err != nil {
+			return "", err
+		}
+	}
+
+	workspaceRoot := r.registry.Workspace().ProjectRoot
+	scriptPath, err := resolveWorkspacePath(workspaceRoot, filepath.ToSlash(filepath.Join("tools", "check_workspace.py")))
+	if err != nil {
+		return "", err
+	}
+
+	args := []string{scriptPath}
+	if strings.TrimSpace(input.Workspace) != "" {
+		resolvedWorkspace, err := resolveWorkspacePath(workspaceRoot, input.Workspace)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--workspace", resolvedWorkspace)
+	}
+	if input.Strict {
+		args = append(args, "--strict")
+	}
+
+	command := exec.CommandContext(ctx, pythonExecutable(), args...)
+	command.Dir = workspaceRoot
+	output, err := command.CombinedOutput()
+	summary := compactSummary(string(output), 240)
+	if err != nil {
+		return "", fmt.Errorf("workspace check failed: %s", summary)
+	}
+	return fmt.Sprintf("workspace check passed: %s", summary), nil
+}
+
+func (r *Runner) executeProvidersCheckConfig(ctx context.Context, raw string) (string, error) {
+	var input struct {
+		EnvFile     string `json:"envFile"`
+		ExampleFile string `json:"exampleFile"`
+		Strict      bool   `json:"strict"`
+	}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &input); err != nil {
+			return "", err
+		}
+	}
+
+	workspaceRoot := r.registry.Workspace().ProjectRoot
+	scriptPath, err := resolveWorkspacePath(workspaceRoot, filepath.ToSlash(filepath.Join("tools", "check_providers.py")))
+	if err != nil {
+		return "", err
+	}
+
+	args := []string{scriptPath}
+	if strings.TrimSpace(input.EnvFile) != "" {
+		resolvedEnv, err := resolveWorkspacePath(workspaceRoot, input.EnvFile)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--env-file", resolvedEnv)
+	}
+	if strings.TrimSpace(input.ExampleFile) != "" {
+		resolvedExample, err := resolveWorkspacePath(workspaceRoot, input.ExampleFile)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--example-file", resolvedExample)
+	}
+	if input.Strict {
+		args = append(args, "--strict")
+	}
+
+	command := exec.CommandContext(ctx, pythonExecutable(), args...)
+	command.Dir = workspaceRoot
+	output, err := command.CombinedOutput()
+	summary := compactSummary(string(output), 240)
+	if err != nil {
+		return "", fmt.Errorf("provider check failed: %s", summary)
+	}
+	return fmt.Sprintf("provider check passed: %s", summary), nil
+}
+
+func (r *Runner) executeSkillToolInvoke(ctx context.Context, thread session.Thread, task session.Task) (string, error) {
+	var input struct {
+		SkillID  string   `json:"skillId"`
+		ToolName string   `json:"toolName"`
+		Args     []string `json:"args"`
+		Workdir  string   `json:"workdir"`
+	}
+	if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(input.SkillID) == "" {
+		return "", fmt.Errorf("skillId is required")
+	}
+	if strings.TrimSpace(input.ToolName) == "" {
+		return "", fmt.Errorf("toolName is required")
+	}
+	if r.skills == nil {
+		return "", fmt.Errorf("skill execution is not configured")
+	}
+
+	_, localTool, ok := r.skills.FindLocalTool(skill.Codex, input.SkillID, input.ToolName)
+	if !ok {
+		_, localTool, ok = r.skills.FindLocalTool(skill.CC, input.SkillID, input.ToolName)
+	}
+	if !ok {
+		_, localTool, ok = r.skills.FindLocalTool(skill.Common, input.SkillID, input.ToolName)
+	}
+	if !ok {
+		return "", fmt.Errorf("skill local tool not found: %s/%s", input.SkillID, input.ToolName)
+	}
+
+	if localTool.ReadOnly {
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+	} else {
+		approvedWrite := task.ApprovalStatus == "approved" || task.ApprovalStatus == "executed" || task.ApprovalStatus == "direct"
+		if err := ensureWriteAllowed(thread.PermissionMode, approvedWrite); err != nil {
+			return "", err
+		}
+	}
+
+	command, workdir, err := r.resolveSkillToolCommand(input.SkillID, localTool, input.Args, input.Workdir)
+	if err != nil {
+		return "", err
+	}
+	if len(command) == 0 {
+		return "", fmt.Errorf("skill local tool command is empty")
+	}
+
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd.Dir = workdir
+	output, err := cmd.CombinedOutput()
+	summary := compactSummary(strings.TrimSpace(string(output)), 240)
+	if summary == "(empty)" {
+		summary = fmt.Sprintf("%s/%s completed", input.SkillID, input.ToolName)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s/%s failed: %s", input.SkillID, input.ToolName, summary)
+	}
+	return fmt.Sprintf("%s/%s completed: %s", input.SkillID, input.ToolName, summary), nil
+}
+
+func (r *Runner) resolveSkillToolCommand(skillID string, localTool skill.LocalToolDescriptor, args []string, requestedWorkdir string) ([]string, string, error) {
+	workspaceRoot := r.registry.Workspace().ProjectRoot
+	skillDir, err := resolveWorkspacePath(workspaceRoot, filepath.Join("internal", "core", "skill", "catalog", inferredSkillCatalogGroup(skillID), skillID))
+	if err != nil {
+		return nil, "", err
+	}
+
+	command := append([]string(nil), localTool.Command...)
+	for index, item := range command {
+		if index == 0 {
+			continue
+		}
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" || filepath.IsAbs(trimmed) {
+			continue
+		}
+		command[index] = filepath.Join(skillDir, filepath.FromSlash(trimmed))
+	}
+	command = append(command, args...)
+
+	workdir := skillDir
+	if strings.TrimSpace(requestedWorkdir) != "" {
+		workdir, err = resolveWorkspacePath(workspaceRoot, requestedWorkdir)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	return command, workdir, nil
+}
+
+func inferredSkillCatalogGroup(skillID string) string {
+	switch skillID {
+	case "plugin-creator", "skill-creator":
+		return "codex"
+	default:
+		return "cc"
+	}
 }
 
 func pythonExecutable() string {

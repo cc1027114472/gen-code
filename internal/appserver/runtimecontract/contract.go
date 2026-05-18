@@ -4,21 +4,23 @@ import "context"
 
 // Status describes the current runtime availability exposed by the app server.
 type Status struct {
-	State               string `json:"state"`
-	Ready               bool   `json:"ready"`
-	Message             string `json:"message,omitempty"`
-	RuntimeSource       string `json:"runtimeSource,omitempty"`
-	RuntimeSourceDetail string `json:"runtimeSourceDetail,omitempty"`
-	RuntimeTrust        string `json:"runtimeTrust,omitempty"`
-	CanonicalRuntimeURL string `json:"canonicalRuntimeUrl,omitempty"`
-	StateStore          string `json:"stateStore,omitempty"`
-	StatePath           string `json:"statePath,omitempty"`
-	WorkspaceID         string `json:"workspaceId,omitempty"`
-	ProjectRoot         string `json:"projectRoot,omitempty"`
-	ThreadCount         int    `json:"threadCount,omitempty"`
-	ActiveThreadID      string `json:"activeThreadId,omitempty"`
-	TaskCount           int    `json:"taskCount,omitempty"`
-	EventCount          int    `json:"eventCount,omitempty"`
+	State               string          `json:"state"`
+	Ready               bool            `json:"ready"`
+	Message             string          `json:"message,omitempty"`
+	RuntimeSource       string          `json:"runtimeSource,omitempty"`
+	RuntimeSourceDetail string          `json:"runtimeSourceDetail,omitempty"`
+	RuntimeTrust        string          `json:"runtimeTrust,omitempty"`
+	CanonicalRuntimeURL string          `json:"canonicalRuntimeUrl,omitempty"`
+	StateStore          string          `json:"stateStore,omitempty"`
+	StatePath           string          `json:"statePath,omitempty"`
+	WorkspaceCount      int             `json:"workspaceCount,omitempty"`
+	ActiveWorkspaceID   string          `json:"activeWorkspaceId,omitempty"`
+	WorkspaceID         string          `json:"workspaceId,omitempty"`
+	ProjectRoot         string          `json:"projectRoot,omitempty"`
+	ThreadCount         int             `json:"threadCount,omitempty"`
+	ActiveThreadID      string          `json:"activeThreadId,omitempty"`
+	TaskCount           int             `json:"taskCount,omitempty"`
+	EventCount          int             `json:"eventCount,omitempty"`
 	Browser             BrowserSnapshot `json:"browser,omitempty"`
 }
 
@@ -44,7 +46,19 @@ type WorkspaceDescriptor struct {
 	ProjectRoot       string `json:"projectRoot"`
 	SharedDocsRoot    string `json:"sharedDocsRoot"`
 	CreatedAt         string `json:"createdAt"`
+	ActiveThreadID    string `json:"activeThreadId,omitempty"`
 	ActiveThreadCount int    `json:"activeThreadCount"`
+}
+
+// WorkspaceCollectionItem describes a workspace entry in the desktop/CLI registry.
+type WorkspaceCollectionItem struct {
+	ID                string `json:"id"`
+	ProjectRoot       string `json:"projectRoot"`
+	SharedDocsRoot    string `json:"sharedDocsRoot"`
+	CreatedAt         string `json:"createdAt"`
+	ActiveThreadID    string `json:"activeThreadId,omitempty"`
+	ActiveThreadCount int    `json:"activeThreadCount"`
+	IsActive          bool   `json:"isActive"`
 }
 
 // ThreadDescriptor describes a single workspace thread.
@@ -54,6 +68,7 @@ type ThreadDescriptor struct {
 	Name                string `json:"name"`
 	Status              string `json:"status"`
 	ActiveModel         string `json:"activeModel,omitempty"`
+	ReasoningEffort     string `json:"reasoningEffort,omitempty"`
 	PermissionMode      string `json:"permissionMode"`
 	MessageHistoryCount int    `json:"messageHistoryCount"`
 	ToolCallCount       int    `json:"toolCallCount"`
@@ -64,9 +79,25 @@ type ThreadDescriptor struct {
 
 // CreateThreadRequest defines the minimum request body for creating a thread.
 type CreateThreadRequest struct {
-	Name           string `json:"name"`
-	ActiveModel    string `json:"activeModel"`
-	PermissionMode string `json:"permissionMode"`
+	Name            string `json:"name"`
+	ActiveModel     string `json:"activeModel"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	PermissionMode  string `json:"permissionMode"`
+}
+
+// CreateWorkspaceRequest defines the minimum request body for registering a workspace root.
+type CreateWorkspaceRequest struct {
+	ProjectRoot    string `json:"projectRoot"`
+	SharedDocsRoot string `json:"sharedDocsRoot,omitempty"`
+}
+
+// ActivateWorkspaceRequest defines the minimum request body for activating a workspace.
+type ActivateWorkspaceRequest struct{}
+
+// UpdateThreadPreferencesRequest defines the minimum request body for thread-level preferences.
+type UpdateThreadPreferencesRequest struct {
+	ActiveModel     string `json:"activeModel,omitempty"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 }
 
 // TaskDescriptor describes a single thread-local task.
@@ -224,16 +255,24 @@ type UpdateTaskStatusRequest struct {
 
 // Skill describes an available runtime skill.
 type Skill struct {
-	ID                  string `json:"id"`
-	Group               string `json:"group"`
-	Name                string `json:"name"`
-	Description         string `json:"description,omitempty"`
-	Source              string `json:"source,omitempty"`
-	VerificationStatus  string `json:"verificationStatus,omitempty"`
-	LocalizationChecked bool   `json:"localizationChecked"`
-	IsolationStatus     string `json:"isolationStatus,omitempty"`
-	CapabilityVerified  bool   `json:"capabilityVerified"`
-	CapabilitySummary   string `json:"capabilitySummary,omitempty"`
+	ID                  string           `json:"id"`
+	Group               string           `json:"group"`
+	Name                string           `json:"name"`
+	Description         string           `json:"description,omitempty"`
+	Source              string           `json:"source,omitempty"`
+	VerificationStatus  string           `json:"verificationStatus,omitempty"`
+	LocalizationChecked bool             `json:"localizationChecked"`
+	IsolationStatus     string           `json:"isolationStatus,omitempty"`
+	CapabilityVerified  bool             `json:"capabilityVerified"`
+	CapabilitySummary   string           `json:"capabilitySummary,omitempty"`
+	LocalTools          []SkillLocalTool `json:"localTools,omitempty"`
+}
+
+type SkillLocalTool struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Command     []string `json:"command,omitempty"`
+	ReadOnly    bool     `json:"readOnly"`
 }
 
 // Tool describes an available runtime tool.
@@ -292,10 +331,14 @@ type BridgeCheckResult struct {
 type Service interface {
 	Status(ctx context.Context) (Status, error)
 	Workspace(ctx context.Context) (WorkspaceDescriptor, error)
+	Workspaces(ctx context.Context) ([]WorkspaceCollectionItem, error)
+	CreateWorkspace(ctx context.Context, request CreateWorkspaceRequest) (WorkspaceCollectionItem, error)
+	ActivateWorkspace(ctx context.Context, id string, request ActivateWorkspaceRequest) (WorkspaceCollectionItem, error)
 	Threads(ctx context.Context) ([]ThreadDescriptor, error)
 	CreateThread(ctx context.Context, request CreateThreadRequest) (ThreadDescriptor, error)
 	Thread(ctx context.Context, id string) (ThreadDescriptor, error)
 	ActivateThread(ctx context.Context, id string) (ThreadDescriptor, error)
+	UpdateThreadPreferences(ctx context.Context, id string, request UpdateThreadPreferencesRequest) (ThreadDescriptor, error)
 	Tasks(ctx context.Context, threadID string) ([]TaskDescriptor, error)
 	CreateTask(ctx context.Context, threadID string, request CreateTaskRequest) (TaskDescriptor, error)
 	RunTask(ctx context.Context, threadID string, taskID string, request RunTaskRequest) (TaskDescriptor, error)
@@ -345,6 +388,18 @@ func (noopService) Workspace(context.Context) (WorkspaceDescriptor, error) {
 	return WorkspaceDescriptor{}, nil
 }
 
+func (noopService) Workspaces(context.Context) ([]WorkspaceCollectionItem, error) {
+	return []WorkspaceCollectionItem{}, nil
+}
+
+func (noopService) CreateWorkspace(context.Context, CreateWorkspaceRequest) (WorkspaceCollectionItem, error) {
+	return WorkspaceCollectionItem{}, nil
+}
+
+func (noopService) ActivateWorkspace(context.Context, string, ActivateWorkspaceRequest) (WorkspaceCollectionItem, error) {
+	return WorkspaceCollectionItem{}, nil
+}
+
 func (noopService) Threads(context.Context) ([]ThreadDescriptor, error) {
 	return []ThreadDescriptor{}, nil
 }
@@ -358,6 +413,10 @@ func (noopService) Thread(context.Context, string) (ThreadDescriptor, error) {
 }
 
 func (noopService) ActivateThread(context.Context, string) (ThreadDescriptor, error) {
+	return ThreadDescriptor{}, nil
+}
+
+func (noopService) UpdateThreadPreferences(context.Context, string, UpdateThreadPreferencesRequest) (ThreadDescriptor, error) {
 	return ThreadDescriptor{}, nil
 }
 

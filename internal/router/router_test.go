@@ -58,6 +58,29 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			wantBody:       []string{`"id":"gen-code"`, `"projectRoot":"D:\\GOWorks\\gen-code-heji\\gen-code"`},
 		},
 		{
+			name:           "workspaces",
+			method:         http.MethodGet,
+			path:           "/api/workspaces",
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"items":[{"id":"gen-code","projectRoot":"D:\\GOWorks\\gen-code-heji\\gen-code"`},
+		},
+		{
+			name:           "create workspace",
+			method:         http.MethodPost,
+			path:           "/api/workspaces",
+			body:           `{"projectRoot":"D:\\GOWorks\\gen-code-heji\\other-project","sharedDocsRoot":"D:\\GOWorks\\gen-code-heji\\other-project\\docs"}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"other-project"`, `"isActive":false`},
+		},
+		{
+			name:           "activate workspace",
+			method:         http.MethodPost,
+			path:           "/api/workspaces/other-project/activate",
+			body:           `{}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"other-project"`, `"isActive":true`},
+		},
+		{
 			name:           "threads",
 			method:         http.MethodGet,
 			path:           "/api/threads",
@@ -86,6 +109,14 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			body:           `{}`,
 			wantStatusCode: http.StatusOK,
 			wantBody:       []string{`"id":"thread-2"`, `"isActive":true`},
+		},
+		{
+			name:           "update thread preferences",
+			method:         http.MethodPost,
+			path:           "/api/threads/thread-1/preferences",
+			body:           `{"activeModel":"gpt-5.5","reasoningEffort":"high"}`,
+			wantStatusCode: http.StatusOK,
+			wantBody:       []string{`"id":"thread-1"`, `"activeModel":"gpt-5.5"`, `"reasoningEffort":"high"`},
 		},
 		{
 			name:           "tasks",
@@ -227,7 +258,7 @@ func TestNewRegistersCodexStyleRoutes(t *testing.T) {
 			method:         http.MethodGet,
 			path:           "/api/skills",
 			wantStatusCode: http.StatusOK,
-			wantBody:       []string{`"items":[{"id":"skill-1","group":"codex","name":"Skill One","description":"Skill description","source":"codex","verificationStatus":"implemented","localizationChecked":false,"isolationStatus":"isolated"}`},
+			wantBody:       []string{`"items":[{"id":"skill-1","group":"codex","name":"Skill One","description":"Skill description","source":"codex","verificationStatus":"implemented","localizationChecked":false,"isolationStatus":"isolated","capabilityVerified":true,"capabilitySummary":"capability verified","localTools":[{"name":"quick-validate","description":"Validate a skill","command":["python","scripts/quick_validate.py"],"readOnly":true}]}`},
 		},
 		{
 			name:           "tools",
@@ -441,7 +472,53 @@ func (stubRuntimeService) Workspace(context.Context) (runtimecontract.WorkspaceD
 		ProjectRoot:       `D:\GOWorks\gen-code-heji\gen-code`,
 		SharedDocsRoot:    `D:\GOWorks\gen-code-heji\gen-code\docs`,
 		CreatedAt:         "2026-05-15T00:00:00Z",
+		ActiveThreadID:    "thread-1",
 		ActiveThreadCount: 2,
+	}, nil
+}
+
+func (stubRuntimeService) Workspaces(context.Context) ([]runtimecontract.WorkspaceCollectionItem, error) {
+	return []runtimecontract.WorkspaceCollectionItem{
+		{
+			ID:                "gen-code",
+			ProjectRoot:       `D:\GOWorks\gen-code-heji\gen-code`,
+			SharedDocsRoot:    `D:\GOWorks\gen-code-heji\gen-code\docs`,
+			CreatedAt:         "2026-05-15T00:00:00Z",
+			ActiveThreadID:    "thread-1",
+			ActiveThreadCount: 2,
+			IsActive:          true,
+		},
+		{
+			ID:                "other-project",
+			ProjectRoot:       `D:\GOWorks\gen-code-heji\other-project`,
+			SharedDocsRoot:    `D:\GOWorks\gen-code-heji\other-project\docs`,
+			CreatedAt:         "2026-05-15T00:10:00Z",
+			ActiveThreadID:    "",
+			ActiveThreadCount: 0,
+			IsActive:          false,
+		},
+	}, nil
+}
+
+func (stubRuntimeService) CreateWorkspace(_ context.Context, request runtimecontract.CreateWorkspaceRequest) (runtimecontract.WorkspaceCollectionItem, error) {
+	return runtimecontract.WorkspaceCollectionItem{
+		ID:                "other-project",
+		ProjectRoot:       request.ProjectRoot,
+		SharedDocsRoot:    request.SharedDocsRoot,
+		CreatedAt:         "2026-05-15T00:10:00Z",
+		ActiveThreadCount: 0,
+		IsActive:          false,
+	}, nil
+}
+
+func (stubRuntimeService) ActivateWorkspace(_ context.Context, id string, _ runtimecontract.ActivateWorkspaceRequest) (runtimecontract.WorkspaceCollectionItem, error) {
+	return runtimecontract.WorkspaceCollectionItem{
+		ID:                id,
+		ProjectRoot:       `D:\GOWorks\gen-code-heji\other-project`,
+		SharedDocsRoot:    `D:\GOWorks\gen-code-heji\other-project\docs`,
+		CreatedAt:         "2026-05-15T00:10:00Z",
+		ActiveThreadCount: 0,
+		IsActive:          true,
 	}, nil
 }
 
@@ -452,6 +529,8 @@ func (stubRuntimeService) Threads(context.Context) ([]runtimecontract.ThreadDesc
 			WorkspaceID:         "gen-code",
 			Name:                "Thread 1",
 			Status:              "idle",
+			ActiveModel:         "gpt-5",
+			ReasoningEffort:     "medium",
 			PermissionMode:      "ask-user",
 			MessageHistoryCount: 0,
 			ToolCallCount:       0,
@@ -464,6 +543,8 @@ func (stubRuntimeService) Threads(context.Context) ([]runtimecontract.ThreadDesc
 			WorkspaceID:         "gen-code",
 			Name:                "Thread 2",
 			Status:              "idle",
+			ActiveModel:         "gpt-5-mini",
+			ReasoningEffort:     "low",
 			PermissionMode:      "ask-user",
 			MessageHistoryCount: 0,
 			ToolCallCount:       0,
@@ -484,6 +565,7 @@ func (stubRuntimeService) CreateThread(_ context.Context, request runtimecontrac
 		Name:                request.Name,
 		Status:              "idle",
 		ActiveModel:         request.ActiveModel,
+		ReasoningEffort:     request.ReasoningEffort,
 		PermissionMode:      request.PermissionMode,
 		MessageHistoryCount: 0,
 		ToolCallCount:       0,
@@ -499,6 +581,8 @@ func (stubRuntimeService) Thread(_ context.Context, id string) (runtimecontract.
 		WorkspaceID:         "gen-code",
 		Name:                "Thread 1",
 		Status:              "idle",
+		ActiveModel:         "gpt-5",
+		ReasoningEffort:     "medium",
 		PermissionMode:      "ask-user",
 		MessageHistoryCount: 0,
 		ToolCallCount:       0,
@@ -514,6 +598,25 @@ func (stubRuntimeService) ActivateThread(_ context.Context, id string) (runtimec
 		WorkspaceID:         "gen-code",
 		Name:                "Thread 2",
 		Status:              "idle",
+		ActiveModel:         "gpt-5-mini",
+		ReasoningEffort:     "low",
+		PermissionMode:      "ask-user",
+		MessageHistoryCount: 0,
+		ToolCallCount:       0,
+		ArtifactCount:       0,
+		CreatedAt:           "2026-05-15T00:00:00Z",
+		IsActive:            true,
+	}, nil
+}
+
+func (stubRuntimeService) UpdateThreadPreferences(_ context.Context, id string, request runtimecontract.UpdateThreadPreferencesRequest) (runtimecontract.ThreadDescriptor, error) {
+	return runtimecontract.ThreadDescriptor{
+		ID:                  id,
+		WorkspaceID:         "gen-code",
+		Name:                "Thread 1",
+		Status:              "idle",
+		ActiveModel:         request.ActiveModel,
+		ReasoningEffort:     request.ReasoningEffort,
 		PermissionMode:      "ask-user",
 		MessageHistoryCount: 0,
 		ToolCallCount:       0,
@@ -788,6 +891,14 @@ func (stubRuntimeService) Skills(context.Context) ([]runtimecontract.Skill, erro
 		VerificationStatus:  "implemented",
 		LocalizationChecked: false,
 		IsolationStatus:     "isolated",
+		CapabilityVerified:  true,
+		CapabilitySummary:   "capability verified",
+		LocalTools: []runtimecontract.SkillLocalTool{{
+			Name:        "quick-validate",
+			Description: "Validate a skill",
+			Command:     []string{"python", "scripts/quick_validate.py"},
+			ReadOnly:    true,
+		}},
 	}}, nil
 }
 
@@ -891,6 +1002,18 @@ func (errorRuntimeService) Workspace(context.Context) (runtimecontract.Workspace
 	return runtimecontract.WorkspaceDescriptor{}, xerror.Internal(2001, "runtime unavailable")
 }
 
+func (errorRuntimeService) Workspaces(context.Context) ([]runtimecontract.WorkspaceCollectionItem, error) {
+	return nil, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) CreateWorkspace(context.Context, runtimecontract.CreateWorkspaceRequest) (runtimecontract.WorkspaceCollectionItem, error) {
+	return runtimecontract.WorkspaceCollectionItem{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) ActivateWorkspace(context.Context, string, runtimecontract.ActivateWorkspaceRequest) (runtimecontract.WorkspaceCollectionItem, error) {
+	return runtimecontract.WorkspaceCollectionItem{}, xerror.Internal(2001, "runtime unavailable")
+}
+
 func (errorRuntimeService) Threads(context.Context) ([]runtimecontract.ThreadDescriptor, error) {
 	return nil, xerror.Internal(2001, "runtime unavailable")
 }
@@ -904,6 +1027,10 @@ func (errorRuntimeService) Thread(context.Context, string) (runtimecontract.Thre
 }
 
 func (errorRuntimeService) ActivateThread(context.Context, string) (runtimecontract.ThreadDescriptor, error) {
+	return runtimecontract.ThreadDescriptor{}, xerror.Internal(2001, "runtime unavailable")
+}
+
+func (errorRuntimeService) UpdateThreadPreferences(context.Context, string, runtimecontract.UpdateThreadPreferencesRequest) (runtimecontract.ThreadDescriptor, error) {
 	return runtimecontract.ThreadDescriptor{}, xerror.Internal(2001, "runtime unavailable")
 }
 

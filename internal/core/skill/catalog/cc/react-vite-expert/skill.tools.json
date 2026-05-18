@@ -1,0 +1,31 @@
+{
+  "tools": [
+    {
+      "name": "analyze-bundle",
+      "description": "Analyze a React+Vite bundle and suggest optimizations.",
+      "command": [
+        "python",
+        "scripts/analyze_bundle.py"
+      ],
+      "readOnly": true
+    },
+    {
+      "name": "create-component",
+      "description": "Generate a React component scaffold.",
+      "command": [
+        "python",
+        "scripts/create_component.py"
+      ],
+      "readOnly": false
+    },
+    {
+      "name": "create-hook",
+      "description": "Generate a React hook scaffold.",
+      "command": [
+        "python",
+        "scripts/create_hook.py"
+      ],
+      "readOnly": false
+    }
+  ]
+}

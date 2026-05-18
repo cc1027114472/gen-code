@@ -24,6 +24,7 @@ type WorkspaceRecord struct {
 	SharedDocsRoot string
 	CreatedAt      time.Time
 	ActiveThreadID string
+	IsActive       bool
 }
 
 // ThreadRecord is the persisted thread row.
@@ -33,6 +34,7 @@ type ThreadRecord struct {
 	Name           string
 	Status         string
 	ActiveModel    string
+	ReasoningEffort string
 	PermissionMode string
 	CreatedAt      time.Time
 }
@@ -136,6 +138,8 @@ type WriteExecutionRecord struct {
 // Snapshot is the full persisted runtime state payload.
 type Snapshot struct {
 	Workspace       WorkspaceRecord
+	Workspaces      []WorkspaceRecord
+	ActiveWorkspaceID string
 	Threads         []ThreadRecord
 	Tasks           []TaskRecord
 	Messages        []MessageRecord
@@ -205,27 +209,46 @@ func (s *Store) Close() error {
 func (s *Store) Load() (Snapshot, error) {
 	snapshot := Snapshot{}
 
-	row := s.db.QueryRow(`
-		SELECT id, project_root, shared_docs_root, created_at, active_thread_id
+	workspaceRows, err := s.db.Query(`
+		SELECT id, project_root, shared_docs_root, created_at, active_thread_id, is_active
 		FROM workspace
-		ORDER BY created_at ASC
-		LIMIT 1
+		ORDER BY created_at ASC, id ASC
 	`)
-	var createdAt string
-	err := row.Scan(&snapshot.Workspace.ID, &snapshot.Workspace.ProjectRoot, &snapshot.Workspace.SharedDocsRoot, &createdAt, &snapshot.Workspace.ActiveThreadID)
-	switch {
-	case err == sql.ErrNoRows:
-	case err != nil:
-		return Snapshot{}, fmt.Errorf("load workspace: %w", err)
-	default:
-		snapshot.Workspace.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load workspaces: %w", err)
+	}
+	defer workspaceRows.Close()
+
+	for workspaceRows.Next() {
+		var item WorkspaceRecord
+		var createdAt string
+		if err := workspaceRows.Scan(&item.ID, &item.ProjectRoot, &item.SharedDocsRoot, &createdAt, &item.ActiveThreadID, &item.IsActive); err != nil {
+			return Snapshot{}, fmt.Errorf("scan workspace: %w", err)
+		}
+		item.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 		if err != nil {
 			return Snapshot{}, fmt.Errorf("parse workspace created_at: %w", err)
+		}
+		snapshot.Workspaces = append(snapshot.Workspaces, item)
+		if item.IsActive {
+			snapshot.ActiveWorkspaceID = item.ID
+		}
+	}
+	if len(snapshot.Workspaces) > 0 {
+		snapshot.Workspace = snapshot.Workspaces[0]
+		if strings.TrimSpace(snapshot.ActiveWorkspaceID) == "" {
+			snapshot.ActiveWorkspaceID = snapshot.Workspace.ID
+		}
+		for _, item := range snapshot.Workspaces {
+			if item.ID == snapshot.ActiveWorkspaceID {
+				snapshot.Workspace = item
+				break
+			}
 		}
 	}
 
 	threadRows, err := s.db.Query(`
-		SELECT id, workspace_id, name, status, active_model, permission_mode, created_at
+		SELECT id, workspace_id, name, status, active_model, reasoning_effort, permission_mode, created_at
 		FROM threads
 		ORDER BY created_at ASC, id ASC
 	`)
@@ -237,7 +260,7 @@ func (s *Store) Load() (Snapshot, error) {
 	for threadRows.Next() {
 		var item ThreadRecord
 		var created string
-		if err := threadRows.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Status, &item.ActiveModel, &item.PermissionMode, &created); err != nil {
+		if err := threadRows.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Status, &item.ActiveModel, &item.ReasoningEffort, &item.PermissionMode, &created); err != nil {
 			return Snapshot{}, fmt.Errorf("scan thread: %w", err)
 		}
 		item.CreatedAt, err = time.Parse(time.RFC3339, created)
@@ -467,15 +490,21 @@ func (s *Store) Load() (Snapshot, error) {
 
 // SaveWorkspace upserts the single workspace record.
 func (s *Store) SaveWorkspace(item WorkspaceRecord) error {
+	if item.IsActive {
+		if _, err := s.db.Exec(`UPDATE workspace SET is_active = 0 WHERE id <> ?`, item.ID); err != nil {
+			return fmt.Errorf("clear active workspace: %w", err)
+		}
+	}
 	_, err := s.db.Exec(`
-		INSERT INTO workspace (id, project_root, shared_docs_root, created_at, active_thread_id)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO workspace (id, project_root, shared_docs_root, created_at, active_thread_id, is_active)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			project_root=excluded.project_root,
 			shared_docs_root=excluded.shared_docs_root,
 			created_at=excluded.created_at,
-			active_thread_id=excluded.active_thread_id
-	`, item.ID, item.ProjectRoot, item.SharedDocsRoot, item.CreatedAt.Format(time.RFC3339), item.ActiveThreadID)
+			active_thread_id=excluded.active_thread_id,
+			is_active=excluded.is_active
+	`, item.ID, item.ProjectRoot, item.SharedDocsRoot, item.CreatedAt.Format(time.RFC3339), item.ActiveThreadID, item.IsActive)
 	if err != nil {
 		return fmt.Errorf("save workspace: %w", err)
 	}
@@ -485,16 +514,17 @@ func (s *Store) SaveWorkspace(item WorkspaceRecord) error {
 // SaveThread upserts a thread row.
 func (s *Store) SaveThread(item ThreadRecord) error {
 	_, err := s.db.Exec(`
-		INSERT INTO threads (id, workspace_id, name, status, active_model, permission_mode, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO threads (id, workspace_id, name, status, active_model, reasoning_effort, permission_mode, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			workspace_id=excluded.workspace_id,
 			name=excluded.name,
 			status=excluded.status,
 			active_model=excluded.active_model,
+			reasoning_effort=excluded.reasoning_effort,
 			permission_mode=excluded.permission_mode,
 			created_at=excluded.created_at
-	`, item.ID, item.WorkspaceID, item.Name, item.Status, item.ActiveModel, item.PermissionMode, item.CreatedAt.Format(time.RFC3339))
+	`, item.ID, item.WorkspaceID, item.Name, item.Status, item.ActiveModel, item.ReasoningEffort, item.PermissionMode, item.CreatedAt.Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("save thread: %w", err)
 	}
@@ -658,7 +688,8 @@ func (s *Store) migrate() error {
 			project_root TEXT NOT NULL,
 			shared_docs_root TEXT NOT NULL,
 			created_at TEXT NOT NULL,
-			active_thread_id TEXT NOT NULL DEFAULT ''
+			active_thread_id TEXT NOT NULL DEFAULT '',
+			is_active INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS threads (
 			id TEXT PRIMARY KEY,
@@ -666,6 +697,7 @@ func (s *Store) migrate() error {
 			name TEXT NOT NULL,
 			status TEXT NOT NULL,
 			active_model TEXT NOT NULL DEFAULT '',
+			reasoning_effort TEXT NOT NULL DEFAULT '',
 			permission_mode TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
@@ -769,6 +801,12 @@ func (s *Store) migrate() error {
 	}
 	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		return fmt.Errorf("add tasks.kind column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE workspace ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add workspace.is_active column: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE threads ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("add threads.reasoning_effort column: %w", err)
 	}
 	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN input TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		return fmt.Errorf("add tasks.input column: %w", err)

@@ -55,12 +55,19 @@ type RuntimeStatus struct {
 	LogLevel              string                  `json:"logLevel"`
 	HTTPAccessLog         bool                    `json:"httpAccessLog"`
 	WorkspaceRoot         string                  `json:"workspaceRoot"`
+	WorkspaceCount        int                     `json:"workspaceCount"`
+	ActiveWorkspaceID     string                  `json:"activeWorkspaceId"`
 	WorkspaceID           string                  `json:"workspaceId"`
+	Workspaces            []WorkspaceCollection   `json:"workspaces"`
 	WorkspaceSummary      WorkspaceSummary        `json:"workspaceSummary"`
+	ActiveWorkspaceSummary WorkspaceSummary       `json:"activeWorkspaceSummary"`
 	ProjectRoot           string                  `json:"projectRoot"`
 	ThreadCount           int                     `json:"threadCount"`
 	ActiveThreadID        string                  `json:"activeThreadId"`
 	ActiveThreadSummary   ThreadWorkflowSummary   `json:"activeThreadSummary"`
+	ThreadContextCards    []ThreadContextCard     `json:"threadContextCards"`
+	PlanTracker           PlanTrackerSummary      `json:"planTracker"`
+	ExecutionConsole      []ExecutionConsoleEntry `json:"executionConsole"`
 	Threads               []ThreadSummary         `json:"threads"`
 	Tasks                 []TaskSummary           `json:"tasks"`
 	Approvals             []ApprovalSummary       `json:"approvals"`
@@ -94,6 +101,20 @@ type RuntimeStatus struct {
 	RecoverySummary       string                  `json:"recoverySummary"`
 	Browser               BrowserWorkspaceState   `json:"browser"`
 	UpdatedAt             string                  `json:"updatedAt"`
+}
+
+type WorkspaceCollection struct {
+	ID                    string `json:"id"`
+	ProjectRoot           string `json:"projectRoot"`
+	SharedDocsRoot        string `json:"sharedDocsRoot"`
+	ActiveThreadID        string `json:"activeThreadId"`
+	ActiveThreadName      string `json:"activeThreadName"`
+	ThreadCount           int    `json:"threadCount"`
+	WaitingTaskCount      int    `json:"waitingTaskCount"`
+	PendingApprovalCount  int    `json:"pendingApprovalCount"`
+	WriteExecutionCount   int    `json:"writeExecutionCount"`
+	IsActive              bool   `json:"isActive"`
+	Summary               string `json:"summary"`
 }
 
 type WorkspaceSummary struct {
@@ -135,13 +156,58 @@ type ThreadWorkflowSummary struct {
 	Summary               string `json:"summary"`
 }
 
+type ThreadContextCard struct {
+	ThreadID      string   `json:"threadId"`
+	ThreadName    string   `json:"threadName"`
+	WorkspaceID   string   `json:"workspaceId"`
+	Status        string   `json:"status"`
+	RelatedPaths  []string `json:"relatedPaths"`
+	MCPServers    []string `json:"mcpServers"`
+	Sources       []string `json:"sources"`
+	Summary       string   `json:"summary"`
+	UpdatedAt     string   `json:"updatedAt"`
+}
+
+type PlanTrackerStep struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+	Detail string `json:"detail"`
+}
+
+type PlanTrackerSummary struct {
+	TaskID            string            `json:"taskId"`
+	ThreadID          string            `json:"threadId"`
+	Mode              string            `json:"mode"`
+	Status            string            `json:"status"`
+	Headline          string            `json:"headline"`
+	CurrentStepTitle  string            `json:"currentStepTitle"`
+	Summary           string            `json:"summary"`
+	LatestChildTaskID string            `json:"latestChildTaskId"`
+	Sources           []string          `json:"sources"`
+	Steps             []PlanTrackerStep `json:"steps"`
+}
+
+type ExecutionConsoleEntry struct {
+	ID        string `json:"id"`
+	Level     string `json:"level"`
+	Kind      string `json:"kind"`
+	Title     string `json:"title"`
+	Detail    string `json:"detail"`
+	ThreadID  string `json:"threadId"`
+	TaskID    string `json:"taskId"`
+	CreatedAt string `json:"createdAt"`
+}
+
 type ThreadSummary struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Status         string `json:"status"`
-	ActiveModel    string `json:"activeModel"`
-	PermissionMode string `json:"permissionMode"`
-	IsActive       bool   `json:"isActive"`
+	ID              string `json:"id"`
+	WorkspaceID     string `json:"workspaceId"`
+	Name            string `json:"name"`
+	Status          string `json:"status"`
+	ActiveModel     string `json:"activeModel"`
+	ReasoningEffort string `json:"reasoningEffort"`
+	PermissionMode  string `json:"permissionMode"`
+	IsActive        bool   `json:"isActive"`
 }
 
 type TaskSummary struct {
@@ -302,6 +368,8 @@ type apiStatus struct {
 	CanonicalRuntimeURL string `json:"canonicalRuntimeUrl"`
 	StateStore          string `json:"stateStore"`
 	StatePath           string `json:"statePath"`
+	WorkspaceCount      int    `json:"workspaceCount"`
+	ActiveWorkspaceID   string `json:"activeWorkspaceId"`
 	WorkspaceID         string `json:"workspaceId"`
 	ProjectRoot         string `json:"projectRoot"`
 	ThreadCount         int    `json:"threadCount"`
@@ -323,13 +391,25 @@ type apiStatus struct {
 	} `json:"browser"`
 }
 
+type apiWorkspace struct {
+	ID                string `json:"id"`
+	ProjectRoot       string `json:"projectRoot"`
+	SharedDocsRoot    string `json:"sharedDocsRoot"`
+	CreatedAt         string `json:"createdAt"`
+	ActiveThreadID    string `json:"activeThreadId"`
+	ActiveThreadCount int    `json:"activeThreadCount"`
+	IsActive          bool   `json:"isActive"`
+}
+
 type apiThread struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Status         string `json:"status"`
-	ActiveModel    string `json:"activeModel"`
-	PermissionMode string `json:"permissionMode"`
-	IsActive       bool   `json:"isActive"`
+	ID              string `json:"id"`
+	WorkspaceID     string `json:"workspaceId"`
+	Name            string `json:"name"`
+	Status          string `json:"status"`
+	ActiveModel     string `json:"activeModel"`
+	ReasoningEffort string `json:"reasoningEffort"`
+	PermissionMode  string `json:"permissionMode"`
+	IsActive        bool   `json:"isActive"`
 }
 
 type apiTask struct {
@@ -487,12 +567,14 @@ type localRuntimeStore struct {
 }
 
 type persistedThread struct {
-	ID             string
-	Name           string
-	Status         string
-	ActiveModel    string
-	PermissionMode string
-	IsActive       bool
+	ID              string
+	WorkspaceID     string
+	Name            string
+	Status          string
+	ActiveModel     string
+	ReasoningEffort string
+	PermissionMode  string
+	IsActive        bool
 }
 
 type persistedTask struct {
@@ -989,6 +1071,13 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 		return RuntimeStatus{}, err
 	}
 
+	var workspacePayload struct {
+		Items []apiWorkspace `json:"items"`
+	}
+	if err := client.fetchEnvelope("/api/workspaces", &workspacePayload); err != nil {
+		return RuntimeStatus{}, err
+	}
+
 	var skillsPayload struct {
 		Items []apiSkill `json:"items"`
 	}
@@ -1072,10 +1161,13 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 
 	status := *base
 	status.WorkspaceRoot = workspaceRoot
+	status.WorkspaceCount = runtimeStatus.WorkspaceCount
+	status.ActiveWorkspaceID = runtimeStatus.ActiveWorkspaceID
 	status.WorkspaceID = runtimeStatus.WorkspaceID
 	status.ProjectRoot = runtimeStatus.ProjectRoot
 	status.ThreadCount = runtimeStatus.ThreadCount
 	status.ActiveThreadID = runtimeStatus.ActiveThreadID
+	status.Workspaces = mapWorkspaceCollections(workspacePayload.Items, threadPayload.Items)
 	status.Threads = mapThreads(threadPayload.Items)
 	status.Tasks = mapTasks(tasksPayload.Items)
 	status.Approvals = mapApprovals(approvalsPayload.Items)
@@ -1109,6 +1201,7 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	status.RecoverySummary = fmt.Sprintf("Live runtime connected. Active thread: %s, tasks: %d, messages: %d, tool calls: %d, artifacts: %d.", fallbackText(runtimeStatus.ActiveThreadID, "none"), len(status.Tasks), len(status.Messages), len(status.ToolCalls), len(status.Artifacts))
 	status.UpdatedAt = time.Now().Format(time.RFC3339)
 	normalizeWorkflowSummaries(&status)
+	augmentRuntimeStatus(&status)
 	return status, nil
 }
 
@@ -1922,14 +2015,56 @@ func mapThreads(items []apiThread) []ThreadSummary {
 	result := make([]ThreadSummary, 0, len(items))
 	for _, item := range items {
 		result = append(result, ThreadSummary{
-			ID:             item.ID,
-			Name:           item.Name,
-			Status:         item.Status,
-			ActiveModel:    item.ActiveModel,
-			PermissionMode: item.PermissionMode,
-			IsActive:       item.IsActive,
+			ID:              item.ID,
+			WorkspaceID:     item.WorkspaceID,
+			Name:            item.Name,
+			Status:          item.Status,
+			ActiveModel:     item.ActiveModel,
+			ReasoningEffort: item.ReasoningEffort,
+			PermissionMode:  item.PermissionMode,
+			IsActive:        item.IsActive,
 		})
 	}
+	return result
+}
+
+func mapWorkspaceCollections(items []apiWorkspace, threads []apiThread) []WorkspaceCollection {
+	threadNameByID := make(map[string]string, len(threads))
+	threadCountByWorkspace := make(map[string]int)
+	for _, thread := range threads {
+		threadNameByID[thread.ID] = thread.Name
+		threadCountByWorkspace[thread.WorkspaceID]++
+	}
+	result := make([]WorkspaceCollection, 0, len(items))
+	for _, item := range items {
+		activeThreadName := strings.TrimSpace(threadNameByID[item.ActiveThreadID])
+		summaryParts := []string{fallbackText(strings.TrimSpace(item.ProjectRoot), item.ID)}
+		if activeThreadName != "" {
+			summaryParts = append(summaryParts, "active "+activeThreadName)
+		}
+		if count := threadCountByWorkspace[item.ID]; count > 0 {
+			summaryParts = append(summaryParts, fmt.Sprintf("%d thread(s)", count))
+		}
+		result = append(result, WorkspaceCollection{
+			ID:                   item.ID,
+			ProjectRoot:          item.ProjectRoot,
+			SharedDocsRoot:       item.SharedDocsRoot,
+			ActiveThreadID:       item.ActiveThreadID,
+			ActiveThreadName:     activeThreadName,
+			ThreadCount:          threadCountByWorkspace[item.ID],
+			WaitingTaskCount:     0,
+			PendingApprovalCount: 0,
+			WriteExecutionCount:  0,
+			IsActive:             item.IsActive,
+			Summary:              strings.Join(summaryParts, " / "),
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].IsActive != result[j].IsActive {
+			return result[i].IsActive
+		}
+		return result[i].ID < result[j].ID
+	})
 	return result
 }
 
@@ -2473,7 +2608,8 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 			project_root TEXT NOT NULL,
 			shared_docs_root TEXT NOT NULL,
 			created_at TEXT NOT NULL,
-			active_thread_id TEXT NOT NULL DEFAULT ''
+			active_thread_id TEXT NOT NULL DEFAULT '',
+			is_active INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS threads (
 			id TEXT PRIMARY KEY,
@@ -2481,6 +2617,7 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 			name TEXT NOT NULL,
 			status TEXT NOT NULL,
 			active_model TEXT NOT NULL DEFAULT '',
+			reasoning_effort TEXT NOT NULL DEFAULT '',
 			permission_mode TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		)`,
@@ -2584,6 +2721,8 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 		`ALTER TABLE thread_write_executions ADD COLUMN operation TEXT NOT NULL DEFAULT 'apply'`,
 		`ALTER TABLE thread_write_executions ADD COLUMN related_execution_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE thread_write_executions ADD COLUMN rollback_payload TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE workspace ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE threads ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, statement := range migrations {
 		if _, err := db.Exec(statement); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -2598,8 +2737,8 @@ func (s *localRuntimeStore) ensureDB(workspaceRoot string) error {
 		return err
 	}
 	if _, err := db.Exec(`
-		INSERT INTO workspace(id, project_root, shared_docs_root, created_at, active_thread_id)
-		VALUES(?, ?, ?, ?, '')
+		INSERT INTO workspace(id, project_root, shared_docs_root, created_at, active_thread_id, is_active)
+		VALUES(?, ?, ?, ?, '', 1)
 		ON CONFLICT(id) DO UPDATE SET
 			project_root=excluded.project_root,
 			shared_docs_root=excluded.shared_docs_root
@@ -2941,6 +3080,450 @@ func normalizeWorkflowSummaries(status *RuntimeStatus) {
 	}
 }
 
+func augmentRuntimeStatus(status *RuntimeStatus) {
+	if status == nil {
+		return
+	}
+
+	if status.WorkspaceCount == 0 {
+		if len(status.Workspaces) > 0 {
+			status.WorkspaceCount = len(status.Workspaces)
+		} else if strings.TrimSpace(status.WorkspaceID) != "" {
+			status.WorkspaceCount = 1
+		}
+	}
+	if strings.TrimSpace(status.ActiveWorkspaceID) == "" {
+		status.ActiveWorkspaceID = strings.TrimSpace(status.WorkspaceID)
+	}
+
+	if len(status.Workspaces) == 0 && strings.TrimSpace(status.WorkspaceID) != "" {
+		status.Workspaces = []WorkspaceCollection{
+			{
+				ID:                   status.WorkspaceID,
+				ProjectRoot:          fallbackText(status.ProjectRoot, status.WorkspaceRoot),
+				SharedDocsRoot:       filepath.Join(fallbackText(status.ProjectRoot, status.WorkspaceRoot), "docs"),
+				ActiveThreadID:       status.ActiveThreadID,
+				ActiveThreadName:     status.ActiveThreadSummary.Name,
+				ThreadCount:          len(status.Threads),
+				WaitingTaskCount:     status.WorkspaceSummary.WaitingTaskCount,
+				PendingApprovalCount: status.WorkspaceSummary.PendingApprovalCount,
+				WriteExecutionCount:  status.WorkspaceSummary.WriteExecutionCount,
+				IsActive:             true,
+				Summary:              status.WorkspaceSummary.Summary,
+			},
+		}
+	}
+
+	for i := range status.Workspaces {
+		item := &status.Workspaces[i]
+		if strings.TrimSpace(item.ProjectRoot) == "" {
+			item.ProjectRoot = fallbackText(status.ProjectRoot, status.WorkspaceRoot)
+		}
+		if strings.TrimSpace(item.SharedDocsRoot) == "" {
+			item.SharedDocsRoot = filepath.Join(item.ProjectRoot, "docs")
+		}
+		if strings.TrimSpace(item.ActiveThreadName) == "" {
+			for _, thread := range status.Threads {
+				if thread.ID == item.ActiveThreadID {
+					item.ActiveThreadName = thread.Name
+					break
+				}
+			}
+		}
+		if item.IsActive || item.ID == status.ActiveWorkspaceID {
+			item.IsActive = true
+			if item.ThreadCount == 0 {
+				item.ThreadCount = len(status.Threads)
+			}
+			if item.WaitingTaskCount == 0 {
+				item.WaitingTaskCount = status.WorkspaceSummary.WaitingTaskCount
+			}
+			if item.PendingApprovalCount == 0 {
+				item.PendingApprovalCount = status.WorkspaceSummary.PendingApprovalCount
+			}
+			if item.WriteExecutionCount == 0 {
+				item.WriteExecutionCount = status.WorkspaceSummary.WriteExecutionCount
+			}
+			if strings.TrimSpace(item.Summary) == "" {
+				item.Summary = status.WorkspaceSummary.Summary
+			}
+			status.ActiveWorkspaceSummary = WorkspaceSummary{
+				ID:                    item.ID,
+				Root:                  item.ProjectRoot,
+				ProjectRoot:           item.ProjectRoot,
+				ActiveThreadID:        item.ActiveThreadID,
+				ActiveThreadName:      item.ActiveThreadName,
+				ThreadCount:           item.ThreadCount,
+				TaskCount:             status.WorkspaceSummary.TaskCount,
+				WaitingTaskCount:      item.WaitingTaskCount,
+				ApprovalRequiredCount: status.WorkspaceSummary.ApprovalRequiredCount,
+				PendingApprovalCount:  item.PendingApprovalCount,
+				CompletedTaskCount:    status.WorkspaceSummary.CompletedTaskCount,
+				FailedTaskCount:       status.WorkspaceSummary.FailedTaskCount,
+				WriteExecutionCount:   item.WriteExecutionCount,
+				Summary:               fallbackText(strings.TrimSpace(item.Summary), status.WorkspaceSummary.Summary),
+			}
+		}
+	}
+
+	if strings.TrimSpace(status.ActiveWorkspaceSummary.ID) == "" {
+		status.ActiveWorkspaceSummary = status.WorkspaceSummary
+	}
+	if strings.TrimSpace(status.ProjectRoot) == "" {
+		status.ProjectRoot = fallbackText(status.ActiveWorkspaceSummary.ProjectRoot, status.WorkspaceRoot)
+	}
+
+	status.ThreadContextCards = buildThreadContextCards(*status)
+	status.PlanTracker = buildPlanTracker(*status)
+	status.ExecutionConsole = buildExecutionConsole(*status)
+}
+
+func buildThreadContextCards(status RuntimeStatus) []ThreadContextCard {
+	if len(status.Threads) == 0 {
+		return nil
+	}
+	threadMap := make(map[string]ThreadSummary, len(status.Threads))
+	for _, thread := range status.Threads {
+		threadMap[thread.ID] = thread
+	}
+	pathSetByThread := map[string]map[string]struct{}{}
+	mcpSetByThread := map[string]map[string]struct{}{}
+	sourceSetByThread := map[string]map[string]struct{}{}
+	updatedAtByThread := map[string]string{}
+	remember := func(threadID string, stamp string) {
+		if strings.TrimSpace(stamp) == "" {
+			return
+		}
+		if existing := updatedAtByThread[threadID]; strings.TrimSpace(existing) == "" || toTimeValue(stamp).After(toTimeValue(existing)) {
+			updatedAtByThread[threadID] = stamp
+		}
+	}
+	addSet := func(index map[string]map[string]struct{}, key string, value string) {
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			return
+		}
+		if _, ok := index[key]; !ok {
+			index[key] = map[string]struct{}{}
+		}
+		index[key][value] = struct{}{}
+	}
+	for _, task := range status.Tasks {
+		remember(task.ThreadID, fallbackText(task.UpdatedAt, task.CreatedAt))
+		for _, candidate := range extractTaskSources(task) {
+			if looksLikePath(candidate) {
+				addSet(pathSetByThread, task.ThreadID, candidate)
+			} else {
+				addSet(sourceSetByThread, task.ThreadID, candidate)
+			}
+		}
+	}
+	for _, approval := range status.Approvals {
+		remember(approval.ThreadID, approval.UpdatedAt)
+		for _, path := range approval.TargetPaths {
+			addSet(pathSetByThread, approval.ThreadID, path)
+		}
+		addSet(sourceSetByThread, approval.ThreadID, approval.ToolKind)
+	}
+	for _, execution := range status.WriteExecutions {
+		remember(execution.ThreadID, execution.UpdatedAt)
+		for _, path := range execution.TargetPaths {
+			addSet(pathSetByThread, execution.ThreadID, path)
+		}
+		addSet(sourceSetByThread, execution.ThreadID, execution.ToolKind)
+	}
+	for _, artifact := range status.Artifacts {
+		remember(artifact.ThreadID, artifact.CreatedAt)
+		addSet(pathSetByThread, artifact.ThreadID, artifact.Path)
+	}
+	for _, toolCall := range status.ToolCalls {
+		remember(toolCall.ThreadID, toolCall.CreatedAt)
+		if strings.HasPrefix(toolCall.ToolID, "mcp.") || strings.HasPrefix(toolCall.ToolID, "mcp/") {
+			addSet(mcpSetByThread, toolCall.ThreadID, toolCall.ToolID)
+			continue
+		}
+		addSet(sourceSetByThread, toolCall.ThreadID, toolCall.ToolID)
+	}
+
+	result := make([]ThreadContextCard, 0, len(status.Threads))
+	for _, thread := range status.Threads {
+		threadID := thread.ID
+		relatedPaths := setToSortedSlice(pathSetByThread[threadID], 6)
+		mcpServers := setToSortedSlice(mcpSetByThread[threadID], 6)
+		sources := setToSortedSlice(sourceSetByThread[threadID], 8)
+		parts := []string{}
+		if len(relatedPaths) > 0 {
+			parts = append(parts, fmt.Sprintf("paths=%s", strings.Join(relatedPaths, ", ")))
+		}
+		if len(mcpServers) > 0 {
+			parts = append(parts, fmt.Sprintf("mcp=%s", strings.Join(mcpServers, ", ")))
+		}
+		if len(sources) > 0 {
+			parts = append(parts, fmt.Sprintf("sources=%s", strings.Join(sources, ", ")))
+		}
+		result = append(result, ThreadContextCard{
+			ThreadID:     thread.ID,
+			ThreadName:   thread.Name,
+			WorkspaceID:  thread.WorkspaceID,
+			Status:       thread.Status,
+			RelatedPaths: relatedPaths,
+			MCPServers:   mcpServers,
+			Sources:      sources,
+			Summary:      strings.Join(parts, " / "),
+			UpdatedAt:    fallbackText(updatedAtByThread[threadID], time.Now().Format(time.RFC3339)),
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return toTimestamp(result[i].UpdatedAt) > toTimestamp(result[j].UpdatedAt)
+	})
+	return result
+}
+
+func buildPlanTracker(status RuntimeStatus) PlanTrackerSummary {
+	var candidate *TaskSummary
+	for i := range status.Tasks {
+		task := &status.Tasks[i]
+		if task.Kind == "agent.run" && (task.AgentPlanSummary != "" || task.AgentCurrentStepTitle != "" || task.AgentStep > 0 || task.WaitingStatus != "") {
+			candidate = task
+			break
+		}
+	}
+	if candidate == nil && len(status.Tasks) > 0 {
+		candidate = &status.Tasks[0]
+	}
+	if candidate == nil {
+		return PlanTrackerSummary{}
+	}
+
+	steps := make([]PlanTrackerStep, 0, 4)
+	stepStatus := "pending"
+	switch candidate.Status {
+	case "completed":
+		stepStatus = "completed"
+	case "running", "waiting_for_task", "waiting_for_approval", "needs_approval", "queued":
+		stepStatus = "in_progress"
+	case "failed":
+		stepStatus = "failed"
+	}
+	headline := fallbackText(candidate.Title, candidate.Kind)
+	if candidate.ParentTaskID != "" {
+		headline = fmt.Sprintf("%s / child task", headline)
+	}
+	steps = append(steps, PlanTrackerStep{
+		ID:     candidate.ID,
+		Title:  fallbackText(candidate.AgentCurrentStepTitle, headline),
+		Status: stepStatus,
+		Detail: fallbackText(candidate.WorkflowLabel, candidate.ResultSummary),
+	})
+	if candidate.LatestChildTaskID != "" {
+		steps = append(steps, PlanTrackerStep{
+			ID:     candidate.LatestChildTaskID,
+			Title:  "Latest child task",
+			Status: "in_progress",
+			Detail: candidate.LatestChildTaskID,
+		})
+	}
+	if candidate.ApprovalID != "" {
+		steps = append(steps, PlanTrackerStep{
+			ID:     candidate.ApprovalID,
+			Title:  "Approval",
+			Status: approvalStepStatus(candidate.ApprovalStatus),
+			Detail: fallbackText(candidate.ApprovalSummary, candidate.WaitingSummary),
+		})
+	}
+	sources := extractTaskSources(*candidate)
+	if candidate.ApprovalID != "" {
+		sources = append(sources, "approval:"+candidate.ApprovalID)
+	}
+	if candidate.WriteExecutionID != "" {
+		sources = append(sources, "write-execution:"+candidate.WriteExecutionID)
+	}
+	sources = dedupeStrings(sources, 12)
+	return PlanTrackerSummary{
+		TaskID:            candidate.ID,
+		ThreadID:          candidate.ThreadID,
+		Mode:              fallbackText(candidate.Kind, "task"),
+		Status:            candidate.Status,
+		Headline:          headline,
+		CurrentStepTitle:  candidate.AgentCurrentStepTitle,
+		Summary:           fallbackText(candidate.AgentPlanSummary, fallbackText(candidate.WaitingSummary, candidate.ResultSummary)),
+		LatestChildTaskID: candidate.LatestChildTaskID,
+		Sources:           sources,
+		Steps:             steps,
+	}
+}
+
+func buildExecutionConsole(status RuntimeStatus) []ExecutionConsoleEntry {
+	items := make([]ExecutionConsoleEntry, 0, len(status.Events)+len(status.ToolCalls)+len(status.WriteExecutions))
+	for _, event := range status.Events {
+		items = append(items, ExecutionConsoleEntry{
+			ID:        "event:" + event.ID,
+			Level:     eventConsoleLevel(event.Type),
+			Kind:      event.Type,
+			Title:     fallbackText(event.Type, "event"),
+			Detail:    event.Message,
+			ThreadID:  event.ThreadID,
+			CreatedAt: event.CreatedAt,
+		})
+	}
+	for _, toolCall := range status.ToolCalls {
+		items = append(items, ExecutionConsoleEntry{
+			ID:        "tool:" + toolCall.ID,
+			Level:     statusLevel(toolCall.Status),
+			Kind:      "toolcall",
+			Title:     toolCall.ToolID,
+			Detail:    toolCall.Summary,
+			ThreadID:  toolCall.ThreadID,
+			CreatedAt: toolCall.CreatedAt,
+		})
+	}
+	for _, execution := range status.WriteExecutions {
+		items = append(items, ExecutionConsoleEntry{
+			ID:        "write:" + execution.ID,
+			Level:     statusLevel(execution.Status),
+			Kind:      execution.Operation,
+			Title:     fallbackText(execution.ToolKind, "write execution"),
+			Detail:    fallbackText(execution.ResultSummary, execution.PatchSummary),
+			ThreadID:  execution.ThreadID,
+			TaskID:    execution.TaskID,
+			CreatedAt: fallbackText(execution.UpdatedAt, execution.CreatedAt),
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return toTimestamp(items[i].CreatedAt) > toTimestamp(items[j].CreatedAt)
+	})
+	if len(items) > 24 {
+		items = items[:24]
+	}
+	return items
+}
+
+func approvalStepStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case "approved", "executed", "completed":
+		return "completed"
+	case "rejected", "failed":
+		return "failed"
+	case "pending":
+		return "in_progress"
+	default:
+		return "pending"
+	}
+}
+
+func eventConsoleLevel(eventType string) string {
+	switch {
+	case strings.Contains(eventType, "failed"), strings.Contains(eventType, "rejected"):
+		return "error"
+	case strings.Contains(eventType, "approved"), strings.Contains(eventType, "completed"):
+		return "success"
+	case strings.Contains(eventType, "waiting"), strings.Contains(eventType, "approval"):
+		return "warning"
+	default:
+		return "info"
+	}
+}
+
+func statusLevel(status string) string {
+	switch strings.TrimSpace(status) {
+	case "failed", "rejected":
+		return "error"
+	case "completed", "approved":
+		return "success"
+	case "pending", "needs_approval", "waiting_for_task", "waiting_for_approval", "running", "queued":
+		return "warning"
+	default:
+		return "info"
+	}
+}
+
+func extractTaskSources(task TaskSummary) []string {
+	sources := []string{}
+	if strings.TrimSpace(task.Kind) != "" {
+		sources = append(sources, task.Kind)
+	}
+	if strings.TrimSpace(task.Input) != "" {
+		sources = append(sources, extractLikelySourceTokens(task.Input)...)
+	}
+	if strings.TrimSpace(task.ResultSummary) != "" {
+		sources = append(sources, extractLikelySourceTokens(task.ResultSummary)...)
+	}
+	if task.LatestChildTaskID != "" {
+		sources = append(sources, "child:"+task.LatestChildTaskID)
+	}
+	return dedupeStrings(sources, 16)
+}
+
+func extractLikelySourceTokens(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	tokens := []string{}
+	replacer := strings.NewReplacer("\n", " ", "\r", " ", "\"", " ", "'", " ", ",", " ", ";", " ", "(", " ", ")", " ", "{", " ", "}", " ", "[", " ", "]", " ")
+	for _, token := range strings.Fields(replacer.Replace(trimmed)) {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		if looksLikePath(token) || looksLikeURL(token) || strings.Contains(token, ".") || strings.Contains(token, "/") {
+			tokens = append(tokens, token)
+		}
+	}
+	return dedupeStrings(tokens, 12)
+}
+
+func dedupeStrings(items []string, limit int) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		result = append(result, item)
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
+	return result
+}
+
+func setToSortedSlice(items map[string]struct{}, limit int) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(items))
+	for item := range items {
+		result = append(result, item)
+	}
+	sort.Strings(result)
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result
+}
+
+func looksLikePath(value string) bool {
+	return strings.Contains(value, "/") || strings.Contains(value, "\\") || strings.HasSuffix(strings.ToLower(value), ".md") || strings.HasSuffix(strings.ToLower(value), ".go") || strings.HasSuffix(strings.ToLower(value), ".ts") || strings.HasSuffix(strings.ToLower(value), ".tsx")
+}
+
+func looksLikeURL(value string) bool {
+	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://")
+}
+
+func toTimeValue(raw string) time.Time {
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(raw))
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
 func buildTaskWorkflowLabel(task TaskSummary) string {
 	parts := make([]string, 0, 8)
 	if task.ParentTaskID != "" {
@@ -3075,7 +3658,10 @@ func (s *localRuntimeStore) readThreads(workspaceID string, activeThreadID strin
 type persistedWorkspace struct {
 	ID             string
 	ProjectRoot    string
+	SharedDocsRoot string
+	CreatedAt      string
 	ActiveThreadID string
+	IsActive       bool
 }
 
 func (s *localRuntimeStore) readWorkspace() (persistedWorkspace, error) {
@@ -3356,12 +3942,14 @@ func toThreadSummaries(items []persistedThread) []ThreadSummary {
 	result := make([]ThreadSummary, 0, len(items))
 	for _, item := range items {
 		result = append(result, ThreadSummary{
-			ID:             item.ID,
-			Name:           item.Name,
-			Status:         item.Status,
-			ActiveModel:    item.ActiveModel,
-			PermissionMode: item.PermissionMode,
-			IsActive:       item.IsActive,
+			ID:              item.ID,
+			WorkspaceID:     item.WorkspaceID,
+			Name:            item.Name,
+			Status:          item.Status,
+			ActiveModel:     item.ActiveModel,
+			ReasoningEffort: item.ReasoningEffort,
+			PermissionMode:  item.PermissionMode,
+			IsActive:        item.IsActive,
 		})
 	}
 	return result

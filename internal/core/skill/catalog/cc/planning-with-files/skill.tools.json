@@ -1,0 +1,13 @@
+{
+  "tools": [
+    {
+      "name": "session-catchup",
+      "description": "Recover planning context from the previous session.",
+      "command": [
+        "python",
+        "scripts/session-catchup.py"
+      ],
+      "readOnly": true
+    }
+  ]
+}

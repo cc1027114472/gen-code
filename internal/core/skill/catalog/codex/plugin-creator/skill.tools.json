@@ -1,0 +1,13 @@
+{
+  "tools": [
+    {
+      "name": "create-basic-plugin",
+      "description": "Scaffold a minimal Codex plugin layout.",
+      "command": [
+        "python",
+        "scripts/create_basic_plugin.py"
+      ],
+      "readOnly": false
+    }
+  ]
+}

@@ -19,6 +19,7 @@ import (
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/provider"
 	"llmtrace/internal/core/session"
+	"llmtrace/internal/core/skill"
 )
 
 type stubModelExecutor struct {
@@ -567,6 +568,84 @@ func TestRunnerFailsRuntimeCheckPrerequisitesToolForMissingEnv(t *testing.T) {
 	require.Contains(t, result.ResultSummary, "runtime check failed:")
 	require.Contains(t, result.ResultSummary, "FAIL")
 	require.Contains(t, result.ResultSummary, ".env")
+}
+
+func TestRunnerExecutesWorkspaceCheckStructureTool(t *testing.T) {
+	projectRoot := t.TempDir()
+	scriptBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "tools", "check_workspace.py"))
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(projectRoot, "tools"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_workspace.py"), scriptBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_config.py"), []byte("#!/usr/bin/env python3\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_runtime.py"), []byte("#!/usr/bin/env python3\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "go.mod"), []byte("module example\n\ngo 1.24.0\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ".env.example"), []byte("APP_PORT=10008\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(projectRoot, "tests", "tools"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "cc", "planning-with-files", "scripts"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "cc", "react-vite-expert", "scripts"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "codex", "plugin-creator", "scripts"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "codex", "skill-creator", "scripts"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "cc", "planning-with-files", "scripts", "session-catchup.py"), []byte("print('ok')\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "cc", "planning-with-files", "skill.tools.json"), []byte("{}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "cc", "react-vite-expert", "scripts", "analyze_bundle.py"), []byte("print('ok')\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "cc", "react-vite-expert", "scripts", "create_component.py"), []byte("print('ok')\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "cc", "react-vite-expert", "scripts", "create_hook.py"), []byte("print('ok')\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "cc", "react-vite-expert", "skill.tools.json"), []byte("{}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "codex", "plugin-creator", "scripts", "create_basic_plugin.py"), []byte("print('ok')\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "codex", "plugin-creator", "skill.tools.json"), []byte("{}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "codex", "skill-creator", "scripts", "quick_validate.py"), []byte("print('ok')\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "codex", "skill-creator", "skill.tools.json"), []byte("{}\n"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Workspace Check",
+		PermissionMode: policy.ReadOnly,
+	})
+
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Check workspace",
+		Kind:  KindWorkspaceCheckStructure,
+		Input: `{}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry, nil).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "workspace check passed:")
+	require.Contains(t, result.ResultSummary, "PASS")
+}
+
+func TestRunnerExecutesProvidersCheckConfigTool(t *testing.T) {
+	projectRoot := t.TempDir()
+	scriptBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "tools", "check_providers.py"))
+	require.NoError(t, err)
+	configBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "tools", "check_config.py"))
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(projectRoot, "tools"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_providers.py"), scriptBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_config.py"), configBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ".env"), []byte("APP_PORT=10008\nAPP_SHUTDOWN_TIMEOUT=10s\nANTHROPIC_ENABLED=true\nANTHROPIC_MODEL=claude-3-7-sonnet\nANTHROPIC_AUTH_TOKEN=token\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ".env.example"), []byte("APP_PORT=10008\nAPP_SHUTDOWN_TIMEOUT=10s\nANTHROPIC_ENABLED=true\nANTHROPIC_MODEL=claude-3-7-sonnet\n"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Providers Check",
+		PermissionMode: policy.ReadOnly,
+	})
+
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Check providers",
+		Kind:  KindProvidersCheckConfig,
+		Input: `{}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry, nil).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "provider check passed:")
+	require.Contains(t, result.ResultSummary, "PASS")
 }
 
 func TestRunnerExecutesBrowserTasks(t *testing.T) {
@@ -1244,6 +1323,55 @@ func TestRunnerExecutesAgentRunWithBrowserSequence(t *testing.T) {
 	require.True(t, ok)
 	require.NotEmpty(t, messages)
 	require.Equal(t, "Browser workflow complete.", messages[len(messages)-1].Content)
+}
+
+func TestRunnerExecutesAgentRunWithBrowserSequenceWithoutExplicitTabIDs(t *testing.T) {
+	registry := session.NewRegistry(t.TempDir())
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Agent Browser Inherited Tabs",
+		PermissionMode: policy.ReadOnly,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Agent browser inherited tabs",
+		Kind:  KindAgentRun,
+		Input: `{"goal":"Open the local preview in the browser, type into the form, extract the result, capture a screenshot, then answer","maxSteps":6}`,
+	})
+	require.True(t, ok)
+
+	models := &scriptedModelExecutor{
+		results: []provider.ResponseResult{
+			{OutputText: `{"type":"browser_open","url":"http://127.0.0.1:3000","reasoningSummary":"Open the local preview"}`},
+			{OutputText: `{"type":"browser_type","selector":"input","text":"browser","reasoningSummary":"Fill the input"}`},
+			{OutputText: `{"type":"browser_click","selector":"button","reasoningSummary":"Apply the form"}`},
+			{OutputText: `{"type":"browser_extract","selector":"#result","reasoningSummary":"Read the result"}`},
+			{OutputText: `{"type":"browser_screenshot","reasoningSummary":"Capture a screenshot"}`},
+			{OutputText: `{"type":"respond","response":"Browser workflow complete without explicit tab ids.","reasoningSummary":"Done"}`},
+		},
+	}
+
+	runner := New(registry, models).WithBrowser(&stubBrowserCore{})
+	result, err := runner.RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "agent completed")
+
+	resultState, err := parseAgentRunState(result.AgentState)
+	require.NoError(t, err)
+	require.Equal(t, "browser-tab-1", resultState.LastAction.TabID)
+
+	tasks, ok := registry.Tasks(thread.ID)
+	require.True(t, ok)
+	require.Len(t, tasks, 6)
+	for _, idx := range []int{2, 3, 4, 5} {
+		var payload map[string]string
+		require.NoError(t, json.Unmarshal([]byte(tasks[idx].Input), &payload))
+		require.Equal(t, "browser-tab-1", payload["tabId"])
+	}
+
+	artifacts, ok := registry.Artifacts(thread.ID)
+	require.True(t, ok)
+	require.Len(t, artifacts, 1)
+	require.Equal(t, "browser.screenshot", artifacts[0].Kind)
 }
 
 func TestDeriveAgentExecutionPlanUsesBrowserThenRespondForControlledBrowserGoal(t *testing.T) {
@@ -2576,4 +2704,73 @@ func TestRunnerRejectsRollbackWhenFileHasDrifted(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "failed", result.Status)
 	require.Contains(t, result.ResultSummary, "file drift detected")
+}
+
+func TestRunnerExecutesSkillLocalReadOnlyTool(t *testing.T) {
+	projectRoot := t.TempDir()
+	skillDir := filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "cc", "planning-with-files")
+	require.NoError(t, os.MkdirAll(filepath.Join(skillDir, "scripts"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "scripts", "session-catchup.py"), []byte("import sys\nprint('catchup ok ' + ' '.join(sys.argv[1:]))\n"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Skill Tool Read",
+		PermissionMode: policy.ReadOnly,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Run session catchup",
+		Kind:  KindSkillToolInvoke,
+		Input: `{"skillId":"planning-with-files","toolName":"session-catchup","args":["."]}`,
+	})
+	require.True(t, ok)
+
+	manager := skill.NewManager([]skill.Descriptor{{
+		ID:    "planning-with-files",
+		Group: skill.CC,
+		LocalTools: []skill.LocalToolDescriptor{{
+			Name:     "session-catchup",
+			Command:  []string{"python", "scripts/session-catchup.py"},
+			ReadOnly: true,
+		}},
+	}})
+
+	result, err := New(registry, nil).WithSkills(manager).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "planning-with-files/session-catchup completed")
+	require.Contains(t, result.ResultSummary, "catchup ok")
+}
+
+func TestRunnerRejectsSkillLocalWriteToolWithoutApproval(t *testing.T) {
+	projectRoot := t.TempDir()
+	skillDir := filepath.Join(projectRoot, "internal", "core", "skill", "catalog", "codex", "plugin-creator")
+	require.NoError(t, os.MkdirAll(filepath.Join(skillDir, "scripts"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "scripts", "create_basic_plugin.py"), []byte("print('created')\n"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Skill Tool Write",
+		PermissionMode: policy.AskUser,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Create plugin",
+		Kind:  KindSkillToolInvoke,
+		Input: `{"skillId":"plugin-creator","toolName":"create-basic-plugin","args":["demo-plugin"]}`,
+	})
+	require.True(t, ok)
+
+	manager := skill.NewManager([]skill.Descriptor{{
+		ID:    "plugin-creator",
+		Group: skill.Codex,
+		LocalTools: []skill.LocalToolDescriptor{{
+			Name:     "create-basic-plugin",
+			Command:  []string{"python", "scripts/create_basic_plugin.py"},
+			ReadOnly: false,
+		}},
+	}})
+
+	result, err := New(registry, nil).WithSkills(manager).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", result.Status)
+	require.Contains(t, result.ResultSummary, "approval required")
 }

@@ -338,14 +338,68 @@ function Get-ListeningProcessInfo {
       return $null
     }
     $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $($connection.OwningProcess)" -ErrorAction SilentlyContinue
+    $fallbackProcess = Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue
     return @{
       Port = $Port
       ProcessId = $connection.OwningProcess
-      Name = if ($null -ne $processInfo) { $processInfo.Name } else { "" }
-      CommandLine = if ($null -ne $processInfo) { $processInfo.CommandLine } else { "" }
+      Name = if ($null -ne $processInfo -and -not [string]::IsNullOrWhiteSpace($processInfo.Name)) { $processInfo.Name } elseif ($null -ne $fallbackProcess) { $fallbackProcess.ProcessName } else { "" }
+      CommandLine = if ($null -ne $processInfo -and -not [string]::IsNullOrWhiteSpace($processInfo.CommandLine)) { $processInfo.CommandLine } else { "" }
     }
   } catch {
     return $null
+  }
+}
+
+function Get-ProjectOwnedProcessEvidence {
+  param(
+    [Parameter(Mandatory = $true)][hashtable]$ProcessInfo,
+    [Parameter(Mandatory = $true)][string[]]$AllowedCommandFragments,
+    [int]$Port = 0,
+    [string]$ExpectedProjectRoot = "",
+    [string]$UiBaseUrl = "",
+    [string]$ApiBaseUrl = ""
+  )
+
+  $commandLine = [string]($ProcessInfo.CommandLine)
+  foreach ($fragment in $AllowedCommandFragments) {
+    if (-not [string]::IsNullOrWhiteSpace($fragment) -and $commandLine.IndexOf($fragment, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      return @{
+        IsProjectOwned = $true
+        Evidence = "command-line fragment '$fragment'"
+      }
+    }
+  }
+
+  if ($Port -eq 10008 -and -not [string]::IsNullOrWhiteSpace($ExpectedProjectRoot)) {
+    $runtimeStatus = Get-RuntimeStatusSnapshot -ApiBaseUrl $ApiBaseUrl
+    if ($null -ne $runtimeStatus) {
+      $runtimeProjectRoot = [string]($runtimeStatus.projectRoot)
+      if ($runtimeProjectRoot.Equals($ExpectedProjectRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return @{
+          IsProjectOwned = $true
+          Evidence = "runtime status projectRoot=$runtimeProjectRoot"
+        }
+      }
+    }
+  }
+
+  if ($Port -gt 0 -and -not [string]::IsNullOrWhiteSpace($UiBaseUrl)) {
+    try {
+      $uiUri = [System.Uri]$UiBaseUrl
+      $targetPort = if ($uiUri.IsDefaultPort) { if ($uiUri.Scheme -eq "https") { 443 } else { 80 } } else { $uiUri.Port }
+      if ($Port -eq $targetPort -and (Test-DesktopUiIdentity -UiBaseUrl $UiBaseUrl)) {
+        return @{
+          IsProjectOwned = $true
+          Evidence = "desktop UI identity check"
+        }
+      }
+    } catch {
+    }
+  }
+
+  return @{
+    IsProjectOwned = $false
+    Evidence = ""
   }
 }
 
@@ -387,37 +441,28 @@ function Prepare-ProjectProcessOnPort {
     }
   }
 
-  $commandLine = [string]($processInfo.CommandLine)
-  $isProjectOwned = $false
-  foreach ($fragment in $AllowedCommandFragments) {
-    if (-not [string]::IsNullOrWhiteSpace($fragment) -and $commandLine.IndexOf($fragment, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-      $isProjectOwned = $true
+  $ownership = $null
+  foreach ($attempt in 1..3) {
+    $ownership = Get-ProjectOwnedProcessEvidence -ProcessInfo $processInfo -AllowedCommandFragments $AllowedCommandFragments -Port $Port -ExpectedProjectRoot $ExpectedProjectRoot -UiBaseUrl $env:GEN_CODE_UI_BASE_URL -ApiBaseUrl $env:GEN_CODE_API_BASE_URL
+    if ($ownership.IsProjectOwned) {
       break
     }
-  }
-
-  if (-not $isProjectOwned -and $Port -eq 10008 -and -not [string]::IsNullOrWhiteSpace($ExpectedProjectRoot)) {
-    $runtimeStatus = Get-RuntimeStatusSnapshot -ApiBaseUrl $env:GEN_CODE_API_BASE_URL
-    if ($null -ne $runtimeStatus) {
-      $runtimeProjectRoot = [string]($runtimeStatus.projectRoot)
-      if ($runtimeProjectRoot.Equals($ExpectedProjectRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-        $isProjectOwned = $true
+    if ($attempt -lt 3) {
+      Start-Sleep -Milliseconds 750
+      $refreshed = Get-ListeningProcessInfo -Port $Port
+      if ($null -ne $refreshed) {
+        $processInfo = $refreshed
       }
     }
   }
 
-  if (-not $isProjectOwned -and $Port -eq $uiPort) {
-    if (Test-DesktopUiIdentity -UiBaseUrl $env:GEN_CODE_UI_BASE_URL) {
-      $isProjectOwned = $true
-    }
-  }
-
-  if (-not $isProjectOwned) {
+  if (-not $ownership.IsProjectOwned) {
+    $commandLine = [string]($processInfo.CommandLine)
     throw "Port $Port is occupied by a non-project process (pid=$($processInfo.ProcessId), name=$($processInfo.Name), commandLine=$commandLine). Clear the port or set GEN_CODE_FORCE_CURRENT_BOOTSTRAP=0 to reuse the existing environment."
   }
 
   try {
-    Write-Host "  bootstrap    : stopping existing $Label process on port $Port (pid=$($processInfo.ProcessId))"
+    Write-Host "  bootstrap    : stopping existing $Label process on port $Port (pid=$($processInfo.ProcessId), evidence=$($ownership.Evidence))"
     Stop-Process -Id $processInfo.ProcessId -Force
     if (-not (Wait-PortReleased -Port $Port -TimeoutSeconds 15)) {
       throw "port $Port did not release after stopping pid=$($processInfo.ProcessId)"
@@ -428,7 +473,7 @@ function Prepare-ProjectProcessOnPort {
       StartNew = $true
     }
   } catch {
-    Write-Host "  bootstrap    : reusing existing $Label process on port $Port because it already belongs to this repo and could not be stopped cleanly"
+    Write-Host "  bootstrap    : reusing existing $Label process on port $Port because it already belongs to this repo ($($ownership.Evidence)) and could not be stopped cleanly"
     return @{
       Found = $true
       Reuse = $true

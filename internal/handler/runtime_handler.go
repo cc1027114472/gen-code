@@ -16,11 +16,13 @@ import (
 const (
 	errCodeInvalidBridgeCheckPayload = 1001
 	errCodeInvalidCreateThreadBody   = 1002
+	errCodeInvalidCreateWorkspaceBody = 1004
 	errCodeInvalidCreateTaskBody     = 1005
 	errCodeInvalidTaskStatusBody     = 1001
 	errCodeInvalidRunTaskBody        = 1011
 	errCodeInvalidApproveTaskBody    = 1012
 	errCodeInvalidRejectTaskBody     = 1013
+	errCodeInvalidThreadPreferencesBody = 1014
 	errCodeInvalidMessageBody        = 1006
 	errCodeInvalidToolCallBody       = 1008
 	errCodeInvalidArtifactBody       = 1009
@@ -57,6 +59,45 @@ func (h *RuntimeHandler) Status(c *gin.Context) {
 // Workspace returns the current workspace descriptor.
 func (h *RuntimeHandler) Workspace(c *gin.Context) {
 	data, err := h.runtime.Workspace(c.Request.Context())
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
+// Workspaces returns the registered workspace descriptors.
+func (h *RuntimeHandler) Workspaces(c *gin.Context) {
+	data, err := h.runtime.Workspaces(c.Request.Context())
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, gin.H{"items": data})
+}
+
+// CreateWorkspace registers a new workspace root.
+func (h *RuntimeHandler) CreateWorkspace(c *gin.Context) {
+	var payload runtimecontract.CreateWorkspaceRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		xresp.BadRequest(c, errCodeInvalidCreateWorkspaceBody, "invalid create workspace payload")
+		return
+	}
+
+	data, err := h.runtime.CreateWorkspace(c.Request.Context(), payload)
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
+// ActivateWorkspace marks a workspace as active.
+func (h *RuntimeHandler) ActivateWorkspace(c *gin.Context) {
+	data, err := h.runtime.ActivateWorkspace(c.Request.Context(), c.Param("id"), runtimecontract.ActivateWorkspaceRequest{})
 	if err != nil {
 		writeRuntimeError(c, err)
 		return
@@ -107,6 +148,23 @@ func (h *RuntimeHandler) Thread(c *gin.Context) {
 // ActivateThread marks a thread as active.
 func (h *RuntimeHandler) ActivateThread(c *gin.Context) {
 	data, err := h.runtime.ActivateThread(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
+
+	xresp.OK(c, data)
+}
+
+// UpdateThreadPreferences updates thread-level model and reasoning preferences.
+func (h *RuntimeHandler) UpdateThreadPreferences(c *gin.Context) {
+	var payload runtimecontract.UpdateThreadPreferencesRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		xresp.BadRequest(c, errCodeInvalidThreadPreferencesBody, "invalid thread preferences payload")
+		return
+	}
+
+	data, err := h.runtime.UpdateThreadPreferences(c.Request.Context(), c.Param("id"), payload)
 	if err != nil {
 		writeRuntimeError(c, err)
 		return

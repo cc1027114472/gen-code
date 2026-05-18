@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +20,9 @@ type Workspace struct {
 	ProjectRoot       string    `json:"project_root"`
 	SharedDocsRoot    string    `json:"shared_docs_root"`
 	CreatedAt         time.Time `json:"created_at"`
+	ActiveThreadID    string    `json:"active_thread_id"`
 	ActiveThreadCount int       `json:"active_thread_count"`
+	IsActive          bool      `json:"is_active"`
 }
 
 // Thread describes an isolated work session under a workspace.
@@ -29,6 +32,7 @@ type Thread struct {
 	Name                string              `json:"name"`
 	Status              string              `json:"status"`
 	ActiveModel         string              `json:"active_model"`
+	ReasoningEffort     string              `json:"reasoning_effort"`
 	PermissionMode      policy.Mode         `json:"permission_mode"`
 	MessageHistory      []MessageRecord     `json:"message_history"`
 	ToolHistory         []ToolCallRecord    `json:"tool_history"`
@@ -152,7 +156,20 @@ type WriteExecutionFileSnapshot struct {
 type CreateThreadInput struct {
 	Name           string
 	ActiveModel    string
+	ReasoningEffort string
 	PermissionMode policy.Mode
+}
+
+// CreateWorkspaceInput collects optional fields for registering a workspace.
+type CreateWorkspaceInput struct {
+	ProjectRoot    string
+	SharedDocsRoot string
+}
+
+// UpdateThreadPreferencesInput collects the minimum fields required to update thread preferences.
+type UpdateThreadPreferencesInput struct {
+	ActiveModel     *string
+	ReasoningEffort *string
 }
 
 // CreateTaskInput collects the minimum task fields for a thread-local task.
@@ -236,6 +253,8 @@ type CreateWriteExecutionInput struct {
 }
 
 var (
+	// ErrWorkspaceNotFound is returned when a workspace lookup fails.
+	ErrWorkspaceNotFound = errors.New("workspace not found")
 	// ErrThreadNotFound is returned when a thread lookup fails.
 	ErrThreadNotFound = errors.New("thread not found")
 	// ErrTaskNotFound is returned when a task lookup fails.
@@ -248,19 +267,40 @@ var (
 	ErrApprovalNotFound = errors.New("approval not found")
 )
 
+func defaultWorkspace(projectRoot string) Workspace {
+	workspaceID := filepath.Base(projectRoot)
+	if workspaceID == "" || workspaceID == "." || workspaceID == string(filepath.Separator) {
+		workspaceID = "workspace"
+	}
+
+	sharedDocsRoot := projectRoot
+	if docsCandidate := filepath.Join(projectRoot, "docs"); docsCandidate != "" {
+		sharedDocsRoot = docsCandidate
+	}
+
+	return Workspace{
+		ID:             workspaceID,
+		ProjectRoot:    projectRoot,
+		SharedDocsRoot: sharedDocsRoot,
+		CreatedAt:      time.Now().UTC(),
+		IsActive:       true,
+	}
+}
+
 // Registry holds the in-memory workspace and thread set for the current runtime process.
 type Registry struct {
 	mu               sync.RWMutex
 	store            *state.Store
 	bus              *EventBus
-	workspace        Workspace
+	workspaces       map[string]Workspace
+	workspaceOrder   []string
+	activeWorkspaceID string
 	threads          map[string]Thread
 	tasks            map[string][]Task
 	events           map[string][]Event
 	approvals        map[string][]ApprovalRecord
 	writeExecutions  map[string][]WriteExecutionRecord
 	order            []string
-	activeThreadID   string
 	nextThreadNumber int
 	nextTaskNumber   int
 	nextEventNumber  int
@@ -282,25 +322,16 @@ func NewRegistry(projectRoot string) *Registry {
 
 // NewRegistryWithStore creates a registry and optionally hydrates it from a state store.
 func NewRegistryWithStore(projectRoot string, store *state.Store) (*Registry, error) {
-	workspaceID := filepath.Base(projectRoot)
-	if workspaceID == "" || workspaceID == "." || workspaceID == string(filepath.Separator) {
-		workspaceID = "workspace"
-	}
-
-	sharedDocsRoot := projectRoot
-	if docsCandidate := filepath.Join(projectRoot, "docs"); docsCandidate != "" {
-		sharedDocsRoot = docsCandidate
-	}
+	workspace := defaultWorkspace(projectRoot)
 
 	registry := &Registry{
 		store: store,
 		bus:   NewEventBus(64),
-		workspace: Workspace{
-			ID:             workspaceID,
-			ProjectRoot:    projectRoot,
-			SharedDocsRoot: sharedDocsRoot,
-			CreatedAt:      time.Now().UTC(),
+		workspaces: map[string]Workspace{
+			workspace.ID: workspace,
 		},
+		workspaceOrder:    []string{workspace.ID},
+		activeWorkspaceID: workspace.ID,
 		threads:          map[string]Thread{},
 		tasks:            map[string][]Task{},
 		events:           map[string][]Event{},
@@ -321,7 +352,7 @@ func NewRegistryWithStore(projectRoot string, store *state.Store) (*Registry, er
 		if err := registry.restoreFromStore(); err != nil {
 			return nil, err
 		}
-		if err := registry.persistWorkspaceLocked(); err != nil {
+		if err := registry.persistWorkspacesLocked(); err != nil {
 			return nil, err
 		}
 	}
@@ -334,16 +365,18 @@ func (r *Registry) Workspace() Workspace {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	workspace := r.workspace
-	workspace.ActiveThreadCount = len(r.threads)
-	return workspace
+	return r.snapshotWorkspaceLocked(r.activeWorkspaceID)
 }
 
 // ActiveThreadID returns the currently active thread identifier, if any.
 func (r *Registry) ActiveThreadID() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.activeThreadID
+	workspace, ok := r.workspaces[r.activeWorkspaceID]
+	if !ok {
+		return ""
+	}
+	return workspace.ActiveThreadID
 }
 
 // Threads returns all known threads sorted by creation order.
@@ -352,12 +385,17 @@ func (r *Registry) Threads() []Thread {
 	defer r.mu.RUnlock()
 
 	items := make([]Thread, 0, len(r.order))
+	activeThreadID := r.activeThreadIDLocked()
+	activeWorkspaceID := r.activeWorkspaceID
 	for _, id := range r.order {
 		thread, ok := r.threads[id]
 		if !ok {
 			continue
 		}
-		items = append(items, snapshotThread(thread, r.activeThreadID))
+		if thread.WorkspaceID != activeWorkspaceID {
+			continue
+		}
+		items = append(items, snapshotThread(thread, activeThreadID))
 	}
 	return items
 }
@@ -371,7 +409,93 @@ func (r *Registry) Thread(id string) (Thread, bool) {
 	if !ok {
 		return Thread{}, false
 	}
-	return snapshotThread(thread, r.activeThreadID), true
+	return snapshotThread(thread, r.activeThreadIDLocked()), true
+}
+
+// Workspaces returns all registered workspaces sorted by creation order.
+func (r *Registry) Workspaces() []Workspace {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	items := make([]Workspace, 0, len(r.workspaceOrder))
+	for _, id := range r.workspaceOrder {
+		items = append(items, r.snapshotWorkspaceLocked(id))
+	}
+	return items
+}
+
+// ActiveWorkspaceID returns the current active workspace identifier, if any.
+func (r *Registry) ActiveWorkspaceID() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.activeWorkspaceID
+}
+
+// CreateWorkspace registers a new workspace root and makes it active when it is the first workspace.
+func (r *Registry) CreateWorkspace(input CreateWorkspaceInput) (Workspace, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	projectRoot := strings.TrimSpace(input.ProjectRoot)
+	if projectRoot == "" {
+		return Workspace{}, fmt.Errorf("project root is required")
+	}
+	workspace := defaultWorkspace(projectRoot)
+	if strings.TrimSpace(input.SharedDocsRoot) != "" {
+		workspace.SharedDocsRoot = strings.TrimSpace(input.SharedDocsRoot)
+	}
+	if existing, ok := r.workspaces[workspace.ID]; ok {
+		existing.ProjectRoot = workspace.ProjectRoot
+		existing.SharedDocsRoot = workspace.SharedDocsRoot
+		r.workspaces[workspace.ID] = existing
+		_ = r.persistWorkspaceLocked(workspace.ID)
+		return r.snapshotWorkspaceLocked(workspace.ID), nil
+	}
+	if len(r.workspaces) > 0 {
+		workspace.IsActive = false
+	}
+	r.workspaces[workspace.ID] = workspace
+	r.workspaceOrder = append(r.workspaceOrder, workspace.ID)
+	if strings.TrimSpace(r.activeWorkspaceID) == "" {
+		r.activeWorkspaceID = workspace.ID
+		r.setActiveWorkspaceLocked(workspace.ID)
+	}
+	_ = r.persistWorkspaceLocked(workspace.ID)
+	return r.snapshotWorkspaceLocked(workspace.ID), nil
+}
+
+// ActivateWorkspace marks the workspace with the given id as active.
+func (r *Registry) ActivateWorkspace(id string) (Workspace, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.workspaces[id]; !ok {
+		return Workspace{}, ErrWorkspaceNotFound
+	}
+	r.activeWorkspaceID = id
+	r.setActiveWorkspaceLocked(id)
+	_ = r.persistWorkspacesLocked()
+	return r.snapshotWorkspaceLocked(id), nil
+}
+
+// UpdateThreadPreferences updates the persisted model and reasoning selection for a thread.
+func (r *Registry) UpdateThreadPreferences(id string, input UpdateThreadPreferencesInput) (Thread, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	thread, ok := r.threads[id]
+	if !ok {
+		return Thread{}, ErrThreadNotFound
+	}
+	if input.ActiveModel != nil {
+		thread.ActiveModel = strings.TrimSpace(*input.ActiveModel)
+	}
+	if input.ReasoningEffort != nil {
+		thread.ReasoningEffort = strings.TrimSpace(*input.ReasoningEffort)
+	}
+	r.threads[id] = thread
+	_ = r.persistThreadLocked(thread)
+	return snapshotThread(thread, r.activeThreadIDLocked()), nil
 }
 
 // CreateThread creates a new isolated thread under the current workspace.
@@ -395,10 +519,11 @@ func (r *Registry) CreateThread(input CreateThreadInput) Thread {
 
 	thread := Thread{
 		ID:             threadID,
-		WorkspaceID:    r.workspace.ID,
+		WorkspaceID:    r.activeWorkspaceID,
 		Name:           name,
 		Status:         "idle",
 		ActiveModel:    input.ActiveModel,
+		ReasoningEffort: input.ReasoningEffort,
 		PermissionMode: mode,
 		MessageHistory: []MessageRecord{},
 		ToolHistory:    []ToolCallRecord{},
@@ -414,14 +539,16 @@ func (r *Registry) CreateThread(input CreateThreadInput) Thread {
 	r.approvals[threadID] = []ApprovalRecord{}
 	r.writeExecutions[threadID] = []WriteExecutionRecord{}
 	r.order = append(r.order, threadID)
-	if r.activeThreadID == "" {
-		r.activeThreadID = threadID
+	workspace := r.workspaces[r.activeWorkspaceID]
+	if strings.TrimSpace(workspace.ActiveThreadID) == "" {
+		workspace.ActiveThreadID = threadID
+		r.workspaces[r.activeWorkspaceID] = workspace
 	}
 	r.appendEventLocked(threadID, "thread.created", fmt.Sprintf("%s created", name))
 	_ = r.persistThreadLocked(thread)
-	_ = r.persistWorkspaceLocked()
+	_ = r.persistWorkspaceLocked(r.activeWorkspaceID)
 
-	return snapshotThread(thread, r.activeThreadID)
+	return snapshotThread(thread, r.activeThreadIDLocked())
 }
 
 // ActivateThread marks the given thread as the active thread for the runtime.
@@ -433,10 +560,14 @@ func (r *Registry) ActivateThread(id string) (Thread, bool) {
 	if !ok {
 		return Thread{}, false
 	}
-	r.activeThreadID = id
+	r.activeWorkspaceID = thread.WorkspaceID
+	r.setActiveWorkspaceLocked(thread.WorkspaceID)
+	workspace := r.workspaces[thread.WorkspaceID]
+	workspace.ActiveThreadID = id
+	r.workspaces[thread.WorkspaceID] = workspace
 	r.appendEventLocked(id, "thread.activated", fmt.Sprintf("%s activated", thread.Name))
-	_ = r.persistWorkspaceLocked()
-	return snapshotThread(thread, r.activeThreadID), true
+	_ = r.persistWorkspaceLocked(thread.WorkspaceID)
+	return snapshotThread(thread, r.activeThreadIDLocked()), true
 }
 
 // Tasks returns the tasks registered under the given thread.
@@ -945,6 +1076,37 @@ func snapshotThread(thread Thread, activeThreadID string) Thread {
 	return thread
 }
 
+func (r *Registry) snapshotWorkspaceLocked(id string) Workspace {
+	workspace, ok := r.workspaces[id]
+	if !ok {
+		return Workspace{}
+	}
+	count := 0
+	for _, thread := range r.threads {
+		if thread.WorkspaceID == id {
+			count++
+		}
+	}
+	workspace.ActiveThreadCount = count
+	workspace.IsActive = id == r.activeWorkspaceID
+	return workspace
+}
+
+func (r *Registry) activeThreadIDLocked() string {
+	workspace, ok := r.workspaces[r.activeWorkspaceID]
+	if !ok {
+		return ""
+	}
+	return workspace.ActiveThreadID
+}
+
+func (r *Registry) setActiveWorkspaceLocked(id string) {
+	for workspaceID, workspace := range r.workspaces {
+		workspace.IsActive = workspaceID == id
+		r.workspaces[workspaceID] = workspace
+	}
+}
+
 func (r *Registry) appendEventLocked(threadID string, eventType string, message string) {
 	event := Event{
 		ID:        fmt.Sprintf("event-%d", r.nextEventNumber),
@@ -1040,12 +1202,43 @@ func (r *Registry) restoreFromStore() error {
 		return err
 	}
 
-	if snapshot.Workspace.ID != "" {
-		r.workspace.ID = snapshot.Workspace.ID
-		r.workspace.ProjectRoot = snapshot.Workspace.ProjectRoot
-		r.workspace.SharedDocsRoot = snapshot.Workspace.SharedDocsRoot
-		r.workspace.CreatedAt = snapshot.Workspace.CreatedAt
-		r.activeThreadID = snapshot.Workspace.ActiveThreadID
+	if len(snapshot.Workspaces) > 0 {
+		r.workspaces = map[string]Workspace{}
+		r.workspaceOrder = r.workspaceOrder[:0]
+		for _, item := range snapshot.Workspaces {
+			r.workspaces[item.ID] = Workspace{
+				ID:             item.ID,
+				ProjectRoot:    item.ProjectRoot,
+				SharedDocsRoot: item.SharedDocsRoot,
+				CreatedAt:      item.CreatedAt,
+				ActiveThreadID: item.ActiveThreadID,
+				IsActive:       item.IsActive,
+			}
+			r.workspaceOrder = append(r.workspaceOrder, item.ID)
+			if item.IsActive {
+				r.activeWorkspaceID = item.ID
+			}
+		}
+		if strings.TrimSpace(r.activeWorkspaceID) == "" {
+			r.activeWorkspaceID = snapshot.ActiveWorkspaceID
+		}
+		if strings.TrimSpace(r.activeWorkspaceID) == "" && len(r.workspaceOrder) > 0 {
+			r.activeWorkspaceID = r.workspaceOrder[0]
+			r.setActiveWorkspaceLocked(r.activeWorkspaceID)
+		}
+	} else if snapshot.Workspace.ID != "" {
+		r.workspaces = map[string]Workspace{
+			snapshot.Workspace.ID: {
+				ID:             snapshot.Workspace.ID,
+				ProjectRoot:    snapshot.Workspace.ProjectRoot,
+				SharedDocsRoot: snapshot.Workspace.SharedDocsRoot,
+				CreatedAt:      snapshot.Workspace.CreatedAt,
+				ActiveThreadID: snapshot.Workspace.ActiveThreadID,
+				IsActive:       true,
+			},
+		}
+		r.workspaceOrder = []string{snapshot.Workspace.ID}
+		r.activeWorkspaceID = snapshot.Workspace.ID
 	}
 
 	for _, item := range snapshot.Threads {
@@ -1055,6 +1248,7 @@ func (r *Registry) restoreFromStore() error {
 			Name:           item.Name,
 			Status:         item.Status,
 			ActiveModel:    item.ActiveModel,
+			ReasoningEffort: item.ReasoningEffort,
 			PermissionMode: policy.Mode(item.PermissionMode),
 			MessageHistory: []MessageRecord{},
 			ToolHistory:    []ToolCallRecord{},
@@ -1262,16 +1456,33 @@ func (r *Registry) restoreFromStore() error {
 	return nil
 }
 
-func (r *Registry) persistWorkspaceLocked() error {
+func (r *Registry) persistWorkspacesLocked() error {
 	if r.store == nil {
 		return nil
 	}
+	for _, id := range r.workspaceOrder {
+		if err := r.persistWorkspaceLocked(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Registry) persistWorkspaceLocked(id string) error {
+	if r.store == nil {
+		return nil
+	}
+	workspace, ok := r.workspaces[id]
+	if !ok {
+		return ErrWorkspaceNotFound
+	}
 	return r.store.SaveWorkspace(state.WorkspaceRecord{
-		ID:             r.workspace.ID,
-		ProjectRoot:    r.workspace.ProjectRoot,
-		SharedDocsRoot: r.workspace.SharedDocsRoot,
-		CreatedAt:      r.workspace.CreatedAt,
-		ActiveThreadID: r.activeThreadID,
+		ID:             workspace.ID,
+		ProjectRoot:    workspace.ProjectRoot,
+		SharedDocsRoot: workspace.SharedDocsRoot,
+		CreatedAt:      workspace.CreatedAt,
+		ActiveThreadID: workspace.ActiveThreadID,
+		IsActive:       workspace.ID == r.activeWorkspaceID,
 	})
 }
 
@@ -1285,6 +1496,7 @@ func (r *Registry) persistThreadLocked(thread Thread) error {
 		Name:           thread.Name,
 		Status:         thread.Status,
 		ActiveModel:    thread.ActiveModel,
+		ReasoningEffort: thread.ReasoningEffort,
 		PermissionMode: string(thread.PermissionMode),
 		CreatedAt:      thread.CreatedAt,
 	})

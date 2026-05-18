@@ -23,25 +23,27 @@ import (
 
 // Status represents the aggregate runtime state surfaced to CLI, API, and desktop.
 type Status struct {
-	AppVersion             string      `json:"app_version"`
-	DesktopShellStatus     string      `json:"desktop_shell_status"`
-	AppServerStatus        string      `json:"app_server_status"`
-	GoBridgeStatus         string      `json:"go_bridge_status"`
-	RuntimeSource          string      `json:"runtime_source"`
-	RuntimeSourceDetail    string      `json:"runtime_source_detail"`
-	RuntimeTrust           string      `json:"runtime_trust"`
-	CanonicalRuntimeURL    string      `json:"canonical_runtime_url"`
-	StateStore             string      `json:"state_store"`
-	StatePath              string      `json:"state_path"`
-	WorkspaceID            string      `json:"workspace_id"`
-	ProjectRoot            string      `json:"project_root"`
-	ThreadCount            int         `json:"thread_count"`
-	ActiveThreadID         string      `json:"active_thread_id"`
-	ActiveThreadTaskCount  int         `json:"active_thread_task_count"`
-	ActiveThreadEventCount int         `json:"active_thread_event_count"`
-	ActiveSkillGroup       skill.Group `json:"active_skill_group"`
-	ConfiguredMCPServers   int         `json:"configured_mcp_server_count"`
-	PermissionMode         policy.Mode `json:"permission_mode"`
+	AppVersion             string                          `json:"app_version"`
+	DesktopShellStatus     string                          `json:"desktop_shell_status"`
+	AppServerStatus        string                          `json:"app_server_status"`
+	GoBridgeStatus         string                          `json:"go_bridge_status"`
+	RuntimeSource          string                          `json:"runtime_source"`
+	RuntimeSourceDetail    string                          `json:"runtime_source_detail"`
+	RuntimeTrust           string                          `json:"runtime_trust"`
+	CanonicalRuntimeURL    string                          `json:"canonical_runtime_url"`
+	StateStore             string                          `json:"state_store"`
+	StatePath              string                          `json:"state_path"`
+	WorkspaceCount         int                             `json:"workspace_count"`
+	ActiveWorkspaceID      string                          `json:"active_workspace_id"`
+	WorkspaceID            string                          `json:"workspace_id"`
+	ProjectRoot            string                          `json:"project_root"`
+	ThreadCount            int                             `json:"thread_count"`
+	ActiveThreadID         string                          `json:"active_thread_id"`
+	ActiveThreadTaskCount  int                             `json:"active_thread_task_count"`
+	ActiveThreadEventCount int                             `json:"active_thread_event_count"`
+	ActiveSkillGroup       skill.Group                     `json:"active_skill_group"`
+	ConfiguredMCPServers   int                             `json:"configured_mcp_server_count"`
+	PermissionMode         policy.Mode                     `json:"permission_mode"`
 	Browser                runtimecontract.BrowserSnapshot `json:"browser"`
 }
 
@@ -89,7 +91,7 @@ func newService(version string, group skill.Group, permission policy.Mode, proje
 		providers = provider.NewRegistry("")
 	}
 	providerClient := provider.NewClient(providers)
-	taskRunner := runner.New(sessions, providerClient).WithMCP(mcpManager)
+	taskRunner := runner.New(sessions, providerClient).WithMCP(mcpManager).WithSkills(skills)
 	if recoverInterrupted {
 		_ = taskRunner.RecoverInterruptedTasks()
 	}
@@ -116,6 +118,7 @@ func newService(version string, group skill.Group, permission policy.Mode, proje
 // Snapshot returns the current runtime summary.
 func (s *Service) Snapshot() Status {
 	workspace := s.session.Workspace()
+	workspaces := s.session.Workspaces()
 	activeTaskCount := 0
 	activeEventCount := 0
 	if activeThreadID := s.session.ActiveThreadID(); activeThreadID != "" {
@@ -137,6 +140,8 @@ func (s *Service) Snapshot() Status {
 		CanonicalRuntimeURL:    s.canonicalURL,
 		StateStore:             s.session.StateStoreName(),
 		StatePath:              s.session.StatePath(),
+		WorkspaceCount:         len(workspaces),
+		ActiveWorkspaceID:      s.session.ActiveWorkspaceID(),
 		WorkspaceID:            workspace.ID,
 		ProjectRoot:            workspace.ProjectRoot,
 		ThreadCount:            workspace.ActiveThreadCount,
@@ -178,6 +183,8 @@ func (s *Service) Status(context.Context) (runtimecontract.Status, error) {
 		CanonicalRuntimeURL: snapshot.CanonicalRuntimeURL,
 		StateStore:          snapshot.StateStore,
 		StatePath:           snapshot.StatePath,
+		WorkspaceCount:      snapshot.WorkspaceCount,
+		ActiveWorkspaceID:   snapshot.ActiveWorkspaceID,
 		WorkspaceID:         snapshot.WorkspaceID,
 		ProjectRoot:         snapshot.ProjectRoot,
 		ThreadCount:         snapshot.ThreadCount,
@@ -229,8 +236,27 @@ func (s *Service) Workspace(context.Context) (runtimecontract.WorkspaceDescripto
 		ProjectRoot:       item.ProjectRoot,
 		SharedDocsRoot:    item.SharedDocsRoot,
 		CreatedAt:         item.CreatedAt.Format(time.RFC3339),
+		ActiveThreadID:    item.ActiveThreadID,
 		ActiveThreadCount: item.ActiveThreadCount,
 	}, nil
+}
+
+// Workspaces returns all registered workspace descriptors.
+func (s *Service) Workspaces(context.Context) ([]runtimecontract.WorkspaceCollectionItem, error) {
+	items := s.session.Workspaces()
+	result := make([]runtimecontract.WorkspaceCollectionItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, runtimecontract.WorkspaceCollectionItem{
+			ID:                item.ID,
+			ProjectRoot:       item.ProjectRoot,
+			SharedDocsRoot:    item.SharedDocsRoot,
+			CreatedAt:         item.CreatedAt.Format(time.RFC3339),
+			ActiveThreadID:    item.ActiveThreadID,
+			ActiveThreadCount: item.ActiveThreadCount,
+			IsActive:          item.IsActive,
+		})
+	}
+	return result, nil
 }
 
 // Threads returns all registered thread descriptors.
@@ -243,6 +269,46 @@ func (s *Service) Threads(context.Context) ([]runtimecontract.ThreadDescriptor, 
 	return result, nil
 }
 
+// CreateWorkspace registers a workspace root in the current desktop/runtime registry.
+func (s *Service) CreateWorkspace(_ context.Context, request runtimecontract.CreateWorkspaceRequest) (runtimecontract.WorkspaceCollectionItem, error) {
+	item, err := s.session.CreateWorkspace(session.CreateWorkspaceInput{
+		ProjectRoot:    request.ProjectRoot,
+		SharedDocsRoot: request.SharedDocsRoot,
+	})
+	if err != nil {
+		return runtimecontract.WorkspaceCollectionItem{}, xerror.BadRequest(1006, err.Error())
+	}
+	return runtimecontract.WorkspaceCollectionItem{
+		ID:                item.ID,
+		ProjectRoot:       item.ProjectRoot,
+		SharedDocsRoot:    item.SharedDocsRoot,
+		CreatedAt:         item.CreatedAt.Format(time.RFC3339),
+		ActiveThreadID:    item.ActiveThreadID,
+		ActiveThreadCount: item.ActiveThreadCount,
+		IsActive:          item.IsActive,
+	}, nil
+}
+
+// ActivateWorkspace marks the workspace with the given id as active.
+func (s *Service) ActivateWorkspace(_ context.Context, id string, _ runtimecontract.ActivateWorkspaceRequest) (runtimecontract.WorkspaceCollectionItem, error) {
+	item, err := s.session.ActivateWorkspace(id)
+	if err != nil {
+		if errors.Is(err, session.ErrWorkspaceNotFound) {
+			return runtimecontract.WorkspaceCollectionItem{}, xerror.NotFound(1004, "workspace not found")
+		}
+		return runtimecontract.WorkspaceCollectionItem{}, xerror.BadRequest(1006, err.Error())
+	}
+	return runtimecontract.WorkspaceCollectionItem{
+		ID:                item.ID,
+		ProjectRoot:       item.ProjectRoot,
+		SharedDocsRoot:    item.SharedDocsRoot,
+		CreatedAt:         item.CreatedAt.Format(time.RFC3339),
+		ActiveThreadID:    item.ActiveThreadID,
+		ActiveThreadCount: item.ActiveThreadCount,
+		IsActive:          item.IsActive,
+	}, nil
+}
+
 // CreateThread registers a new thread under the current workspace.
 func (s *Service) CreateThread(_ context.Context, request runtimecontract.CreateThreadRequest) (runtimecontract.ThreadDescriptor, error) {
 	mode, err := policy.ParseMode(request.PermissionMode)
@@ -251,9 +317,10 @@ func (s *Service) CreateThread(_ context.Context, request runtimecontract.Create
 	}
 
 	item := s.session.CreateThread(session.CreateThreadInput{
-		Name:           request.Name,
-		ActiveModel:    request.ActiveModel,
-		PermissionMode: mode,
+		Name:            request.Name,
+		ActiveModel:     request.ActiveModel,
+		ReasoningEffort: request.ReasoningEffort,
+		PermissionMode:  mode,
 	})
 	return toThreadDescriptor(item), nil
 }
@@ -272,6 +339,29 @@ func (s *Service) ActivateThread(_ context.Context, id string) (runtimecontract.
 	item, ok := s.session.ActivateThread(id)
 	if !ok {
 		return runtimecontract.ThreadDescriptor{}, xerror.NotFound(1004, "thread not found")
+	}
+	return toThreadDescriptor(item), nil
+}
+
+// UpdateThreadPreferences updates thread-level model and reasoning preferences.
+func (s *Service) UpdateThreadPreferences(_ context.Context, id string, request runtimecontract.UpdateThreadPreferencesRequest) (runtimecontract.ThreadDescriptor, error) {
+	var model *string
+	var reasoning *string
+	if request.ActiveModel != "" {
+		model = &request.ActiveModel
+	}
+	if request.ReasoningEffort != "" {
+		reasoning = &request.ReasoningEffort
+	}
+	item, err := s.session.UpdateThreadPreferences(id, session.UpdateThreadPreferencesInput{
+		ActiveModel:     model,
+		ReasoningEffort: reasoning,
+	})
+	if err != nil {
+		if errors.Is(err, session.ErrThreadNotFound) {
+			return runtimecontract.ThreadDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		return runtimecontract.ThreadDescriptor{}, xerror.BadRequest(1006, err.Error())
 	}
 	return toThreadDescriptor(item), nil
 }
@@ -306,6 +396,9 @@ func (s *Service) CreateTask(_ context.Context, threadID string, request runtime
 	}
 	if request.Kind == runner.KindAgentRun {
 		return s.createAgentTask(thread, request)
+	}
+	if request.Kind == runner.KindSkillToolInvoke {
+		return s.createSkillToolTask(thread, request)
 	}
 
 	item, ok := s.session.CreateTask(threadID, session.CreateTaskInput{
@@ -667,6 +760,15 @@ func (s *Service) Skills(_ context.Context) ([]runtimecontract.Skill, error) {
 	items := s.skills.List(s.skillGroup)
 	result := make([]runtimecontract.Skill, 0, len(items))
 	for _, item := range items {
+		localTools := make([]runtimecontract.SkillLocalTool, 0, len(item.LocalTools))
+		for _, toolItem := range item.LocalTools {
+			localTools = append(localTools, runtimecontract.SkillLocalTool{
+				Name:        toolItem.Name,
+				Description: toolItem.Description,
+				Command:     append([]string(nil), toolItem.Command...),
+				ReadOnly:    toolItem.ReadOnly,
+			})
+		}
 		result = append(result, runtimecontract.Skill{
 			ID:                  item.ID,
 			Group:               string(item.Group),
@@ -678,6 +780,7 @@ func (s *Service) Skills(_ context.Context) ([]runtimecontract.Skill, error) {
 			IsolationStatus:     fallbackText(item.IsolationStatus, defaultSkillIsolationStatus(item.Group)),
 			CapabilityVerified:  item.CapabilityVerified,
 			CapabilitySummary:   strings.TrimSpace(item.CapabilitySummary),
+			LocalTools:          localTools,
 		})
 	}
 	return result, nil
@@ -738,6 +841,7 @@ func toThreadDescriptor(item session.Thread) runtimecontract.ThreadDescriptor {
 		Name:                item.Name,
 		Status:              item.Status,
 		ActiveModel:         item.ActiveModel,
+		ReasoningEffort:     item.ReasoningEffort,
 		PermissionMode:      string(item.PermissionMode),
 		MessageHistoryCount: item.MessageHistoryCount,
 		ToolCallCount:       item.ToolCallCount,
@@ -1263,4 +1367,96 @@ func (s *Service) createAgentTask(thread session.Thread, request runtimecontract
 		return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
 	}
 	return toTaskDescriptor(item), nil
+}
+
+func (s *Service) createSkillToolTask(thread session.Thread, request runtimecontract.CreateTaskRequest) (runtimecontract.TaskDescriptor, error) {
+	var payload struct {
+		SkillID  string   `json:"skillId"`
+		ToolName string   `json:"toolName"`
+		Args     []string `json:"args"`
+		Workdir  string   `json:"workdir"`
+	}
+	if err := json.Unmarshal([]byte(request.Input), &payload); err != nil {
+		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, err.Error())
+	}
+	if strings.TrimSpace(payload.SkillID) == "" || strings.TrimSpace(payload.ToolName) == "" {
+		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, "skillId and toolName are required")
+	}
+
+	_, localTool, ok := s.skills.FindLocalTool(s.skillGroup, payload.SkillID, payload.ToolName)
+	if !ok {
+		_, localTool, ok = s.skills.FindLocalTool(skill.Codex, payload.SkillID, payload.ToolName)
+	}
+	if !ok {
+		_, localTool, ok = s.skills.FindLocalTool(skill.CC, payload.SkillID, payload.ToolName)
+	}
+	if !ok {
+		return runtimecontract.TaskDescriptor{}, xerror.BadRequest(1005, "skill local tool not found")
+	}
+
+	if strings.TrimSpace(request.Title) == "" {
+		request.Title = fmt.Sprintf("%s/%s", payload.SkillID, payload.ToolName)
+	}
+
+	if localTool.ReadOnly {
+		item, created := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+			Title: request.Title,
+			Kind:  request.Kind,
+			Input: request.Input,
+		})
+		if !created {
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		return toTaskDescriptor(item), nil
+	}
+
+	switch thread.PermissionMode {
+	case policy.ReadOnly:
+		item, created := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+			Title:          request.Title,
+			Kind:           request.Kind,
+			Input:          request.Input,
+			Status:         "failed",
+			ResultSummary:  "permission denied: read-only mode does not allow skill tool writes",
+			ApprovalStatus: "rejected",
+		})
+		if !created {
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		return toTaskDescriptor(item), nil
+	case "", policy.AskUser:
+		summary := fmt.Sprintf("approval required for %s/%s", payload.SkillID, payload.ToolName)
+		item, created := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+			Title:          request.Title,
+			Kind:           request.Kind,
+			Input:          request.Input,
+			Status:         "needs_approval",
+			ResultSummary:  summary,
+			ApprovalStatus: "pending",
+		})
+		if !created {
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		if _, err := s.session.CreateApproval(thread.ID, session.CreateApprovalInput{
+			TaskID:      item.ID,
+			ToolKind:    request.Kind,
+			Status:      "pending",
+			Summary:     summary,
+			TargetPaths: []string{fmt.Sprintf("%s/%s", payload.SkillID, payload.ToolName)},
+		}); err != nil {
+			return runtimecontract.TaskDescriptor{}, xerror.Internal(2001, err.Error())
+		}
+		return toTaskDescriptor(item), nil
+	default:
+		item, created := s.session.CreateTask(thread.ID, session.CreateTaskInput{
+			Title:          request.Title,
+			Kind:           request.Kind,
+			Input:          request.Input,
+			ApprovalStatus: "direct",
+		})
+		if !created {
+			return runtimecontract.TaskDescriptor{}, xerror.NotFound(1004, "thread not found")
+		}
+		return toTaskDescriptor(item), nil
+	}
 }

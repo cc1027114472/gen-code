@@ -74,13 +74,45 @@ func run(ctx context.Context, args []string) error {
 		}
 		return printRuntimeStatus(ctx, runtimeFacade)
 	case "workspace":
-		if len(args) < 2 || args[1] != "show" {
-			return errors.New("usage: gen-code workspace show")
+		if len(args) < 2 {
+			return errors.New("usage: gen-code workspace <show|list|create|activate>")
 		}
-		return printWorkspace(ctx, runtimeFacade)
+		switch args[1] {
+		case "show":
+			return printWorkspace(ctx, runtimeFacade)
+		case "list":
+			return printWorkspaces(ctx, runtimeFacade)
+		case "create":
+			var projectRoot, sharedDocsRoot string
+			for _, arg := range args[2:] {
+				switch {
+				case strings.HasPrefix(arg, "--project-root="):
+					projectRoot = strings.TrimSpace(strings.TrimPrefix(arg, "--project-root="))
+				case strings.HasPrefix(arg, "--shared-docs-root="):
+					sharedDocsRoot = strings.TrimSpace(strings.TrimPrefix(arg, "--shared-docs-root="))
+				}
+			}
+			if projectRoot == "" {
+				return errors.New("usage: gen-code workspace create --project-root=<path> [--shared-docs-root=<path>]")
+			}
+			return createWorkspace(ctx, runtimeFacade, projectRoot, sharedDocsRoot)
+		case "activate":
+			var id string
+			for _, arg := range args[2:] {
+				if strings.HasPrefix(arg, "--id=") {
+					id = strings.TrimSpace(strings.TrimPrefix(arg, "--id="))
+				}
+			}
+			if id == "" {
+				return errors.New("usage: gen-code workspace activate --id=<workspaceId>")
+			}
+			return activateWorkspace(ctx, runtimeFacade, id)
+		default:
+			return errors.New("usage: gen-code workspace <show|list|create|activate>")
+		}
 	case "threads":
 		if len(args) < 2 {
-			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts|approvals|write-executions>")
+			return errors.New("usage: gen-code threads <list|create|activate|preferences|messages|message-add|tool-calls|artifacts|approvals|write-executions>")
 		}
 		switch args[1] {
 		case "list":
@@ -109,6 +141,22 @@ func run(ctx context.Context, args []string) error {
 				return errors.New("usage: gen-code threads activate --id=<threadId>")
 			}
 			return activateThread(ctx, runtimeFacade, id)
+		case "preferences":
+			var id, model, reasoning string
+			for _, arg := range args[2:] {
+				switch {
+				case strings.HasPrefix(arg, "--id="):
+					id = strings.TrimSpace(strings.TrimPrefix(arg, "--id="))
+				case strings.HasPrefix(arg, "--model="):
+					model = strings.TrimSpace(strings.TrimPrefix(arg, "--model="))
+				case strings.HasPrefix(arg, "--reasoning="):
+					reasoning = strings.TrimSpace(strings.TrimPrefix(arg, "--reasoning="))
+				}
+			}
+			if id == "" || (model == "" && reasoning == "") {
+				return errors.New("usage: gen-code threads preferences --id=<threadId> [--model=<model>] [--reasoning=<effort>]")
+			}
+			return updateThreadPreferences(ctx, runtimeFacade, id, model, reasoning)
 		case "messages":
 			var id string
 			for _, arg := range args[2:] {
@@ -181,7 +229,7 @@ func run(ctx context.Context, args []string) error {
 			}
 			return printWriteExecutions(ctx, runtimeFacade, id)
 		default:
-			return errors.New("usage: gen-code threads <list|create|activate|messages|message-add|tool-calls|artifacts|approvals|write-executions>")
+			return errors.New("usage: gen-code threads <list|create|activate|preferences|messages|message-add|tool-calls|artifacts|approvals|write-executions>")
 		}
 	case "tasks":
 		if len(args) < 2 {
@@ -445,9 +493,13 @@ func printUsage() {
 	fmt.Println("  doctor")
 	fmt.Println("  runtime status")
 	fmt.Println("  workspace show")
+	fmt.Println("  workspace list")
+	fmt.Println("  workspace create --project-root=<path> [--shared-docs-root=<path>]")
+	fmt.Println("  workspace activate --id=<workspaceId>")
 	fmt.Println("  threads list")
 	fmt.Println("  threads create [--name=...] [--model=...] [--permission=...]")
 	fmt.Println("  threads activate --id=<threadId>")
+	fmt.Println("  threads preferences --id=<threadId> [--model=<model>] [--reasoning=<effort>]")
 	fmt.Println("  threads messages --id=<threadId>")
 	fmt.Println("  threads message-add --id=<threadId> --role=<role> --content=...")
 	fmt.Println("  threads tool-calls --id=<threadId>")
@@ -510,6 +562,33 @@ func (f *runtimeFacade) workspace(ctx context.Context) (runtimecontract.Workspac
 	return f.service.Workspace(ctx)
 }
 
+func (f *runtimeFacade) workspaces(ctx context.Context) ([]runtimecontract.WorkspaceCollectionItem, error) {
+	if items, err := f.client.workspaces(); err == nil {
+		f.source = "remote-app-server"
+		return items, nil
+	}
+	f.source = "local-fallback"
+	return f.service.Workspaces(ctx)
+}
+
+func (f *runtimeFacade) createWorkspace(ctx context.Context, request runtimecontract.CreateWorkspaceRequest) (runtimecontract.WorkspaceCollectionItem, error) {
+	if item, err := f.client.createWorkspace(request); err == nil {
+		f.source = "remote-app-server"
+		return item, nil
+	}
+	f.source = "local-fallback"
+	return f.service.CreateWorkspace(ctx, request)
+}
+
+func (f *runtimeFacade) activateWorkspace(ctx context.Context, id string) (runtimecontract.WorkspaceCollectionItem, error) {
+	if item, err := f.client.activateWorkspace(id); err == nil {
+		f.source = "remote-app-server"
+		return item, nil
+	}
+	f.source = "local-fallback"
+	return f.service.ActivateWorkspace(ctx, id, runtimecontract.ActivateWorkspaceRequest{})
+}
+
 func (f *runtimeFacade) threads(ctx context.Context) ([]runtimecontract.ThreadDescriptor, error) {
 	if items, err := f.client.threads(); err == nil {
 		f.source = "remote-app-server"
@@ -535,6 +614,15 @@ func (f *runtimeFacade) activateThread(ctx context.Context, id string) (runtimec
 	}
 	f.source = "local-fallback"
 	return f.service.ActivateThread(ctx, id)
+}
+
+func (f *runtimeFacade) updateThreadPreferences(ctx context.Context, id string, request runtimecontract.UpdateThreadPreferencesRequest) (runtimecontract.ThreadDescriptor, error) {
+	if item, err := f.client.updateThreadPreferences(id, request); err == nil {
+		f.source = "remote-app-server"
+		return item, nil
+	}
+	f.source = "local-fallback"
+	return f.service.UpdateThreadPreferences(ctx, id, request)
 }
 
 func (f *runtimeFacade) tasks(ctx context.Context, threadID string) ([]runtimecontract.TaskDescriptor, error) {
@@ -817,7 +905,27 @@ func printWorkspace(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Printf("  project root: %s\n", item.ProjectRoot)
 	fmt.Printf("  shared docs root: %s\n", item.SharedDocsRoot)
 	fmt.Printf("  created at: %s\n", item.CreatedAt)
+	fmt.Printf("  active thread id: %s\n", fallbackText(item.ActiveThreadID, "none"))
 	fmt.Printf("  active thread count: %d\n", item.ActiveThreadCount)
+	return nil
+}
+
+func printWorkspaces(ctx context.Context, facade *runtimeFacade) error {
+	items, err := facade.workspaces(ctx)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("workspaces list")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	for _, item := range items {
+		activeFlag := ""
+		if item.IsActive {
+			activeFlag = ", active"
+		}
+		fmt.Printf("  - %s (%s, threads=%d, activeThread=%s%s)\n", item.ID, item.ProjectRoot, item.ActiveThreadCount, fallbackText(item.ActiveThreadID, "none"), activeFlag)
+	}
 	return nil
 }
 
@@ -835,8 +943,42 @@ func printThreads(ctx context.Context, facade *runtimeFacade) error {
 		if item.IsActive {
 			activeFlag = ", active"
 		}
-		fmt.Printf("  - %s (%s, %s%s)\n", item.ID, item.Name, item.PermissionMode, activeFlag)
+		fmt.Printf("  - %s (%s, %s, model=%s, reasoning=%s%s)\n", item.ID, item.Name, item.PermissionMode, fallbackText(item.ActiveModel, "none"), fallbackText(item.ReasoningEffort, "none"), activeFlag)
 	}
+	return nil
+}
+
+func createWorkspace(ctx context.Context, facade *runtimeFacade, projectRoot string, sharedDocsRoot string) error {
+	item, err := facade.createWorkspace(ctx, runtimecontract.CreateWorkspaceRequest{
+		ProjectRoot:    projectRoot,
+		SharedDocsRoot: sharedDocsRoot,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("workspace created")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  id: %s\n", item.ID)
+	fmt.Printf("  project root: %s\n", item.ProjectRoot)
+	fmt.Printf("  shared docs root: %s\n", item.SharedDocsRoot)
+	fmt.Printf("  is active: %t\n", item.IsActive)
+	return nil
+}
+
+func activateWorkspace(ctx context.Context, facade *runtimeFacade, id string) error {
+	item, err := facade.activateWorkspace(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("workspace activated")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  id: %s\n", item.ID)
+	fmt.Printf("  project root: %s\n", item.ProjectRoot)
+	fmt.Printf("  is active: %t\n", item.IsActive)
 	return nil
 }
 
@@ -872,6 +1014,24 @@ func activateThread(ctx context.Context, facade *runtimeFacade, id string) error
 	fmt.Printf("  id: %s\n", item.ID)
 	fmt.Printf("  name: %s\n", item.Name)
 	fmt.Printf("  is active: %t\n", item.IsActive)
+	return nil
+}
+
+func updateThreadPreferences(ctx context.Context, facade *runtimeFacade, id string, model string, reasoning string) error {
+	item, err := facade.updateThreadPreferences(ctx, id, runtimecontract.UpdateThreadPreferencesRequest{
+		ActiveModel:     model,
+		ReasoningEffort: reasoning,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("thread preferences updated")
+	fmt.Printf("  source: %s\n", facade.runtimeSource())
+	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	fmt.Printf("  id: %s\n", item.ID)
+	fmt.Printf("  active model: %s\n", fallbackText(item.ActiveModel, "none"))
+	fmt.Printf("  reasoning effort: %s\n", fallbackText(item.ReasoningEffort, "none"))
 	return nil
 }
 
@@ -1882,6 +2042,26 @@ func (c *remoteRuntimeClient) workspace() (runtimecontract.WorkspaceDescriptor, 
 	return item, err
 }
 
+func (c *remoteRuntimeClient) workspaces() ([]runtimecontract.WorkspaceCollectionItem, error) {
+	var payload struct {
+		Items []runtimecontract.WorkspaceCollectionItem `json:"items"`
+	}
+	err := c.fetchEnvelope("/api/workspaces", &payload)
+	return payload.Items, err
+}
+
+func (c *remoteRuntimeClient) createWorkspace(request runtimecontract.CreateWorkspaceRequest) (runtimecontract.WorkspaceCollectionItem, error) {
+	var item runtimecontract.WorkspaceCollectionItem
+	err := c.postEnvelope("/api/workspaces", request, &item)
+	return item, err
+}
+
+func (c *remoteRuntimeClient) activateWorkspace(id string) (runtimecontract.WorkspaceCollectionItem, error) {
+	var item runtimecontract.WorkspaceCollectionItem
+	err := c.postEnvelope("/api/workspaces/"+url.PathEscape(id)+"/activate", map[string]any{}, &item)
+	return item, err
+}
+
 func (c *remoteRuntimeClient) threads() ([]runtimecontract.ThreadDescriptor, error) {
 	var payload struct {
 		Items []runtimecontract.ThreadDescriptor `json:"items"`
@@ -1899,6 +2079,12 @@ func (c *remoteRuntimeClient) createThread(request runtimecontract.CreateThreadR
 func (c *remoteRuntimeClient) activateThread(id string) (runtimecontract.ThreadDescriptor, error) {
 	var item runtimecontract.ThreadDescriptor
 	err := c.postEnvelope("/api/threads/"+url.PathEscape(id)+"/activate", map[string]any{}, &item)
+	return item, err
+}
+
+func (c *remoteRuntimeClient) updateThreadPreferences(id string, request runtimecontract.UpdateThreadPreferencesRequest) (runtimecontract.ThreadDescriptor, error) {
+	var item runtimecontract.ThreadDescriptor
+	err := c.postEnvelope("/api/threads/"+url.PathEscape(id)+"/preferences", request, &item)
 	return item, err
 }
 

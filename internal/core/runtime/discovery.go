@@ -315,6 +315,28 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 			Executable:         true,
 		},
 		{
+			ID:                 "workspace.check_structure",
+			Name:               "Workspace Check Structure",
+			Description:        "Validate workspace structure and Python tool inventory using tools/check_workspace.py",
+			InputSchemaSummary: `{"workspace":"optional workspace root path","strict":false}`,
+			PermissionMode:     policy.ReadOnly,
+			Source:             "runtime",
+			Kind:               "workspace.check_structure",
+			ReadOnly:           true,
+			Executable:         true,
+		},
+		{
+			ID:                 "providers.check_config",
+			Name:               "Providers Check Config",
+			Description:        "Validate provider-oriented configuration fields using tools/check_providers.py",
+			InputSchemaSummary: `{"envFile":"optional workspace-relative .env path","exampleFile":"optional workspace-relative .env.example path","strict":false}`,
+			PermissionMode:     policy.ReadOnly,
+			Source:             "runtime",
+			Kind:               "providers.check_config",
+			ReadOnly:           true,
+			Executable:         true,
+		},
+		{
 			ID:                 "workspace.list_files_filtered",
 			Name:               "Workspace List Files Filtered",
 			Description:        "List workspace entries filtered by a glob pattern",
@@ -461,6 +483,7 @@ func discoverSkills(root string, group skill.Group) []skill.Descriptor {
 		localizationChecked := skillLocalizationChecked(root, id)
 		isolationStatus := skillIsolationStatus(group, source)
 		capabilityAudit := skill.VerifyCapability(root, id)
+		localTools := skill.LoadLocalTools(filepath.Join(root, id))
 		items = append(items, skill.Descriptor{
 			ID:                  id,
 			Group:               group,
@@ -472,6 +495,7 @@ func discoverSkills(root string, group skill.Group) []skill.Descriptor {
 			IsolationStatus:     isolationStatus,
 			CapabilityVerified:  capabilityAudit.Verified,
 			CapabilitySummary:   capabilityAudit.Summary,
+			LocalTools:          localTools,
 		})
 	}
 	return items

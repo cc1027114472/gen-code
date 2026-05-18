@@ -17,6 +17,8 @@ UI_BASE_URL = os.environ.get("GEN_CODE_UI_BASE_URL", "http://127.0.0.1:5174/")
 API_BASE_URL = os.environ.get("GEN_CODE_API_BASE_URL", "http://127.0.0.1:10008")
 API_RETRIES = int(os.environ.get("GEN_CODE_API_RETRIES", "5"))
 API_RETRY_DELAY = float(os.environ.get("GEN_CODE_API_RETRY_DELAY", "0.5"))
+API_DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("GEN_CODE_API_TIMEOUT_SECONDS", "30"))
+API_LONG_RUN_TIMEOUT_SECONDS = float(os.environ.get("GEN_CODE_API_LONG_RUN_TIMEOUT_SECONDS", "180"))
 ACCEPTANCE_MODE = os.environ.get("GEN_CODE_ACCEPTANCE_MODE", "full").strip().lower() or "full"
 ARTIFACT_DIR = os.environ.get("GEN_CODE_ARTIFACT_DIR", os.path.join("tmp", "desktop-smoke-artifacts"))
 EMBEDDED_PREVIEW_PARAM = "gcPreview"
@@ -417,18 +419,31 @@ def current_failure_png_name() -> str:
     return "desktop-smoke-failure.png"
 
 
+def api_timeout_for_request(method: str, path: str) -> float:
+    normalized_method = (method or "").upper().strip()
+    normalized_path = path or ""
+    if normalized_method == "POST" and normalized_path.endswith("/run"):
+        return API_LONG_RUN_TIMEOUT_SECONDS
+    if normalized_method == "POST" and (
+        normalized_path.endswith("/approve") or normalized_path.endswith("/reject")
+    ):
+        return API_LONG_RUN_TIMEOUT_SECONDS
+    return API_DEFAULT_TIMEOUT_SECONDS
+
+
 def api(method: str, path: str, data=None):
     body = None
     headers = {}
     if data is not None:
         body = json.dumps(data).encode("utf-8")
         headers["Content-Type"] = "application/json"
+    timeout_seconds = api_timeout_for_request(method, path)
 
     last_error = None
     for attempt in range(API_RETRIES):
         request = urllib.request.Request(API_BASE_URL + path, data=body, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             return payload["data"]
         except (ConnectionResetError, urllib.error.URLError, socket.timeout, OSError) as exc:
@@ -441,6 +456,7 @@ def api(method: str, path: str, data=None):
                         "method": method,
                         "path": path,
                         "baseUrl": API_BASE_URL,
+                        "timeoutSeconds": timeout_seconds,
                         "exceptionType": type(exc).__name__,
                         "exception": str(exc),
                     },
@@ -455,6 +471,7 @@ def api(method: str, path: str, data=None):
                 "method": method,
                 "path": path,
                 "baseUrl": API_BASE_URL,
+                "timeoutSeconds": timeout_seconds,
                 "exceptionType": type(last_error).__name__,
                 "exception": str(last_error),
             },
@@ -462,7 +479,7 @@ def api(method: str, path: str, data=None):
     fail(
         f"runtime API request failed for {method} {path}",
         category="api-unavailable",
-        details={"method": method, "path": path, "baseUrl": API_BASE_URL},
+        details={"method": method, "path": path, "baseUrl": API_BASE_URL, "timeoutSeconds": timeout_seconds},
     )
 
 
