@@ -1101,6 +1101,13 @@ func TestParseAgentActionAcceptsResponseAlias(t *testing.T) {
 	require.Equal(t, "done", action.Response)
 }
 
+func TestParseAgentActionAcceptsResultAlias(t *testing.T) {
+	action, err := parseAgentAction(`{"type":"result","response":"done","reasoningSummary":"ok"}`)
+	require.NoError(t, err)
+	require.Equal(t, "respond", action.Type)
+	require.Equal(t, "done", action.Response)
+}
+
 func TestParseAgentActionTreatsToolCallAsInferableAlias(t *testing.T) {
 	action, err := parseAgentActionWithState(
 		`{"type":"tool_call","path":"go.mod","reasoningSummary":"Inspect file metadata first"}`,

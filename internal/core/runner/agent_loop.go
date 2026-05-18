@@ -908,7 +908,7 @@ func parseAgentActionWithState(raw string, state AgentRunState) (AgentAction, er
 		}
 	}
 	action.Type = strings.TrimSpace(action.Type)
-	if action.Type == "response" {
+	if action.Type == "response" || action.Type == "result" {
 		action.Type = "respond"
 	}
 	if action.Type == "tool_call" {

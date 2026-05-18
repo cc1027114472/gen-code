@@ -53,6 +53,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 - `GEN_CODE_UI_BASE_URL=http://127.0.0.1:5174/`
 - `GEN_CODE_API_BASE_URL=http://127.0.0.1:10008`
 
+当前 full wrapper 固定遵循“当前代码优先”：
+
+- 若现有 `10008` canonical 实例可访问，且 `/api/mcp/servers` 已暴露完整 MCP baseline，则直接复用该实例
+- 若现有实例不可访问，或缺少以下任一 verified lane：
+  - `external-fixture`
+  - `sdk-external-fixture`
+  - `third-party-time`
+  wrapper 会自动自举当前 repo 的：
+  - `go run .\cmd\server`
+  - `npm run dev -- --host 127.0.0.1 --port 5174`
+- 自举结束后再进入 full verifier，并在退出时清理本轮启动的子进程
+
 ## 前置条件
 
 运行这些命令前应满足：
@@ -146,6 +158,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
   - 失败时上传前后端启动日志
 - `desktop-smoke-screenshot`
   - 失败时上传页面截图
+
+## 真实 GitHub 远端首跑状态
+
+当前仓库已经具备：
+
+- smoke workflow：`desktop-smoke.yml`
+- 本地 smoke/full 对等入口
+- summary / logs / screenshot artifact 语义
+
+但当前机器上的真实阻塞仍需明确记录：
+
+- `gh` 已安装，但尚未 `gh auth login`
+- 当前仓库仅绑定 `gitee` 远端，尚未绑定 GitHub 远端
+
+因此当前只能说“远端 smoke 首跑手册和本地对等入口已准备好”，不能写成“已经完成真实 GitHub 首跑”。
 
 失败分类当前统一围绕：
 
