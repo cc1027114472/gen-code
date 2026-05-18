@@ -446,6 +446,65 @@ func TestRunnerExecutesWorkspaceReadOnlyTools(t *testing.T) {
 	require.Contains(t, result.ResultSummary, "README.md:1")
 }
 
+func TestRunnerExecutesConfigCheckEnvTool(t *testing.T) {
+	projectRoot := t.TempDir()
+	scriptBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "tools", "check_config.py"))
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(projectRoot, "tools"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_config.py"), scriptBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ".env"), []byte("APP_PORT=8080\nAPP_SHUTDOWN_TIMEOUT=5s\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ".env.example"), []byte("APP_PORT=\nAPP_SHUTDOWN_TIMEOUT=\n"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Config Check",
+		PermissionMode: policy.ReadOnly,
+	})
+
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Check env",
+		Kind:  KindConfigCheckEnv,
+		Input: `{}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry, nil).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "config check passed:")
+	require.Contains(t, result.ResultSummary, "PASS")
+}
+
+func TestRunnerFailsConfigCheckEnvToolForInvalidConfig(t *testing.T) {
+	projectRoot := t.TempDir()
+	scriptBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "tools", "check_config.py"))
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(projectRoot, "tools"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_config.py"), scriptBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "broken.env"), []byte("APP_PORT=not-a-number\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ".env.example"), []byte("APP_PORT=\n"), 0o644))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Config Check Fail",
+		PermissionMode: policy.ReadOnly,
+	})
+
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Check broken env",
+		Kind:  KindConfigCheckEnv,
+		Input: `{"envFile":"broken.env"}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry, nil).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", result.Status)
+	require.Contains(t, result.ResultSummary, "config check failed:")
+	require.Contains(t, result.ResultSummary, "FAIL")
+	require.Contains(t, result.ResultSummary, "broken.env")
+}
+
 func TestRunnerExecutesBrowserTasks(t *testing.T) {
 	registry := session.NewRegistry(t.TempDir())
 	thread := registry.CreateThread(session.CreateThreadInput{

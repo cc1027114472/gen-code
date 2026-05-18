@@ -293,6 +293,17 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 			Executable:         true,
 		},
 		{
+			ID:                 "config.check_env",
+			Name:               "Config Check Env",
+			Description:        "Validate a workspace .env file against gen-code runtime parsing rules using tools/check_config.py",
+			InputSchemaSummary: `{"envFile":"optional workspace-relative .env path","exampleFile":"optional workspace-relative .env.example path","strict":false}`,
+			PermissionMode:     policy.ReadOnly,
+			Source:             "runtime",
+			Kind:               "config.check_env",
+			ReadOnly:           true,
+			Executable:         true,
+		},
+		{
 			ID:                 "workspace.list_files_filtered",
 			Name:               "Workspace List Files Filtered",
 			Description:        "List workspace entries filtered by a glob pattern",

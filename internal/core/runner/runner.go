@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"time"
@@ -31,6 +33,7 @@ const (
 	KindWorkspaceSearch             = "workspace.search_text"
 	KindWorkspaceStat               = "workspace.stat_file"
 	KindWorkspaceReadBatch          = "workspace.read_files_batch"
+	KindConfigCheckEnv              = "config.check_env"
 	KindWorkspaceListFiltered       = "workspace.list_files_filtered"
 	KindWorkspaceSearchDetailed     = "workspace.search_text_detailed"
 	KindWorkspaceApplyPatch         = "workspace.apply_patch"
@@ -696,6 +699,11 @@ func (r *Runner) execute(ctx context.Context, threadID string, task session.Task
 			paths = append(paths, workspaceRelative(r.registry.Workspace().ProjectRoot, resolvedPath))
 		}
 		return fmt.Sprintf("read %d files: %s", len(paths), compactSummary(strings.Join(paths, ", "), 240)), nil
+	case KindConfigCheckEnv:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		return r.executeConfigCheckEnv(ctx, task.Input)
 	case KindWorkspaceListFiltered:
 		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
 			return "", err
@@ -1041,6 +1049,60 @@ func compactText(value string, max int) string {
 		return trimmed[:max]
 	}
 	return trimmed[:max-3] + "..."
+}
+
+func (r *Runner) executeConfigCheckEnv(ctx context.Context, raw string) (string, error) {
+	var input struct {
+		EnvFile     string `json:"envFile"`
+		ExampleFile string `json:"exampleFile"`
+		Strict      bool   `json:"strict"`
+	}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &input); err != nil {
+			return "", err
+		}
+	}
+
+	workspaceRoot := r.registry.Workspace().ProjectRoot
+	scriptPath, err := resolveWorkspacePath(workspaceRoot, filepath.ToSlash(filepath.Join("tools", "check_config.py")))
+	if err != nil {
+		return "", err
+	}
+
+	args := []string{scriptPath}
+	if strings.TrimSpace(input.EnvFile) != "" {
+		resolvedEnv, err := resolveWorkspacePath(workspaceRoot, input.EnvFile)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--env-file", resolvedEnv)
+	}
+	if strings.TrimSpace(input.ExampleFile) != "" {
+		resolvedExample, err := resolveWorkspacePath(workspaceRoot, input.ExampleFile)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--example-file", resolvedExample)
+	}
+	if input.Strict {
+		args = append(args, "--strict")
+	}
+
+	command := exec.CommandContext(ctx, pythonExecutable(), args...)
+	command.Dir = workspaceRoot
+	output, err := command.CombinedOutput()
+	summary := compactSummary(string(output), 240)
+	if err != nil {
+		return "", fmt.Errorf("config check failed: %s", summary)
+	}
+	return fmt.Sprintf("config check passed: %s", summary), nil
+}
+
+func pythonExecutable() string {
+	if goruntime.GOOS == "windows" {
+		return "python"
+	}
+	return "python3"
 }
 
 func sanitizeArtifactID(value string) string {
