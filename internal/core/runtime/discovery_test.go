@@ -30,6 +30,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"test-tui",
 	},
 	"cc": {
+		"agent-browser",
 		"andrej-karpathy-skills",
 		"architecture-blueprint-generator",
 		"breakdown-epic-arch",
@@ -44,6 +45,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"frontend-design",
 		"go-backend-clean-architecture",
 		"kb-audit-flow-prototype",
+		"planning-with-files",
 		"receiving-code-review",
 		"ralph-loop",
 		"requesting-code-review",
@@ -52,6 +54,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"tailwindcss",
 		"test-driven-development",
 		"using-git-worktrees",
+		"use-my-browser",
 		"using-superpowers",
 		"verification-before-completion",
 		"vite",

@@ -116,10 +116,19 @@ Project-internal staging path:
 - `go-backend-clean-architecture`
 - `kb-audit-flow-prototype`
 - `ralph-loop`
-- `react-vite-expert`
 - `tailwindcss`
 - `vercel-react-best-practices`
 - `vite`
+
+### Ready-Structure But Localization-Pending: CC
+
+- `react-vite-expert`
+
+Why:
+
+- the package structure is already small enough for promotion review
+- the copied project-local text has not yet completed the 1:1 Chinese localization gate
+- it should stay separate from the `needs-trim` lane so trim work and localization work do not drift together
 
 Notes:
 
@@ -135,13 +144,10 @@ Blocking checks before promotion:
 
 ### Needs-Trim: CC
 
-- `agent-browser`
 - `canvas-design`
 - `find-skills`
-- `planning-with-files`
 - `skill-creator`
 - `ui-ux-pro-max`
-- `use-my-browser`
 - `web-design-guidelines`
 
 Why:
@@ -151,6 +157,18 @@ Why:
 - `find-skills` depends on external skills tooling and runtime environment expectations
 - `web-design-guidelines` depends on live external rule fetching
 - `use-my-browser` should be reviewed carefully because it assumes browser/tooling integration beyond a plain copied markdown skill
+
+### Trimmed And Promoted: CC
+
+- `agent-browser`
+- `planning-with-files`
+- `use-my-browser`
+
+Why:
+
+- each package was reduced to the smallest machine-usable project-local copy kept in `imports/cc`
+- retained user-visible markdown, templates, and script-facing guidance were completed with 1:1 Chinese localization
+- each promoted copy passed mojibake review, localization audit, and static capability verification before entering `catalog/cc`
 
 Promote target:
 

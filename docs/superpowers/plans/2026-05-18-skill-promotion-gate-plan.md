@@ -117,10 +117,13 @@
 - `go-backend-clean-architecture`
 - `kb-audit-flow-prototype`
 - `ralph-loop`
-- `react-vite-expert`
 - `tailwindcss`
 - `vercel-react-best-practices`
 - `vite`
+
+#### Ready-Structure But Localization-Pending: CC
+
+- `react-vite-expert`
 
 Current first promoted CC batch:
 
@@ -141,14 +144,17 @@ Current second promoted CC batch:
 - `ralph-loop`
 - `web-design-guidelines`
 
-#### Needs-Trim: CC
+Current first needs-trim CC batch promoted after trim + localization:
 
 - `agent-browser`
-- `canvas-design`
 - `planning-with-files`
+- `use-my-browser`
+
+#### Needs-Trim: CC
+
+- `canvas-design`
 - `skill-creator`
 - `ui-ux-pro-max`
-- `use-my-browser`
 
 #### Defer: CC
 
