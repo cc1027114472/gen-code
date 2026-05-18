@@ -147,6 +147,59 @@ func TestDesktopFallbackRuntimeStatusShowsManualRefreshMode(t *testing.T) {
 	}
 }
 
+func TestBrowserCapabilitySummaryDifferentiatesRemoteAndFallback(t *testing.T) {
+	remote := browserCapabilitySummary("remote-app-server")
+	if !strings.Contains(remote, "verified-lanes=authenticated-controlled-session,public-web-read-only") {
+		t.Fatalf("expected remote browser summary to advertise verified lanes, got %q", remote)
+	}
+	if !strings.Contains(remote, "compatibility=allowlist-only") {
+		t.Fatalf("expected remote browser summary to advertise allowlist-only scope, got %q", remote)
+	}
+
+	fallback := browserCapabilitySummary("local-fallback")
+	if !strings.Contains(fallback, "verified-lanes=supporting-evidence-local-preview") {
+		t.Fatalf("expected fallback browser summary to stay evidence-only, got %q", fallback)
+	}
+	if !strings.Contains(fallback, "compatibility=non-canonical") {
+		t.Fatalf("expected fallback browser summary to stay non-canonical, got %q", fallback)
+	}
+}
+
+func TestBrowserWorkspaceStateFromRemoteUsesVerifiedLaneFallbackSummary(t *testing.T) {
+	state := browserWorkspaceStateFromRemote(struct {
+		ActiveTabID string `json:"activeTabId"`
+		Tabs        []struct {
+			ID           string `json:"id"`
+			URL          string `json:"url"`
+			Title        string `json:"title"`
+			Loading      bool   `json:"loading"`
+			CanGoBack    bool   `json:"canGoBack"`
+			CanGoForward bool   `json:"canGoForward"`
+		} `json:"tabs"`
+		LatestActionSummary string `json:"latestActionSummary"`
+		LatestActionError   string `json:"latestActionError"`
+	}{
+		ActiveTabID: "browser-tab-remote",
+		Tabs: []struct {
+			ID           string `json:"id"`
+			URL          string `json:"url"`
+			Title        string `json:"title"`
+			Loading      bool   `json:"loading"`
+			CanGoBack    bool   `json:"canGoBack"`
+			CanGoForward bool   `json:"canGoForward"`
+		}{
+			{
+				ID:    "browser-tab-remote",
+				URL:   "https://example.com/",
+				Title: "example.com",
+			},
+		},
+	})
+	if !strings.Contains(state.LatestActionSummary, "verified-lanes=authenticated-controlled-session,public-web-read-only") {
+		t.Fatalf("expected remote browser workspace summary fallback, got %q", state.LatestActionSummary)
+	}
+}
+
 func TestLocalSkillLocalizationCheckedRequiresFullyChineseAudit(t *testing.T) {
 	root := t.TempDir()
 	requireLocalized := func(name string, content string, want bool) {

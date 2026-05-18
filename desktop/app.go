@@ -709,10 +709,13 @@ func (a *App) BrowserScreenshot(tabID string) BrowserWorkspaceState {
 
 func (a *App) currentBrowserState() BrowserWorkspaceState {
 	status, err := a.collectRuntimeStatus()
-	if err == nil && len(status.Browser.Tabs) > 0 {
-		return status.Browser
+	if err == nil {
+		if len(status.Browser.Tabs) > 0 {
+			return status.Browser
+		}
+		return defaultBrowserWorkspaceState(browserCapabilitySummary(status.RuntimeSource), "", "", "")
 	}
-	return defaultBrowserWorkspaceState("browser workspace ready", "", "", "")
+	return defaultBrowserWorkspaceState(browserCapabilitySummary("local-fallback"), "", "", "")
 }
 
 func (a *App) runBrowserTool(kind string, input map[string]string) BrowserWorkspaceState {
@@ -1170,7 +1173,7 @@ func browserWorkspaceStateFromRemote(remote struct {
 		IsOpen:              len(tabs) > 0,
 		Tabs:                tabs,
 		ActiveTabID:         remote.ActiveTabID,
-		LatestActionSummary: remote.LatestActionSummary,
+		LatestActionSummary: fallbackText(strings.TrimSpace(remote.LatestActionSummary), browserCapabilitySummary("remote-app-server")),
 		LatestActionError:   remote.LatestActionError,
 	}
 }
@@ -1221,11 +1224,18 @@ func defaultBrowserWorkspaceState(summary string, actionErr string, extractText 
 		IsOpen:              true,
 		Tabs:                []BrowserTab{tab},
 		ActiveTabID:         tab.ID,
-		LatestActionSummary: fallbackText(strings.TrimSpace(summary), "browser workspace ready"),
+		LatestActionSummary: fallbackText(strings.TrimSpace(summary), browserCapabilitySummary("local-fallback")),
 		LatestActionError:   strings.TrimSpace(actionErr),
 		LatestExtractText:   strings.TrimSpace(extractText),
 		LatestArtifactPath:  strings.TrimSpace(artifactPath),
 	}
+}
+
+func browserCapabilitySummary(runtimeSource string) string {
+	if strings.EqualFold(strings.TrimSpace(runtimeSource), "remote-app-server") {
+		return "browser workspace ready; verified-lanes=authenticated-controlled-session,public-web-read-only; compatibility=allowlist-only"
+	}
+	return "browser workspace ready; verified-lanes=supporting-evidence-local-preview; compatibility=non-canonical"
 }
 
 func runtimeBaseURL() string {

@@ -1399,6 +1399,9 @@ func printTools(ctx context.Context, facade *runtimeFacade) error {
 	fmt.Printf("  source: %s\n", facade.runtimeSource())
 	fmt.Printf("  source trust: %s\n", runtimeSourceTrust(facade.runtimeSource()))
 	fmt.Printf("  source detail: %s\n", runtimeSourceDetail(facade.runtimeSource()))
+	if containsBrowserTool(items) {
+		fmt.Println("  browser verified baseline: allowlisted local pages, authenticated controlled session lane, and constrained verified HTTPS read-only lane")
+	}
 	for _, item := range items {
 		fmt.Printf(
 			"  - %s (%s, permission=%s, kind=%s, executable=%t, readOnly=%t)\n",
@@ -1411,6 +1414,15 @@ func printTools(ctx context.Context, facade *runtimeFacade) error {
 		)
 	}
 	return nil
+}
+
+func containsBrowserTool(items []runtimecontract.Tool) bool {
+	for _, item := range items {
+		if strings.HasPrefix(strings.TrimSpace(item.Kind), "browser.") || strings.HasPrefix(strings.TrimSpace(item.ID), "browser.") {
+			return true
+		}
+	}
+	return false
 }
 
 func printMCP(ctx context.Context, facade *runtimeFacade) error {

@@ -19,6 +19,10 @@ API_RETRY_DELAY = float(os.environ.get("GEN_CODE_API_RETRY_DELAY", "0.5"))
 ACCEPTANCE_MODE = os.environ.get("GEN_CODE_ACCEPTANCE_MODE", "full").strip().lower() or "full"
 ARTIFACT_DIR = os.environ.get("GEN_CODE_ARTIFACT_DIR", os.path.join("tmp", "desktop-smoke-artifacts"))
 EMBEDDED_PREVIEW_PARAM = "gcPreview"
+AUTHENTICATED_SESSION_LABEL = "session=acceptance-session"
+AUTHENTICATED_RESULT_TEXT = "identity=authenticated-browser;session=acceptance-session;scope=controlled"
+PUBLIC_BROWSER_BASE_URL = os.environ.get("GEN_CODE_BROWSER_PUBLIC_BASE_URL", "https://example.com/").strip()
+PUBLIC_BROWSER_MODE = os.environ.get("GEN_CODE_BROWSER_PUBLIC_WEB_MODE", "required").strip().lower() or "required"
 
 SECOND_BATCH_TOOL_KINDS = {
     "workspace.stat_file",
@@ -56,6 +60,8 @@ AGENT_FAILURE_MATRIX = {
 FALLBACK_EVIDENCE_MATRIX = {
     "recovered_as_failed": {"lane": "fallback-evidence", "required": True},
 }
+
+PUBLIC_WEB_SKIP_MODES = {"skip", "disabled", "off", "false", "0"}
 
 
 def summarize_refresh_mode(page) -> dict:
@@ -190,6 +196,75 @@ def fail(message: str, *, category: str, details=None):
     if details is not None:
         payload["details"] = details
     raise RuntimeError(json.dumps(payload, ensure_ascii=False))
+
+
+def classify_public_web_mode() -> dict:
+    if PUBLIC_BROWSER_MODE in PUBLIC_WEB_SKIP_MODES:
+        return {
+            "enabled": False,
+            "status": "skipped",
+            "classification": "disabled-by-config",
+            "reason": f"public-web lane disabled by GEN_CODE_BROWSER_PUBLIC_WEB_MODE={PUBLIC_BROWSER_MODE!r}",
+        }
+    if not PUBLIC_BROWSER_BASE_URL:
+        return {
+            "enabled": False,
+            "status": "skipped",
+            "classification": "missing-target-url",
+            "reason": "GEN_CODE_BROWSER_PUBLIC_BASE_URL is empty",
+        }
+    return {
+        "enabled": True,
+        "status": "required",
+        "classification": "configured",
+        "targetUrl": PUBLIC_BROWSER_BASE_URL,
+    }
+
+
+def validate_public_web_target(raw_url: str) -> str:
+    parsed = urllib.parse.urlparse(raw_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        fail(
+            f"public-web lane requires one explicit HTTPS target, got {raw_url!r}",
+            category="public-web-config-invalid",
+            details={"targetUrl": raw_url},
+        )
+    return parsed.geturl()
+
+
+def preflight_public_web_target(target_url: str) -> dict:
+    request = urllib.request.Request(
+        target_url,
+        headers={"User-Agent": "gen-code-desktop-acceptance"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return {
+                "targetUrl": target_url,
+                "statusCode": getattr(response, "status", 200),
+                "finalUrl": response.geturl(),
+            }
+    except urllib.error.HTTPError as exc:
+        fail(
+            f"public-web preflight failed for {target_url}",
+            category="public-web-preflight-network",
+            details={
+                "targetUrl": target_url,
+                "statusCode": exc.code,
+                "reason": str(exc),
+            },
+        )
+    except (urllib.error.URLError, socket.timeout, ConnectionResetError, OSError) as exc:
+        fail(
+            f"public-web preflight failed for {target_url}",
+            category="public-web-preflight-network",
+            details={
+                "targetUrl": target_url,
+                "exceptionType": type(exc).__name__,
+                "exception": str(exc),
+            },
+        )
 
 
 def normalize_failure(exc: Exception) -> dict:
@@ -382,6 +457,27 @@ def build_controlled_browser_fixture_url(thread_id: str, thread_name: str) -> st
     )
 
 
+def build_authenticated_browser_fixture_url(thread_id: str, thread_name: str) -> str:
+    encoded_name = urllib.parse.quote(thread_name, safe="")
+    return (
+        f"{UI_BASE_URL}?{EMBEDDED_PREVIEW_PARAM}=1"
+        f"&pane=acceptance-browser"
+        f"&threadId={urllib.parse.quote(thread_id, safe='')}"
+        f"&threadName={encoded_name}"
+        f"&authFixture=1"
+    )
+
+
+def build_thread_preview_fixture_url(thread_id: str, thread_name: str, pane: str) -> str:
+    encoded_name = urllib.parse.quote(thread_name, safe="")
+    return (
+        f"{UI_BASE_URL}?{EMBEDDED_PREVIEW_PARAM}=1"
+        f"&pane={urllib.parse.quote(pane, safe='')}"
+        f"&threadId={urllib.parse.quote(thread_id, safe='')}"
+        f"&threadName={encoded_name}"
+    )
+
+
 def activate_thread(thread_id: str):
     return api("POST", f"/api/threads/{thread_id}/activate", {})
 
@@ -461,8 +557,27 @@ def get_browser_snapshot() -> dict:
     return api("GET", "/api/runtime/status").get("browser", {})
 
 
+def wait_for_browser_snapshot(predicate=None, timeout_seconds: float = 10.0) -> dict:
+    deadline = time.time() + timeout_seconds
+    last_snapshot = {}
+    while time.time() < deadline:
+        snapshot = get_browser_snapshot()
+        last_snapshot = snapshot
+        if predicate is None:
+            return snapshot
+        try:
+            if predicate(snapshot):
+                return snapshot
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return last_snapshot
+
+
 def get_active_browser_tab_id() -> str:
-    snapshot = get_browser_snapshot()
+    snapshot = wait_for_browser_snapshot(
+        lambda item: bool(item.get("activeTabId")) or bool(item.get("tabs", []))
+    )
     active_tab_id = snapshot.get("activeTabId", "")
     if active_tab_id:
         return active_tab_id
@@ -472,16 +587,49 @@ def get_active_browser_tab_id() -> str:
     raise AssertionError(f"expected runtime browser snapshot to expose an active tab, got {snapshot!r}")
 
 
+def get_browser_tab_url(tab_id: str) -> str:
+    target_tab_id = (tab_id or "").strip()
+    snapshot = wait_for_browser_snapshot(
+        lambda item: any(tab.get("id", "") == target_tab_id for tab in item.get("tabs", []))
+    )
+    for tab in snapshot.get("tabs", []):
+        if tab.get("id", "") == target_tab_id:
+            return tab.get("url", "")
+    raise AssertionError(f"expected runtime browser snapshot to expose tab {target_tab_id!r}, got {snapshot!r}")
+
+
 def extract_tab_id_from_summary(summary: str) -> str:
     parts = (summary or "").split(": ", 1)
     if len(parts) != 2:
         raise AssertionError(f"expected browser summary to contain a tab id, got {summary!r}")
-    return parts[1].strip()
+    return parts[1].split(" | ", 1)[0].strip()
+
+
+def resolve_browser_tab_id(result: dict, fallback_exclude_ids: set[str] | None = None) -> str:
+    for summary in [
+        ((result.get("task") or {}).get("resultSummary", "")),
+        ((result.get("record") or {}).get("summary", "")),
+    ]:
+        text = (summary or "").strip()
+        if not text:
+            continue
+        try:
+            return extract_tab_id_from_summary(text)
+        except AssertionError:
+            continue
+    if fallback_exclude_ids is not None:
+        return get_latest_browser_tab_id(exclude_ids=fallback_exclude_ids)
+    return get_active_browser_tab_id()
 
 
 def get_latest_browser_tab_id(exclude_ids: set[str] | None = None) -> str:
     exclude_ids = exclude_ids or set()
-    snapshot = get_browser_snapshot()
+    snapshot = wait_for_browser_snapshot(
+        lambda item: any(
+            tab.get("id", "") and tab.get("id", "") not in exclude_ids
+            for tab in item.get("tabs", [])
+        )
+    )
     candidates = [tab.get("id", "") for tab in snapshot.get("tabs", []) if tab.get("id", "") and tab.get("id", "") not in exclude_ids]
     if candidates:
         return candidates[-1]
@@ -850,7 +998,7 @@ def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_
         },
     )
     results.append(open_result)
-    controlled_tab_id = get_active_browser_tab_id()
+    controlled_tab_id = resolve_browser_tab_id(open_result)
 
     for scenario in [
         {
@@ -892,7 +1040,7 @@ def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_
                 },
             )
         )
-        controlled_tab_id = get_active_browser_tab_id()
+        controlled_tab_id = resolve_browser_tab_id(results[-1])
 
     extract_result = next(item for item in results if item["task"]["kind"] == "browser.extract")
     screenshot_result = next(item for item in results if item["task"]["kind"] == "browser.screenshot")
@@ -900,7 +1048,9 @@ def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_
         thread_id,
         lambda item: item["kind"] == "browser.screenshot" and item["path"] in screenshot_result["task"]["resultSummary"],
     )
-    browser_state = api("GET", "/api/runtime/status").get("browser", {})
+    browser_state = wait_for_browser_snapshot(
+        lambda item: bool(item.get("activeTabId")) or bool(item.get("tabs", []))
+    )
 
     return {
         "taskIds": [item["task"]["id"] for item in results],
@@ -913,6 +1063,187 @@ def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_
             is_scenario_visible(item["visibility"]) or item.get("uiOptional", False) for item in results
         ),
         "records": results,
+    }
+
+
+def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, run_id: str) -> dict:
+    fixture_url = build_authenticated_browser_fixture_url(thread_id, thread_name)
+    open_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser authenticated open {run_id}",
+            "kind": "browser.open",
+            "input": {"url": fixture_url},
+            "summary_contains": "browser tab opened",
+            "lane": "authenticated browser canonical lane",
+        },
+    )
+    authenticated_tab_id = resolve_browser_tab_id(open_result)
+    authenticated_tab_url = get_browser_tab_url(authenticated_tab_id)
+    session_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser authenticated session {run_id}",
+            "kind": "browser.extract",
+            "input": {"tabId": authenticated_tab_id, "selector": "[data-testid='authenticated-browser-session']"},
+            "summary_contains": "browser extract completed",
+            "lane": "authenticated browser canonical lane",
+            "ui_optional": True,
+        },
+    )
+    if AUTHENTICATED_SESSION_LABEL not in session_result["record"]["summary"]:
+        fail(
+            "authenticated browser session extract did not return the expected session label",
+            category="authenticated-browser-assertion",
+            details={
+                "expectedSessionLabel": AUTHENTICATED_SESSION_LABEL,
+                "actualSummary": session_result["record"]["summary"],
+            },
+        )
+    extract_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser authenticated extract {run_id}",
+            "kind": "browser.extract",
+            "input": {"tabId": authenticated_tab_id, "selector": "[data-testid='authenticated-browser-result']"},
+            "summary_contains": "browser extract completed",
+            "lane": "authenticated browser canonical lane",
+            "ui_optional": True,
+        },
+    )
+    if AUTHENTICATED_RESULT_TEXT not in extract_result["record"]["summary"]:
+        fail(
+            "authenticated browser extract did not return the expected stable identity token",
+            category="authenticated-browser-assertion",
+            details={
+                "expectedResultText": AUTHENTICATED_RESULT_TEXT,
+                "actualSummary": extract_result["record"]["summary"],
+            },
+        )
+    screenshot_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser authenticated screenshot {run_id}",
+            "kind": "browser.screenshot",
+            "input": {"tabId": authenticated_tab_id},
+            "summary_contains": "browser screenshot captured",
+            "lane": "authenticated browser canonical lane",
+        },
+    )
+    screenshot_artifact = wait_for_artifact(
+        thread_id,
+        lambda item: item["kind"] == "browser.screenshot" and item["path"] in screenshot_result["task"]["resultSummary"],
+    )
+    return {
+        "status": "passed",
+        "taskIds": [open_result["task"]["id"], session_result["task"]["id"], extract_result["task"]["id"], screenshot_result["task"]["id"]],
+        "taskKinds": [open_result["task"]["kind"], session_result["task"]["kind"], extract_result["task"]["kind"], screenshot_result["task"]["kind"]],
+        "resultSummaries": [
+            open_result["task"]["resultSummary"],
+            session_result["task"]["resultSummary"],
+            extract_result["task"]["resultSummary"],
+            screenshot_result["task"]["resultSummary"],
+        ],
+        "tabId": authenticated_tab_id,
+        "tabUrl": authenticated_tab_url,
+        "fixtureURL": fixture_url,
+        "sessionLabel": AUTHENTICATED_SESSION_LABEL,
+        "resultText": AUTHENTICATED_RESULT_TEXT,
+        "artifactPath": screenshot_artifact["path"],
+        "screenshotArtifactPath": screenshot_artifact["path"],
+        "visibility": {
+            "openVisible": is_scenario_visible(open_result["visibility"]),
+            "sessionVisible": is_scenario_visible(session_result["visibility"]) or session_result.get("uiOptional", False),
+            "extractVisible": is_scenario_visible(extract_result["visibility"]) or extract_result.get("uiOptional", False),
+            "screenshotVisible": is_scenario_visible(screenshot_result["visibility"]),
+        },
+        "records": [open_result, session_result, extract_result, screenshot_result],
+    }
+
+
+def run_public_web_browser_scenario(page, thread_id: str, run_id: str) -> dict:
+    mode = classify_public_web_mode()
+    if not mode["enabled"]:
+        return mode
+    target_url = validate_public_web_target(PUBLIC_BROWSER_BASE_URL)
+    preflight = preflight_public_web_target(target_url)
+    open_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser public open {run_id}",
+            "kind": "browser.open",
+            "input": {"url": target_url},
+            "summary_contains": "browser tab opened",
+            "lane": "public-web read-only browser lane",
+        },
+    )
+    public_tab_id = resolve_browser_tab_id(open_result)
+    public_tab_url = get_browser_tab_url(public_tab_id)
+    extract_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser public extract {run_id}",
+            "kind": "browser.extract",
+            "input": {"tabId": public_tab_id, "selector": "h1"},
+            "summary_contains": "browser extract completed",
+            "lane": "public-web read-only browser lane",
+            "ui_optional": True,
+        },
+    )
+    parsed_target = urllib.parse.urlparse(target_url)
+    parsed_active = urllib.parse.urlparse(public_tab_url)
+    if parsed_active.scheme != "https" or parsed_active.hostname != parsed_target.hostname:
+        fail(
+            "public-web browser lane did not stay on the configured allowlisted host",
+            category="public-web-assertion",
+            details={
+                "targetUrl": target_url,
+                "activeTabUrl": public_tab_url,
+            },
+        )
+    screenshot_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser public screenshot {run_id}",
+            "kind": "browser.screenshot",
+            "input": {"tabId": public_tab_id},
+            "summary_contains": "browser screenshot captured",
+            "lane": "public-web read-only browser lane",
+        },
+    )
+    screenshot_artifact = wait_for_artifact(
+        thread_id,
+        lambda item: item["kind"] == "browser.screenshot" and item["path"] in screenshot_result["task"]["resultSummary"],
+    )
+    return {
+        "enabled": True,
+        "status": "passed",
+        "classification": "required-and-passed",
+        "required": True,
+        "taskIds": [open_result["task"]["id"], extract_result["task"]["id"], screenshot_result["task"]["id"]],
+        "taskKinds": [open_result["task"]["kind"], extract_result["task"]["kind"], screenshot_result["task"]["kind"]],
+        "resultSummaries": [open_result["task"]["resultSummary"], extract_result["task"]["resultSummary"], screenshot_result["task"]["resultSummary"]],
+        "tabId": public_tab_id,
+        "tabUrl": public_tab_url,
+        "targetUrl": target_url,
+        "transportScope": "public-web-read-only",
+        "preflight": preflight,
+        "extractSummary": extract_result["record"]["summary"],
+        "artifactPath": screenshot_artifact["path"],
+        "screenshotArtifactPath": screenshot_artifact["path"],
+        "visibility": {
+            "openVisible": is_scenario_visible(open_result["visibility"]),
+            "extractVisible": is_scenario_visible(extract_result["visibility"]) or extract_result.get("uiOptional", False),
+            "screenshotVisible": is_scenario_visible(screenshot_result["visibility"]),
+        },
+        "records": [open_result, extract_result, screenshot_result],
     }
 
 
@@ -1483,26 +1814,30 @@ def main() -> int:
                     {
                         "title": f"Browser open preview {run_id}",
                         "kind": "browser.open",
-                        "input": {"url": UI_BASE_URL},
+                        "input": {"url": build_thread_preview_fixture_url(thread_id, thread_name, "thread-one")},
                         "summary_contains": "browser tab opened",
                         "lane": browser_lane,
                     },
                 )
             )
-            primary_browser_tab_id = extract_tab_id_from_summary(browser_results[-1]["task"]["resultSummary"])
+            primary_browser_tab_id = resolve_browser_tab_id(browser_results[-1])
             browser_results.append(
                 run_browser_navigation_scenario(
                     page,
                     thread_id,
                     {
-                        "title": f"Browser navigate api {run_id}",
+                        "title": f"Browser navigate preview fixture {run_id}",
                         "kind": "browser.navigate",
-                        "input": {"tabId": primary_browser_tab_id, "url": f"{API_BASE_URL}/api/runtime/status"},
+                        "input": {
+                            "tabId": primary_browser_tab_id,
+                            "url": build_thread_preview_fixture_url(thread_id, thread_name, "thread-two"),
+                        },
                         "summary_contains": "browser tab navigated",
                         "lane": browser_lane,
                     },
                 )
             )
+            primary_browser_tab_id = resolve_browser_tab_id(browser_results[-1])
             browser_results.append(
                 run_browser_navigation_scenario(
                     page,
@@ -1516,6 +1851,7 @@ def main() -> int:
                     },
                 )
             )
+            primary_browser_tab_id = resolve_browser_tab_id(browser_results[-1])
             browser_results.append(
                 run_browser_navigation_scenario(
                     page,
@@ -1529,6 +1865,7 @@ def main() -> int:
                     },
                 )
             )
+            primary_browser_tab_id = resolve_browser_tab_id(browser_results[-1])
             browser_results.append(
                 run_browser_navigation_scenario(
                     page,
@@ -1542,6 +1879,7 @@ def main() -> int:
                     },
                 )
             )
+            primary_browser_tab_id = resolve_browser_tab_id(browser_results[-1])
             preexisting_tab_ids = {
                 tab.get("id", "")
                 for tab in get_browser_snapshot().get("tabs", [])
@@ -1590,6 +1928,8 @@ def main() -> int:
                 )
             )
             controlled_browser_result = run_controlled_browser_scenario(page, thread_id, thread_name, run_id)
+            authenticated_browser_result = run_authenticated_browser_scenario(page, thread_id, thread_name, run_id)
+            public_web_browser_result = run_public_web_browser_scenario(page, thread_id, run_id)
             mcp_execution_results = []
             for scenario in [
                 {
@@ -1880,6 +2220,8 @@ def main() -> int:
                         ),
                     },
                     "controlledBrowserVisibility": controlled_browser_result,
+                    "authenticatedBrowserVisibility": authenticated_browser_result,
+                    "publicWebBrowserVisibility": public_web_browser_result,
                     "mcpExecutionVisibility": {
                         "scenarioCount": len(mcp_execution_results),
                         "visibleByTitleCount": sum(
@@ -1951,6 +2293,8 @@ def main() -> int:
                     for item in browser_results
                 ],
                 "controlledBrowserScenario": controlled_browser_result,
+                "authenticatedBrowserScenario": authenticated_browser_result,
+                "publicWebBrowserScenario": public_web_browser_result,
                 "mcpExecutionResults": [
                     {
                         "taskId": item["task"]["id"],
@@ -2057,6 +2401,24 @@ def validate_release_baseline(result: dict) -> None:
     for key in ("taskIds", "toolKinds", "activeTabId", "extractSummary", "screenshotArtifactPath", "toolCallsVisible"):
         if key not in controlled_browser:
             raise AssertionError(f"missing controlled browser acceptance key: {key}")
+    authenticated_browser = remote_report.get("authenticatedBrowserVisibility") or {}
+    if authenticated_browser.get("status") != "passed":
+        raise AssertionError(f"authenticated browser lane did not pass: {authenticated_browser}")
+    for key in ("taskIds", "taskKinds", "resultSummaries", "tabId", "tabUrl", "fixtureURL", "sessionLabel", "resultText", "artifactPath", "screenshotArtifactPath", "visibility"):
+        if key not in authenticated_browser:
+            raise AssertionError(f"missing authenticated browser acceptance key: {key}")
+    public_web_browser = remote_report.get("publicWebBrowserVisibility") or {}
+    public_web_status = public_web_browser.get("status")
+    if public_web_status not in {"passed", "skipped"}:
+        raise AssertionError(f"public-web browser lane must classify itself as passed or skipped: {public_web_browser}")
+    if public_web_status == "passed":
+        for key in ("classification", "required", "taskIds", "taskKinds", "resultSummaries", "tabId", "tabUrl", "targetUrl", "transportScope", "preflight", "extractSummary", "artifactPath", "screenshotArtifactPath", "visibility"):
+            if key not in public_web_browser:
+                raise AssertionError(f"missing public-web browser acceptance key: {key}")
+    else:
+        for key in ("classification", "reason"):
+            if key not in public_web_browser:
+                raise AssertionError(f"missing public-web browser skip key: {key}")
 
     agent_failure_matrix = remote_report.get("agentFailureMatrix") or {}
     for key in (

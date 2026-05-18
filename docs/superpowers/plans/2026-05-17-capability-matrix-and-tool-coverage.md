@@ -61,17 +61,17 @@
 | Tool Kind | Status | Verification | Notes |
 | --- | --- | --- | --- |
 | `browser.state` | verified | Playwright canonical direct-task acceptance | Verified in the canonical desktop lane as browser state baseline evidence. |
-| `browser.open` | verified | Playwright canonical direct-task acceptance | Verified for controlled local URLs only. |
-| `browser.navigate` | verified | Playwright canonical direct-task acceptance | Verified against the canonical local UI/API targets. |
+| `browser.open` | verified | Playwright canonical direct-task acceptance | Verified for allowlisted local URLs, one authenticated controlled-session fixture, and one constrained verified HTTPS read-only lane. |
+| `browser.navigate` | verified | Playwright canonical direct-task acceptance | Verified against canonical local UI/API targets and the broader allowlist-backed browser baseline. |
 | `browser.back` | verified | Playwright canonical direct-task acceptance | Verified as browser navigation-state evidence. |
 | `browser.forward` | verified | Playwright canonical direct-task acceptance | Verified as browser navigation-state evidence. |
 | `browser.reload` | verified | Playwright canonical direct-task acceptance | Verified as browser navigation-state evidence. |
 | `browser.close_tab` | verified | Playwright canonical direct-task acceptance | Verified in the canonical desktop lane. |
 | `browser.activate_tab` | verified | Playwright canonical direct-task acceptance | Verified in the canonical desktop lane. |
-| `browser.click` | verified | Playwright canonical direct-task acceptance | Verified on controlled local pages through the canonical browser interaction lane. |
-| `browser.type` | verified | Playwright canonical direct-task acceptance | Verified on controlled local pages through the canonical browser interaction lane. |
-| `browser.extract` | verified | Playwright canonical direct-task acceptance | Verified on controlled local pages through the canonical browser interaction lane. |
-| `browser.screenshot` | verified | Playwright canonical direct-task acceptance + artifact assertion | Verified on controlled local pages with screenshot artifact evidence. |
+| `browser.click` | verified | Playwright canonical direct-task acceptance | Verified on controlled local pages through the canonical browser interaction lane; public-web baseline remains read-only. |
+| `browser.type` | verified | Playwright canonical direct-task acceptance | Verified on controlled local pages through the canonical browser interaction lane; public-web baseline remains read-only. |
+| `browser.extract` | verified | Playwright canonical direct-task acceptance | Verified on controlled local pages, authenticated controlled-session fixture pages, and the constrained verified HTTPS read-only lane. |
+| `browser.screenshot` | verified | Playwright canonical direct-task acceptance + artifact assertion | Verified on controlled local pages, authenticated controlled-session fixture pages, and the constrained verified HTTPS read-only lane with artifact evidence. |
 
 ## 4. Model And Agent Execution
 
@@ -112,7 +112,7 @@
 | --- | --- | --- | --- |
 | Runtime dashboard with source and trust hints | verified | `desktop/app.go`, `desktop/frontend/src/App.tsx`, `desktop/frontend/src/runtimeBridge.ts` | Desktop reuses bridge-derived source/trust/refresh semantics. |
 | Thread/task/approval/write-execution workflow visibility | partial | desktop payloads and acceptance lane | Core flow works; polish remains. |
-| Canonical browser interaction acceptance lane | verified | `scripts/verify-desktop-live-refresh.py`, `scripts/run-desktop-live-refresh-check.ps1` | Canonical desktop acceptance explicitly covers controlled local browser open, type, click, extract, and screenshot evidence. |
+| Canonical browser interaction acceptance lane | verified | `scripts/verify-desktop-live-refresh.py`, `scripts/run-desktop-live-refresh-check.ps1` | Canonical desktop acceptance explicitly covers controlled local browser interaction, one authenticated controlled-session fixture lane, and one constrained verified HTTPS read-only lane. |
 | Release-grade desktop regression gate | verified | `docs/superpowers/plans/2026-05-17-runtime-entry-checklist.md` | One maintained checklist covers desktop Go, frontend build, and canonical live acceptance. |
 
 ## 8. What Is Already Verified End-To-End
@@ -121,11 +121,11 @@
 - `canonicalRuntimeUrl` tracks the actual server port
 - desktop acceptance can create a thread, create tasks, require approval, approve execution, record write execution, and execute rollback
 - desktop acceptance covers the implemented built-in thread mutation tools
-- desktop acceptance covers the built-in browser interaction tools on controlled local URLs
+- desktop acceptance covers the built-in browser interaction tools on controlled local URLs, one authenticated controlled-session fixture lane, and one constrained verified HTTPS read-only lane
 - `agent.run` completes at least three read-oriented action plans
 
 ## 9. Highest-Priority Remaining Gaps
 
-1. Decide whether to extend the current controlled-browser verified baseline beyond local URLs into broader authenticated or public-web compatibility.
+1. Decide whether to extend the current browser verified baseline beyond the current allowlist-backed authenticated/public-read-only scope into broader arbitrary authenticated or public-web compatibility.
 2. Decide whether to extend the current verified MCP baseline beyond the current stdio multi-server execution lane into broader arbitrary third-party compatibility.
 3. Decide whether to extend the current per-skill static capability baseline into representative half-dynamic skill verification.

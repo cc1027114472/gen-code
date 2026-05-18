@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,22 +13,25 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
 const browserActionTimeout = 20 * time.Second
 
 type tabSession struct {
-	id           string
-	ctx          context.Context
-	cancel       context.CancelFunc
-	url          string
-	title        string
-	loading      bool
-	canGoBack    bool
-	canGoForward bool
-	history      []string
-	historyIndex int
+	id                string
+	ctx               context.Context
+	cancel            context.CancelFunc
+	url               string
+	title             string
+	loading           bool
+	canGoBack         bool
+	canGoForward      bool
+	history           []string
+	historyIndex      int
+	bootstrappedHosts map[string]bool
 }
 
 // Driver is the default CDP-backed controlled local browser core.
@@ -42,16 +46,25 @@ type Driver struct {
 	nextTabNum          int
 	latestActionSummary string
 	latestActionError   string
+	policy              Policy
+	applySessionCookies func(context.Context, *tabSession, *url.URL, SessionProfile) error
 }
 
 // NewDriver constructs a shared controlled browser core.
 func NewDriver() *Driver {
-	return &Driver{
+	return newDriverWithPolicy(defaultPolicy())
+}
+
+func newDriverWithPolicy(policy Policy) *Driver {
+	driver := &Driver{
 		rootCtx:    context.Background(),
 		tabs:       map[string]*tabSession{},
 		nextTabNum: 1,
 		activeID:   "",
+		policy:     policy,
 	}
+	driver.applySessionCookies = driver.applySessionCookiesForProfile
+	return driver
 }
 
 func (d *Driver) State(_ context.Context) (Snapshot, error) {
@@ -61,7 +74,7 @@ func (d *Driver) State(_ context.Context) (Snapshot, error) {
 }
 
 func (d *Driver) Open(ctx context.Context, request OpenRequest) (Snapshot, error) {
-	normalizedURL, err := normalizeURL(request.URL)
+	normalizedURL, err := normalizeURLWithPolicy(request.URL, d.policy)
 	if err != nil {
 		return d.fail(err)
 	}
@@ -84,7 +97,7 @@ func (d *Driver) Open(ctx context.Context, request OpenRequest) (Snapshot, error
 }
 
 func (d *Driver) Navigate(ctx context.Context, request NavigateRequest) (Snapshot, error) {
-	normalizedURL, err := normalizeURL(request.URL)
+	normalizedURL, err := normalizeURLWithPolicy(request.URL, d.policy)
 	if err != nil {
 		return d.fail(err)
 	}
@@ -408,11 +421,12 @@ func (d *Driver) newTab(ctx context.Context) (*tabSession, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	tab := &tabSession{
-		id:           fmt.Sprintf("browser-tab-%d", d.nextTabNum),
-		ctx:          tabCtx,
-		cancel:       cancel,
-		history:      []string{},
-		historyIndex: -1,
+		id:                fmt.Sprintf("browser-tab-%d", d.nextTabNum),
+		ctx:               tabCtx,
+		cancel:            cancel,
+		history:           []string{},
+		historyIndex:      -1,
+		bootstrappedHosts: map[string]bool{},
 	}
 	d.nextTabNum++
 	d.tabs[tab.id] = tab
@@ -426,6 +440,9 @@ func (d *Driver) newTab(ctx context.Context) (*tabSession, error) {
 }
 
 func (d *Driver) navigateTab(ctx context.Context, tab *tabSession, targetURL string, recordHistory bool) error {
+	if err := d.ensureSessionBootstrap(ctx, tab, targetURL); err != nil {
+		return err
+	}
 	if err := d.runOnTab(ctx, tab, chromedp.Navigate(targetURL)); err != nil {
 		return fmt.Errorf("%w: %v", ErrSessionUnavailable, err)
 	}
@@ -445,6 +462,73 @@ func (d *Driver) navigateTab(ctx context.Context, tab *tabSession, targetURL str
 	tab.canGoBack = tab.historyIndex > 0
 	tab.canGoForward = tab.historyIndex >= 0 && tab.historyIndex < len(tab.history)-1
 	return nil
+}
+
+func (d *Driver) ensureSessionBootstrap(ctx context.Context, tab *tabSession, targetURL string) error {
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrSessionUnavailable, err)
+	}
+	profile, needsSession, err := d.policy.sessionProfileForHost(parsed.Hostname())
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrSessionUnavailable, err)
+	}
+	if !needsSession {
+		return nil
+	}
+	host := strings.ToLower(parsed.Hostname())
+	d.mu.Lock()
+	if tab.bootstrappedHosts == nil {
+		tab.bootstrappedHosts = map[string]bool{}
+	}
+	if tab.bootstrappedHosts[host] {
+		d.mu.Unlock()
+		return nil
+	}
+	d.mu.Unlock()
+	if err := d.applySessionCookies(ctx, tab, parsed, profile); err != nil {
+		return fmt.Errorf("%w: %v", ErrSessionUnavailable, err)
+	}
+	d.mu.Lock()
+	tab.bootstrappedHosts[host] = true
+	d.mu.Unlock()
+	return nil
+}
+
+func (d *Driver) applySessionCookiesForProfile(ctx context.Context, tab *tabSession, target *url.URL, profile SessionProfile) error {
+	if target == nil {
+		return fmt.Errorf("missing navigation target")
+	}
+	targetURL := target.Scheme + "://" + target.Host
+	actions := []chromedp.Action{
+		chromedp.Navigate(targetURL),
+		chromedp.WaitReady("body", chromedp.ByQuery),
+		network.Enable(),
+		chromedp.ActionFunc(func(actionCtx context.Context) error {
+			for _, cookie := range profile.Cookies {
+				params := network.SetCookie(cookie.Name, cookie.Value).
+					WithURL(targetURL).
+					WithPath(cookie.Path).
+					WithSecure(cookie.Secure).
+					WithHTTPOnly(cookie.HTTPOnly)
+				if cookie.Domain != "" {
+					params = params.WithDomain(cookie.Domain)
+				}
+				if cookie.SameSite != "" {
+					params = params.WithSameSite(network.CookieSameSite(cookie.SameSite))
+				}
+				if cookie.ExpiresUnix > 0 {
+					expires := cdp.TimeSinceEpoch(time.Unix(cookie.ExpiresUnix, 0).UTC())
+					params = params.WithExpires(&expires)
+				}
+				if err := params.Do(actionCtx); err != nil {
+					return err
+				}
+			}
+			return nil
+		}),
+	}
+	return d.runOnTab(ctx, tab, actions...)
 }
 
 func (d *Driver) syncTab(ctx context.Context, tab *tabSession) error {

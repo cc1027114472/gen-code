@@ -2244,6 +2244,36 @@ function EmbeddedPreviewPage({
 }) {
   const [controlledInput, setControlledInput] = useState("browser demo text");
   const [controlledResult, setControlledResult] = useState("等待受控浏览器动作");
+  const readAuthenticatedCookie = () => {
+    if (typeof document === "undefined") {
+      return "";
+    }
+    const cookie = document.cookie
+      .split(";")
+      .map((item) => item.trim())
+      .find((item) => item.startsWith("gc_auth="));
+    if (!cookie) {
+      return "";
+    }
+    return decodeURIComponent(cookie.slice("gc_auth=".length));
+  };
+  const [authenticatedCookieValue, setAuthenticatedCookieValue] = useState(() => readAuthenticatedCookie());
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const syncCookie = () => setAuthenticatedCookieValue(readAuthenticatedCookie());
+    syncCookie();
+    const timer = window.setInterval(syncCookie, 500);
+    return () => window.clearInterval(timer);
+  }, []);
+  const authenticatedSessionActive = authenticatedCookieValue === "acceptance-session";
+  const authenticatedSessionLabel = authenticatedSessionActive
+    ? "session=acceptance-session"
+    : "session=missing";
+  const authenticatedResult = authenticatedSessionActive
+    ? "identity=authenticated-browser;session=acceptance-session;scope=controlled"
+    : "identity=authenticated-browser;session=missing;scope=controlled";
   const paneTitle =
     pane === "thread-one" ? "线程一预览" : pane === "thread-two" ? "线程二预览" : "本地预览";
 
@@ -2329,6 +2359,16 @@ function EmbeddedPreviewPage({
                     </button>
                   </div>
                   <p data-testid="controlled-browser-result">{controlledResult}</p>
+                </article>
+                <article className={`flow-item ${authenticatedSessionActive ? "flow-item--good" : "flow-item--warning"}`}>
+                  <div className="flow-item__header">
+                    <span className="mini-chip">authenticated-browser</span>
+                    <span className="flow-item__meta">cookie-gated fixture</span>
+                  </div>
+                  <h4 data-testid="authenticated-browser-heading">Authenticated browser acceptance panel</h4>
+                  <p>这个面板通过稳定 cookie 展示 authenticated session baseline，供 browser policy 与 canonical acceptance 验证。</p>
+                  <p data-testid="authenticated-browser-session">{authenticatedSessionLabel}</p>
+                  <p data-testid="authenticated-browser-result">{authenticatedResult}</p>
                 </article>
               </div>
             </section>

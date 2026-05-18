@@ -8,10 +8,12 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $env:GEN_CODE_UI_BASE_URL = if ($env:GEN_CODE_UI_BASE_URL) { $env:GEN_CODE_UI_BASE_URL } else { "http://127.0.0.1:5174/" }
 $env:GEN_CODE_API_BASE_URL = if ($env:GEN_CODE_API_BASE_URL) { $env:GEN_CODE_API_BASE_URL } else { "http://127.0.0.1:10008" }
 $env:GEN_CODE_ACCEPTANCE_MODE = "full"
+$env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE = if ($env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE) { $env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE } else { "required" }
+$env:GEN_CODE_BROWSER_PUBLIC_BASE_URL = if ($env:GEN_CODE_BROWSER_PUBLIC_BASE_URL) { $env:GEN_CODE_BROWSER_PUBLIC_BASE_URL } else { "https://example.com/" }
 $env:GOTOOLCHAIN = if ($env:GOTOOLCHAIN) { $env:GOTOOLCHAIN } else { "auto" }
 $env:PYTHONIOENCODING = if ($env:PYTHONIOENCODING) { $env:PYTHONIOENCODING } else { "utf-8" }
 $scriptPath = Join-Path $projectRoot "scripts\verify-desktop-live-refresh.py"
-$baselineLane = "canonical remote browser acceptance with desktop copy/runtime checks and browser navigation lane (5174 + 10008)"
+$baselineLane = "canonical remote browser acceptance with desktop copy/runtime checks, authenticated fixture lane, and public-web read-only lane (5174 + 10008)"
 
 Write-Host "Desktop live refresh and copy/runtime alignment check"
 Write-Host "  project root : $projectRoot"
@@ -20,7 +22,8 @@ Write-Host "  script       : $scriptPath"
 Write-Host "  UI base URL  : $env:GEN_CODE_UI_BASE_URL"
 Write-Host "  API base URL : $env:GEN_CODE_API_BASE_URL"
 Write-Host "  mode         : $env:GEN_CODE_ACCEPTANCE_MODE"
-Write-Host "  failures     : remote canonical live matrix + browser navigation lane + fallback evidence-only"
+Write-Host "  public web   : mode=$env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE target=$env:GEN_CODE_BROWSER_PUBLIC_BASE_URL"
+Write-Host "  failures     : remote canonical live matrix + browser navigation/authenticated/public-web lanes + fallback evidence-only"
 
 if (-not (Test-Path $scriptPath)) {
   Write-Error "Setup failure: verify-desktop-live-refresh.py not found at $scriptPath"
@@ -50,6 +53,7 @@ if (-not $goCommand) {
 
 $frontendRoot = Join-Path $projectRoot "desktop\frontend"
 $artifactRoot = Join-Path $projectRoot "tmp\desktop-smoke-artifacts"
+$browserPolicyPath = Join-Path $artifactRoot "browser-policy.json"
 $frontendStdout = Join-Path $projectRoot "desktop\frontend\vite-full.stdout.log"
 $frontendStderr = Join-Path $projectRoot "desktop\frontend\vite-full.stderr.log"
 $serverStdout = Join-Path $projectRoot "server-full.stdout.log"
@@ -60,6 +64,71 @@ if (-not (Test-Path $artifactRoot)) {
   New-Item -ItemType Directory -Path $artifactRoot | Out-Null
 }
 $env:GEN_CODE_ARTIFACT_DIR = $artifactRoot
+$publicBrowserMode = $env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE.Trim().ToLowerInvariant()
+$publicBrowserSkipModes = @("skip", "disabled", "off", "false", "0")
+$publicBrowserHost = ""
+if ($publicBrowserSkipModes -notcontains $publicBrowserMode) {
+  try {
+    $publicBrowserUri = [System.Uri]$env:GEN_CODE_BROWSER_PUBLIC_BASE_URL
+    if ($publicBrowserUri.Scheme -ne "https" -or [string]::IsNullOrWhiteSpace($publicBrowserUri.Host)) {
+      throw "public-web lane requires one explicit HTTPS target"
+    }
+    $publicBrowserHost = $publicBrowserUri.Host
+  } catch {
+    Write-Error "Setup failure: invalid GEN_CODE_BROWSER_PUBLIC_BASE_URL '$($env:GEN_CODE_BROWSER_PUBLIC_BASE_URL)'. $_"
+    exit 2
+  }
+}
+$existingAllowedHosts = @()
+if ($env:GENCODE_BROWSER_ALLOWED_HOSTS) {
+  $existingAllowedHosts += ($env:GENCODE_BROWSER_ALLOWED_HOSTS -split ",")
+}
+if ($env:GEN_CODE_BROWSER_ALLOWED_HOSTS) {
+  $existingAllowedHosts += ($env:GEN_CODE_BROWSER_ALLOWED_HOSTS -split ",")
+}
+if (-not [string]::IsNullOrWhiteSpace($publicBrowserHost)) {
+  $existingAllowedHosts += $publicBrowserHost
+}
+$normalizedAllowedHosts = @(
+  $existingAllowedHosts |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+    ForEach-Object { $_.Trim() } |
+    Select-Object -Unique
+)
+$allowedHostsValue = ($normalizedAllowedHosts -join ",")
+$env:GENCODE_BROWSER_ALLOWED_HOSTS = $allowedHostsValue
+$env:GEN_CODE_BROWSER_ALLOWED_HOSTS = $allowedHostsValue
+$browserPolicy = @{
+  allowedHosts = $normalizedAllowedHosts
+  hosts = @{
+    "127.0.0.1" = @{
+      sessionRequired = $true
+      cookies = @(
+        @{
+          name = "gc_auth"
+          value = "acceptance-session"
+          path = "/"
+          sameSite = "Lax"
+        }
+      )
+    }
+    "localhost" = @{
+      sessionRequired = $true
+      cookies = @(
+        @{
+          name = "gc_auth"
+          value = "acceptance-session"
+          path = "/"
+          sameSite = "Lax"
+        }
+      )
+    }
+  }
+}
+$browserPolicy | ConvertTo-Json -Depth 8 | Set-Content -Path $browserPolicyPath -Encoding UTF8
+$env:GENCODE_BROWSER_POLICY_FILE = $browserPolicyPath
+$env:GEN_CODE_BROWSER_POLICY_FILE = $browserPolicyPath
+Write-Host "  browser cfg  : policy=$browserPolicyPath allowedHosts=$allowedHostsValue"
 
 function Wait-HttpOk {
   param(
@@ -157,6 +226,27 @@ function Get-ListeningProcessInfo {
   }
 }
 
+function Wait-PortReleased {
+  param(
+    [Parameter(Mandatory = $true)][int]$Port,
+    [int]$TimeoutSeconds = 15
+  )
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    try {
+      $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop | Select-Object -First 1
+      if ($null -eq $listener) {
+        return $true
+      }
+    } catch {
+      return $true
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  return $false
+}
+
 function Prepare-ProjectProcessOnPort {
   param(
     [Parameter(Mandatory = $true)][int]$Port,
@@ -206,7 +296,9 @@ function Prepare-ProjectProcessOnPort {
   try {
     Write-Host "  bootstrap    : stopping existing $Label process on port $Port (pid=$($processInfo.ProcessId))"
     Stop-Process -Id $processInfo.ProcessId -Force
-    Start-Sleep -Milliseconds 800
+    if (-not (Wait-PortReleased -Port $Port -TimeoutSeconds 15)) {
+      throw "port $Port did not release after stopping pid=$($processInfo.ProcessId)"
+    }
     return @{
       Found = $true
       Reuse = $false
@@ -337,9 +429,9 @@ try {
     foreach ($proc in @($frontendProcess, $serverProcess)) {
       if ($null -ne $proc) {
         try {
-          if (-not $proc.HasExited) {
-            Stop-Process -Id $proc.Id -Force
-          }
+          $targetId = $proc.Id
+          Stop-Process -Id $targetId -Force -ErrorAction SilentlyContinue
+          Wait-Process -Id $targetId -Timeout 15 -ErrorAction SilentlyContinue
         } catch {
         }
       }

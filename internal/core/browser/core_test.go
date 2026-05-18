@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,20 @@ func TestNormalizeURLAcceptsControlledLocalURL(t *testing.T) {
 	value, err := normalizeURL("127.0.0.1:40123")
 	require.NoError(t, err)
 	require.Equal(t, "http://127.0.0.1:40123", value)
+}
+
+func TestNormalizeURLAcceptsAllowlistedHTTPSURL(t *testing.T) {
+	policy := newPolicyFromSources("example.com", "")
+	value, err := normalizeURLWithPolicy("https://example.com/products?id=42", policy)
+	require.NoError(t, err)
+	require.Equal(t, "https://example.com/products?id=42", value)
+}
+
+func TestAllowedURLRejectsHTTPForNonLocalHost(t *testing.T) {
+	policy := newPolicyFromSources("example.com", "")
+	parsed, err := url.Parse("http://example.com")
+	require.NoError(t, err)
+	require.False(t, allowedURLWithPolicy(parsed, policy))
 }
 
 func TestDriverStateStartsEmpty(t *testing.T) {

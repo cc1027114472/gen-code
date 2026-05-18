@@ -865,7 +865,11 @@ func (r *Runner) execute(ctx context.Context, threadID string, task session.Task
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("browser extract completed: %s", browserSummaryTabID(input.TabID, result.Snapshot.Tabs)), nil
+		snippet := compactText(strings.TrimSpace(result.Text), 120)
+		if snippet == "" {
+			return fmt.Sprintf("browser extract completed: %s", browserSummaryTabID(input.TabID, result.Snapshot.Tabs)), nil
+		}
+		return fmt.Sprintf("browser extract completed: %s | text=%s", browserSummaryTabID(input.TabID, result.Snapshot.Tabs), snippet), nil
 	case KindBrowserScreenshot:
 		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
 			return "", err
@@ -1026,6 +1030,17 @@ func browserSummaryTabID(preferred string, tabs []browser.Tab) string {
 		return tabs[0].ID
 	}
 	return "unknown-tab"
+}
+
+func compactText(value string, max int) string {
+	trimmed := strings.TrimSpace(value)
+	if max <= 0 || len(trimmed) <= max {
+		return trimmed
+	}
+	if max <= 3 {
+		return trimmed[:max]
+	}
+	return trimmed[:max-3] + "..."
 }
 
 func sanitizeArtifactID(value string) string {

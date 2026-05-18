@@ -488,7 +488,7 @@ func TestRunnerExecutesBrowserTasks(t *testing.T) {
 		{title: "Activate", kind: KindBrowserActivateTab, input: `{"tabId":"browser-tab-1"}`, summary: "browser tab activated: browser-tab-1"},
 		{title: "Click", kind: KindBrowserClick, input: `{"tabId":"browser-tab-1","selector":"[data-testid=\"apply\"]"}`, summary: "browser click executed: browser-tab-1"},
 		{title: "Type", kind: KindBrowserType, input: `{"tabId":"browser-tab-1","selector":"[data-testid=\"name\"]","text":"browser"}`, summary: "browser type executed: browser-tab-1"},
-		{title: "Extract", kind: KindBrowserExtract, input: `{"tabId":"browser-tab-1","selector":"[data-testid=\"result\"]"}`, summary: "browser extract completed: browser-tab-1"},
+		{title: "Extract", kind: KindBrowserExtract, input: `{"tabId":"browser-tab-1","selector":"[data-testid=\"result\"]"}`, summary: "browser extract completed: browser-tab-1 | text=browser"},
 		{title: "Close", kind: KindBrowserCloseTab, input: `{"tabId":"browser-tab-1"}`, summary: "browser tab closed: browser-tab-1"},
 	} {
 		task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
