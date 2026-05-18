@@ -25,6 +25,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"codex-bug",
 		"codex-issue-digest",
 		"codex-pr-body",
+		"frontend-design",
 		"remote-tests",
 		"test-tui",
 	},

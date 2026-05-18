@@ -203,8 +203,9 @@ Start with the safest subset:
 
 ```text
 frontend-design
-golang-backend-development
 ```
+
+Do not promote `golang-backend-development` in the same batch unless its copied skill package also passes the full 1:1 Chinese localization gate; its staged `SKILL.md` is usable, but the broader copied package still needs separate localization follow-up if runtime-visible supporting docs are included.
 
 Copy these from `imports/codex` into `catalog/codex` using project-local copies only.
 
