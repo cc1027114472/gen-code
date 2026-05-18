@@ -1,0 +1,4 @@
+interface:
+  display_name: "KB 审计汇报总览"
+  short_description: "整理总览、完成定义与汇报口径文档"
+  default_prompt: "Use $kb-audit-report-pack to update overview and reporting docs for the kb-audit blueprint."
