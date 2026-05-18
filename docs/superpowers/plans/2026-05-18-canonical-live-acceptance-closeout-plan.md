@@ -9,7 +9,7 @@
 - canonical full lane 已在本地通过，覆盖 direct tools、MCP verified lanes、`agent.run`、approval、write execution、rollback，以及 agent failure matrix。
 - `Runtime Entry Release Checklist` 已补齐“当前代码优先”的 wrapper 行为与证据记录要求。
 
-当前仍未完成的唯一 P0 项是：**真实 GitHub 远端 smoke 首跑证据**。原因不是代码阻塞，而是当前环境没有 GitHub 登录，也没有 GitHub 远端。
+当前 P0 已完成的关键补充是：**真实 GitHub 远端 smoke 首跑证据已经落地**。本轮先拿到了第一次真实远端失败证据，再完成了针对 CI-only 编码问题的最小修复，并在第二次远端 run 上确认 smoke gate 成功。
 
 ## 已完成收口
 
@@ -93,37 +93,56 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-desktop-live-refresh-chec
 - `agent_loop.go` 将 `result` 视作 `respond` 的别名
 - 对应单测已补，避免同类 alias 再打断 canonical full lane
 
-## 远端首跑当前阻塞
+## 真实远端首跑记录
 
-当前机器上的事实：
+### 第一次真实远端运行
 
-- `gh` 已安装
-- `gh auth status` 显示 **未登录**
-- 当前仓库 `git remote -v` 只有：
-  - `gitee https://gitee.com/cc1027114472/gen-code.git`
-- 当前仓库没有 GitHub 远端，因此不能伪装成“已完成真实 GitHub smoke 首跑”
-
-因此本阶段对远端首跑的真实结论是：
-
-- runbook 已具备
-- workflow 已具备
-- 本地对等入口已通过
-- 但 **GitHub 登录和 GitHub 远端绑定尚未满足**，所以还不能在本机完成真实首跑证据记录
-
-## 首跑时需要补录的固定信息
-
-待环境满足后，首次真实远端 smoke 需要在验收报告中补以下记录：
-
-- run 日期
-- branch / ref
+- 日期：`2026-05-18`
+- branch / ref：`master`
 - workflow：`desktop-smoke.yml`
-- run id
-- 结论：success / failed
-- `desktop-smoke-summary` artifact 是否可下载
-- 若失败：
-  - `desktop-smoke-failure.json` 的 `category`
-  - 首个有效定位证据
-  - 是否属于 CI-only 问题
+- run id：`26011388873`
+- URL：<https://github.com/cc1027114472/gen-code/actions/runs/26011388873>
+- 结论：`failed`
+- artifact：`desktop-smoke-summary` 已成功下载并留证到 `tmp/github-smoke-run-26011388873`
+
+首个有效失败证据：
+
+- 失败位置：`Run desktop smoke acceptance`
+- 失败分类：`CI-only Windows encoding issue`
+- 首个定位证据：`UnicodeEncodeError: 'charmap' codec can't encode characters...`
+- 直接触发点：`scripts/verify-desktop-live-refresh.py` 中的 `print(json.dumps(result, ensure_ascii=False))`
+
+结论：
+
+- 这不是产品逻辑或 runtime lane 问题，而是 GitHub Actions Windows PowerShell/Python 控制台默认编码导致的输出异常。
+- 针对该问题，已在两个 acceptance wrapper 中固定补上 UTF-8 控制台与 `PYTHONIOENCODING=utf-8` 环境约束：
+  - `scripts/run-desktop-smoke-with-bootstrap.ps1`
+  - `scripts/run-desktop-live-refresh-check.ps1`
+
+### 第二次真实远端运行（修复后复跑）
+
+- 日期：`2026-05-18`
+- branch / ref：`master`
+- workflow：`desktop-smoke.yml`
+- run id：`26011644351`
+- URL：<https://github.com/cc1027114472/gen-code/actions/runs/26011644351>
+- 结论：`success`
+- artifact：`desktop-smoke-summary` 已成功下载并留证到 `tmp/github-smoke-run-26011644351`
+
+本次成功 run 的关键信号：
+
+- `runtimeSource=remote-app-server`
+- `runtimeTrust=canonical`
+- `canonicalRuntimeUrl=http://127.0.0.1:10008`
+- `refreshMode.label=SSE 已连接`
+- `copyAndRuntimeConsistency.runtimeLaneLabel=remote-app-server`
+- `copyAndRuntimeConsistency.runtimeTrustLabel=canonical`
+
+因此当前可以确认：
+
+- `.github/workflows/desktop-smoke.yml` 已完成一次真实 GitHub 远端通过
+- 默认 canonical smoke gate 仍固定为 `UI 5174 + API 10008`
+- 首次失败证据与修复后成功证据都已留档，可用于后续发布与排障复盘
 
 ## 当前边界
 
