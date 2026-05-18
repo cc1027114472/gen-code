@@ -1,25 +1,25 @@
-# React Performance Optimization Guide
+# React 性能优化指南
 
-Comprehensive guide to optimizing React + Vite applications for maximum performance.
+优化 React + Vite 应用程序以获得最佳性能的综合指南。
 
-## Performance Metrics to Track
+## 要跟踪的性能指标
 
-### Core Web Vitals
-- **LCP (Largest Contentful Paint)**: < 2.5s (Good)
-- **FID (First Input Delay)**: < 100ms (Good)
-- **CLS (Cumulative Layout Shift)**: < 0.1 (Good)
-- **FCP (First Contentful Paint)**: < 1.8s (Good)
-- **TTI (Time to Interactive)**: < 3.8s (Good)
+### 核心网络生命力
+- **LCP（最大内容油漆）**：< 2.5 秒（良好）
+- **FID（首次输入延迟）**：< 100ms（良好）
+- **CLS（累积布局偏移）**：< 0.1（良好）
+- **FCP（首次内容绘制）**：< 1.8s（良好）
+- **TTI（交互时间）**：< 3.8 秒（良好）
 
-### Bundle Size Goals
-- **Initial JS bundle**: < 200KB (gzipped)
-- **Total JS**: < 500KB (gzipped)
-- **CSS**: < 50KB (gzipped)
-- **Images**: Use WebP/AVIF, lazy load
+### 捆绑包大小目标
+- **初始 JS 包**：< 200KB（gzip 压缩）
+- **总 JS**：< 500KB（gzip 压缩）
+- **CSS**：< 50KB（压缩）
+- **图像**：使用WebP/AVIF，延迟加载
 
-## React Rendering Optimization
+## React 渲染优化
 
-### 1. React.memo() - Prevent Unnecessary Re-renders
+### 1. React.memo() - 防止不必要的重新渲染
 
 ```typescript
 // ❌ Bad: Re-renders on every parent render
@@ -44,14 +44,14 @@ export const ExpensiveComponent = React.memo(
 );
 ```
 
-**When to use React.memo():**
-- ✅ Pure components that render often
-- ✅ Components with expensive rendering
-- ✅ Components that receive same props frequently
-- ❌ Simple components (overhead > benefit)
-- ❌ Components that rarely re-render
+**何时使用 React.memo():**
+- ✅ 经常渲染的纯组件
+- ✅ 渲染成本高昂的组件
+- ✅ 经常接收相同 props 的组件
+- ❌ 简单的组件（开销 > 收益）
+- ❌ 很少重新渲染的组件
 
-### 2. useMemo() - Memoize Expensive Calculations
+### 2. useMemo() - 记忆昂贵的计算
 
 ```typescript
 // ❌ Bad: Recalculates on every render
@@ -73,13 +73,13 @@ function ProductList({ products }) {
 }
 ```
 
-**When to use useMemo():**
-- ✅ Expensive calculations (sorting, filtering large arrays)
-- ✅ Creating objects/arrays passed as props to memoized components
-- ✅ Complex transformations
-- ❌ Simple calculations (overhead > benefit)
+**何时使用 useMemo():**
+- ✅ 昂贵的计算（排序、过滤大数组）
+- ✅ 创建作为道具传递给记忆组件的对象/数组
+- ✅ 复杂的转变
+- ❌简单的计算（开销>收益）
 
-### 3. useCallback() - Memoize Functions
+### 3. useCallback() - 记忆函数
 
 ```typescript
 // ❌ Bad: Creates new function on every render (breaks memo)
@@ -112,13 +112,13 @@ function Parent() {
 }
 ```
 
-**When to use useCallback():**
-- ✅ Passing callbacks to memoized child components
-- ✅ Callbacks in dependency arrays of other hooks
-- ✅ Event handlers passed to many children
-- ❌ Simple event handlers not affecting memoization
+**何时使用 useCallback():**
+- ✅ 将回调传递给记忆的子组件
+- ✅ 其他钩子的依赖数组中的回调
+- ✅ 事件处理程序传递给许多孩子
+- ❌ 简单的事件处理程序不影响记忆
 
-### 4. Code Splitting with React.lazy()
+### 4. 使用 React.lazy() 进行代码分割
 
 ```typescript
 // ❌ Bad: Loads everything upfront
@@ -145,7 +145,7 @@ function App() {
 }
 ```
 
-**Route-based code splitting pattern:**
+**基于路由的代码分割模式：**
 ```typescript
 // pages/DashboardPage/DashboardPage.lazy.tsx
 import { lazy } from 'react';
@@ -157,7 +157,7 @@ export const DashboardPageLazy = lazy(() =>
 );
 ```
 
-### 5. Virtualization for Long Lists
+### 5. 长列表的虚拟化
 
 ```typescript
 // ❌ Bad: Renders 10,000 items (performance killer)
@@ -192,11 +192,11 @@ function ProductList({ products }) {
 }
 ```
 
-**Libraries:**
-- **react-window**: Lighter, most use cases
-- **react-virtualized**: More features, heavier
+**图书馆：**
+- **react-window**：更轻，大多数用例
+- **react-virtualized**：更多功能，更重
 
-### 6. Debouncing & Throttling
+### 6. 去抖动和节流
 
 ```typescript
 // Custom debounce hook
@@ -235,7 +235,7 @@ function SearchComponent() {
 }
 ```
 
-### 7. Avoid Inline Objects & Functions
+### 7.避免内联对象和函数
 
 ```typescript
 // ❌ Bad: Creates new object/function every render
@@ -263,9 +263,9 @@ function Component() {
 }
 ```
 
-## Vite Build Optimization
+## Vite构建优化
 
-### vite.config.ts - Production Optimization
+### vite.config.ts - 生产优化
 
 ```typescript
 import { defineConfig } from 'vite';
@@ -341,7 +341,7 @@ export default defineConfig({
 });
 ```
 
-### Manual Chunk Splitting Strategy
+### 手动分块策略
 
 ```typescript
 // Separate chunks by route
@@ -367,9 +367,9 @@ manualChunks: (id) => {
 }
 ```
 
-## Image Optimization
+## 图像优化
 
-### 1. Modern Formats (WebP/AVIF)
+### 1. 现代格式 (WebP/AVIF)
 
 ```typescript
 // Use picture element for format fallback
@@ -380,7 +380,7 @@ manualChunks: (id) => {
 </picture>
 ```
 
-### 2. Lazy Loading
+### 2. 延迟加载
 
 ```typescript
 // Native lazy loading
@@ -417,7 +417,7 @@ function LazyImage({ src, alt }: { src: string; alt: string }) {
 }
 ```
 
-### 3. Responsive Images
+### 3. 响应式图像
 
 ```typescript
 <img
@@ -437,9 +437,9 @@ function LazyImage({ src, alt }: { src: string; alt: string }) {
 />
 ```
 
-## Network Performance
+## 网络性能
 
-### 1. API Request Optimization
+### 1. API请求优化
 
 ```typescript
 // ❌ Bad: Multiple sequential requests
@@ -470,7 +470,7 @@ function useUserData(userId: string) {
 }
 ```
 
-### 2. Request Deduplication
+### 2. 请求重复数据删除
 
 ```typescript
 // React Query automatically deduplicates identical requests
@@ -485,7 +485,7 @@ function Component2() {
 }
 ```
 
-### 3. Prefetching
+### 3. 预取
 
 ```typescript
 import { queryClient } from '@/lib/queryClient';
@@ -513,9 +513,9 @@ function ProductList() {
 }
 ```
 
-## CSS Performance
+## CSS 性能
 
-### 1. CSS Modules (Recommended)
+### 1.CSS模块（推荐）
 
 ```typescript
 // Button.module.css
@@ -540,13 +540,13 @@ export const Button = ({ variant = 'primary', children }) => (
 );
 ```
 
-**Benefits:**
-- ✅ Scoped styles (no conflicts)
-- ✅ Tree-shakeable
-- ✅ Better for code splitting
-- ✅ Smaller bundles
+**好处：**
+- ✅ 范围样式（无冲突）
+- ✅ 可摇树
+- ✅ 更好的代码分割
+- ✅ 较小的捆绑包
 
-### 2. Avoid Runtime CSS-in-JS
+### 2. 避免运行时 CSS-in-JS
 
 ```typescript
 // ❌ Slow: Runtime CSS-in-JS (styled-components, emotion)
@@ -565,7 +565,7 @@ export const Button = ({ primary, children }) => (
 );
 ```
 
-### 3. Critical CSS Inlining
+### 3. 关键的 CSS 内联
 
 ```typescript
 // vite.config.ts - Inline critical CSS
@@ -579,9 +579,9 @@ export default defineConfig({
 });
 ```
 
-## State Management Performance
+## 状态管理绩效
 
-### Zustand with Selectors (Prevent Re-renders)
+### Zustand 与选择器（防止重新渲染）
 
 ```typescript
 // ❌ Bad: Component re-renders on ANY store change
@@ -606,7 +606,7 @@ function Component() {
 }
 ```
 
-### Redux with Reselect (Memoized Selectors)
+### 带重新选择的 Redux（记忆选择器）
 
 ```typescript
 import { createSelector } from 'reselect';
@@ -627,9 +627,9 @@ const selectFilteredProducts = createSelector(
 const filteredProducts = useSelector(selectFilteredProducts);
 ```
 
-## Performance Monitoring
+## 性能监控
 
-### Web Vitals Tracking
+### 网络生命体征追踪
 
 ```typescript
 // src/lib/webVitals.ts
@@ -654,7 +654,7 @@ import { reportWebVitals } from './lib/webVitals';
 reportWebVitals();
 ```
 
-### React DevTools Profiler
+### React DevTools 分析器
 
 ```typescript
 import { Profiler } from 'react';
@@ -676,29 +676,29 @@ function onRenderCallback(
 </Profiler>
 ```
 
-## Performance Checklist
+## 绩效检查表
 
-### Development
-- [ ] Use React DevTools Profiler to identify slow components
-- [ ] Check for unnecessary re-renders
-- [ ] Verify memoization is working
-- [ ] Monitor bundle size during development
+### 发展
+- [ ] 使用 React DevTools Profiler 识别慢速组件
+- [ ] 检查是否有不必要的重新渲染
+- [ ] 验证记忆功能是否正常工作
+- [ ] 在开发过程中监控包大小
 
-### Before Production
-- [ ] Run bundle analyzer (`npm run build` with visualizer)
-- [ ] Check bundle sizes < targets
-- [ ] Verify code splitting is working
-- [ ] Test on slow 3G connection
-- [ ] Test on low-end devices
-- [ ] Run Lighthouse audit (score > 90)
-- [ ] Measure Core Web Vitals
-- [ ] Enable compression (gzip/brotli)
-- [ ] Configure CDN for assets
-- [ ] Remove console.log statements
-- [ ] Enable minification
+### 生产前
+- [ ] 运行捆绑分析器（`npm run build`带可视化仪）
+- [ ] 检查包大小 < 目标
+- [ ] 验证代码分割是否有效
+- [ ] 慢速 3G 连接测试
+- [ ] 在低端设备上测试
+- [ ] 运行 Lighthouse 审核（分数 > 90）
+- [ ] 衡量核心网络生命力
+- [ ] 启用压缩 (gzip/brotli)
+- [ ] 为资产配置 CDN
+- [ ] 删除console.log语句
+- [ ] 启用缩小
 
-### Production Monitoring
-- [ ] Track Web Vitals in production
-- [ ] Monitor bundle sizes on each deployment
-- [ ] Set up performance budgets
-- [ ] Create alerts for regressions
+### 生产监控
+- [ ] 跟踪生产中的 Web Vitals
+- [ ] 监控每个部署的包大小
+- [ ] 设置绩效预算
+- [ ] 创建回归警报

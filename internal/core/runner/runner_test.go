@@ -1612,7 +1612,7 @@ func TestBuildAgentPromptGuidesSecondBatchReadTools(t *testing.T) {
 		Plan: AgentExecutionPlan{
 			Summary:          "Filter matching files first, then read the selected files, then answer.",
 			Mode:             "filter_then_read",
-			RequiredSequence: []string{"list_files_filtered", "read_files_batch|read_file", "respond"},
+			RequiredSequence: []string{"list_files_filtered", "read_files_batch", "respond"},
 		},
 		CurrentStepTitle: "Filter matching files",
 	})
@@ -1624,7 +1624,7 @@ func TestBuildAgentPromptGuidesSecondBatchReadTools(t *testing.T) {
 	require.Contains(t, prompt, "search_text_detailed when you need file and line matches")
 	require.Contains(t, prompt, "Plan mode: filter_then_read")
 	require.Contains(t, prompt, "Plan summary: Filter matching files first, then read the selected files, then answer.")
-	require.Contains(t, prompt, "Required action sequence: list_files_filtered -> read_files_batch|read_file -> respond")
+	require.Contains(t, prompt, "Required action sequence: list_files_filtered -> read_files_batch -> respond")
 	require.Contains(t, prompt, "Current required step: Filter matching files")
 	require.Contains(t, prompt, "Mode guidance: If the goal asks to filter by pattern first")
 	require.Contains(t, prompt, "first call list_files_filtered, then call read_files_batch for the selected files, then respond")
@@ -1760,7 +1760,7 @@ func TestRunnerCorrectsAgentRunWriteGoalToPatchThenRespond(t *testing.T) {
 func TestDeriveAgentExecutionPlanForFilterThenReadGoal(t *testing.T) {
 	plan := deriveAgentExecutionPlan("先筛出 internal/core/runner 下的 *.go，再读取筛出的文件并回答")
 	require.Equal(t, "Filter matching files first, then read the selected files, then answer.", plan.Summary)
-	require.Equal(t, []string{"list_files_filtered", "read_files_batch|read_file", "respond"}, plan.RequiredSequence)
+	require.Equal(t, []string{"list_files_filtered", "read_files_batch", "respond"}, plan.RequiredSequence)
 	require.Len(t, plan.Steps, 3)
 	require.Equal(t, "Filter matching files", plan.Steps[0].Title)
 }
@@ -1791,7 +1791,7 @@ func TestDeriveAgentExecutionPlanForStatThenReadGoal(t *testing.T) {
 func TestValidateAgentActionSequenceRejectsSkippedDiscoveryStep(t *testing.T) {
 	state := AgentRunState{
 		Plan: AgentExecutionPlan{
-			RequiredSequence: []string{"list_files_filtered", "read_files_batch|read_file", "respond"},
+			RequiredSequence: []string{"list_files_filtered", "read_files_batch", "respond"},
 		},
 	}
 	err := validateAgentActionSequence(state, AgentAction{Type: "read_files_batch"})
@@ -1802,11 +1802,11 @@ func TestValidateAgentActionSequenceRejectsWrongFollowupAction(t *testing.T) {
 	state := AgentRunState{
 		CompletedActions: []string{"list_files_filtered"},
 		Plan: AgentExecutionPlan{
-			RequiredSequence: []string{"list_files_filtered", "read_files_batch|read_file", "respond"},
+			RequiredSequence: []string{"list_files_filtered", "read_files_batch", "respond"},
 		},
 	}
 	err := validateAgentActionSequence(state, AgentAction{Type: "search_text"})
-	require.EqualError(t, err, "agent action violates required sequence: expected read_files_batch|read_file, got search_text")
+	require.EqualError(t, err, "agent action violates required sequence: expected read_files_batch, got search_text")
 }
 
 func TestRunnerFailsAgentRunWhenRequiredSequenceIsViolated(t *testing.T) {

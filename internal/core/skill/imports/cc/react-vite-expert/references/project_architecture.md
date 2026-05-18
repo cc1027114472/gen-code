@@ -1,10 +1,10 @@
-# React + Vite Project Architecture
+# React + Vite 项目架构
 
-Comprehensive guide to structuring scalable, maintainable React applications with Vite.
+使用 Vite 构建可扩展、可维护的 React 应用程序的综合指南。
 
-## Optimal Folder Structure
+## 最佳文件夹结构
 
-### Feature-Based Architecture (Recommended for Large Apps)
+### 基于功能的架构（推荐用于大型应用程序）
 
 ```
 src/
@@ -149,7 +149,7 @@ src/
 └── router.tsx                    # Main router (alternative to app/)
 ```
 
-### Simpler Architecture (For Small-Medium Apps)
+### 更简单的架构（适用于中小型应用程序）
 
 ```
 src/
@@ -175,9 +175,9 @@ src/
 └── App.tsx
 ```
 
-## Naming Conventions
+## 命名约定
 
-### Files & Folders
+### 文件和文件夹
 ```
 Component files:       PascalCase     → Button.tsx, UserProfile.tsx
 Component folders:     PascalCase     → Button/, UserProfile/
@@ -189,7 +189,7 @@ Test files:          match source   → Button.test.tsx, useAuth.test.ts
 Story files:         match source   → Button.stories.tsx
 ```
 
-### Code
+### 代码
 ```typescript
 // Components: PascalCase
 export const Button = () => { }
@@ -218,10 +218,10 @@ export enum UserRole {
 }
 ```
 
-## Component Organization Patterns
+## 组件组织模式
 
-### Pattern 1: Colocation (Recommended)
-Each component has its own folder with all related files:
+### 模式一：主机托管（推荐）
+每个组件都有自己的文件夹，其中包含所有相关文件：
 
 ```
 Button/
@@ -233,13 +233,13 @@ Button/
 └── index.ts                # Public API (clean imports)
 ```
 
-**Benefits:**
-- Easy to find related files
-- Easy to move/delete features
-- Clear boundaries
+**好处：**
+- 方便查找相关文件
+- 易于移动/删除功能
+- 清晰的界限
 
-### Pattern 2: Atomic Design
-Organize components by complexity:
+### 模式 2：原子设计
+按复杂性组织组件：
 
 ```
 components/
@@ -250,8 +250,8 @@ components/
 └── pages/          # Complete pages (HomePage, DashboardPage)
 ```
 
-### Pattern 3: Domain-Driven Design
-Organize by business domains:
+### 模式 3：领域驱动设计
+按业务领域整理：
 
 ```
 src/
@@ -265,10 +265,10 @@ src/
 │   └── order/
 ```
 
-## State Management Strategies
+## 状态管理策略
 
-### Local State (useState)
-For component-specific state that doesn't need to be shared.
+### 本地状态（useState）
+对于不需要共享的特定于组件的状态。
 
 ```typescript
 // ✅ Good use cases
@@ -277,8 +277,8 @@ const [inputValue, setInputValue] = useState('');
 const [selectedTab, setSelectedTab] = useState(0);
 ```
 
-### Lifted State (Props)
-For sharing state between sibling components.
+### 提升状态（道具）
+用于在兄弟组件之间共享状态。
 
 ```typescript
 // Parent manages state, children receive via props
@@ -294,8 +294,8 @@ function Parent() {
 }
 ```
 
-### Context API
-For theme, auth, localization - low-frequency updates.
+### 上下文API
+对于主题、授权、本地化 - 低频更新。
 
 ```typescript
 // ✅ Good use cases
@@ -306,8 +306,8 @@ const I18nContext = createContext<I18nState>('en');
 // ❌ Avoid for high-frequency updates (causes re-renders)
 ```
 
-### Zustand (Recommended for most apps)
-Lightweight, simple API, great performance.
+### Zustand（推荐用于大多数应用程序）
+轻量级、简单的 API、出色的性能。
 
 ```typescript
 // store/userStore.ts
@@ -330,8 +330,8 @@ const user = useUserStore((state) => state.user);
 const login = useUserStore((state) => state.login);
 ```
 
-### Redux Toolkit
-For complex apps with lots of async logic and middleware needs.
+### Redux 工具包
+对于具有大量异步逻辑和中间件需求的复杂应用程序。
 
 ```typescript
 // store/slices/userSlice.ts
@@ -359,8 +359,8 @@ const userSlice = createSlice({
 });
 ```
 
-### TanStack Query (React Query)
-For server state (API data, caching, synchronization).
+### TanStack 查询（反应查询）
+用于服务器状态（API 数据、缓存、同步）。
 
 ```typescript
 // hooks/useUser.ts
@@ -378,10 +378,10 @@ export const useUser = (userId: string) => {
 const { data: user, isLoading, error } = useUser('123');
 ```
 
-## Import Strategies
+## 进口策略
 
-### Absolute Imports (Recommended)
-Configure path aliases in `vite.config.ts` and `tsconfig.json`:
+### 绝对导入（推荐）
+配置路径别名`vite.config.ts`和`tsconfig.json`:
 
 ```typescript
 // tsconfig.json
@@ -415,8 +415,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { User } from '@/types/user.types';
 ```
 
-### Barrel Exports (index.ts)
-Create clean public APIs for folders:
+### 桶出口 (index.ts)
+为文件夹创建干净的公共 API：
 
 ```typescript
 // components/ui/index.ts
@@ -431,7 +431,7 @@ import { Button, Input, Modal } from '@/components/ui';
 // Only export what's actually public API
 ```
 
-### Named Exports (Recommended)
+### 指定导出（推荐）
 ```typescript
 // ✅ Good: Named exports (tree-shakeable)
 export const Button = () => { };
@@ -444,7 +444,7 @@ export default Button;
 import Button from './components/Button';
 ```
 
-## File Size Guidelines
+## 文件大小指南
 
 ```
 Component file:       < 250 lines (split if larger)
@@ -460,10 +460,10 @@ If exceeding limits, consider:
 - Creating sub-components
 ```
 
-## Code Organization Best Practices
+## 代码组织最佳实践
 
-### 1. Single Responsibility Principle
-Each component/hook/function should do ONE thing well.
+### 1. 单一职责原则
+每个组件/钩子/函数应该做好一件事。
 
 ```typescript
 // ❌ Bad: Component doing too much
@@ -486,8 +486,8 @@ function UserDashboard() {
 }
 ```
 
-### 2. Composition Over Inheritance
-Use composition to build complex components.
+### 2. 组合优于继承
+使用组合来构建复杂的组件。
 
 ```typescript
 // ✅ Composition pattern
@@ -501,8 +501,8 @@ Use composition to build complex components.
 </Card>
 ```
 
-### 3. Container/Presentational Pattern
-Separate logic from presentation.
+### 3. 容器/展示模式
+将逻辑与表示分开。
 
 ```typescript
 // Presentational (dumb component)
@@ -529,8 +529,8 @@ export const UserListContainer = () => {
 };
 ```
 
-### 4. Custom Hooks for Logic Reuse
-Extract reusable logic into custom hooks.
+### 4. 用于逻辑重用的自定义钩子
+将可重用逻辑提取到自定义挂钩中。
 
 ```typescript
 // hooks/useUser.ts
@@ -549,25 +549,25 @@ export const useUser = (userId: string) => {
 const { user, loading } = useUser('123');
 ```
 
-## Decision Matrix
+## 决策矩阵
 
-### When to Create a New Feature Module?
-- ✅ Has 3+ components
-- ✅ Has its own state management
-- ✅ Has dedicated API endpoints
-- ✅ Represents a distinct business capability
+### 何时创建新功能模块？
+- ✅ 有 3 个以上组件
+- ✅ 有自己的状态管理
+- ✅ 拥有专用的 API 端点
+- ✅ 代表独特的业务能力
 
-### When to Use Context vs. Props?
-- **Props**: Default choice, explicit, type-safe
-- **Context**: Avoiding prop drilling (4+ levels), theme, auth, i18n
+### 何时使用上下文与道具？
+- **Props**：默认选择，显式，类型安全
+- **上下文**：避免道具钻探（4+级别）、主题、auth、i18n
 
-### When to Use Redux vs. Zustand?
-- **Zustand**: Most apps, simpler API, less boilerplate
-- **Redux**: Complex apps, need middleware, dev tools, time-travel debugging
+### 何时使用 Redux 与 Zustand？
+- **Zustand**：大多数应用程序，更简单的 API，更少的样板文件
+- **Redux**：复杂的应用程序，需要中间件、开发工具、时间旅行调试
 
-### When to Split a Component?
-- 🚩 File > 250 lines
-- 🚩 Multiple responsibilities
-- 🚩 Reusable parts
-- 🚩 Hard to test
-- 🚩 Poor performance (needs memo)
+### 何时拆分组件？
+- 🚩 文件 > 250 行
+- 🚩 多重责任
+- 🚩 可重复使用的部件
+- 🚩 难以测试
+- 🚩 表现不佳（需要备注）

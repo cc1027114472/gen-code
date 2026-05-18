@@ -1,12 +1,12 @@
-# React Best Practices & Patterns
+# React 最佳实践和模式
 
-Modern React development patterns, conventions, and anti-patterns to avoid.
+现代 React 开发模式、约定和要避免的反模式。
 
-## Component Patterns
+## 组件模式
 
-### 1. Compound Components Pattern
+### 1. 复合组件模式
 
-Allow components to work together while maintaining encapsulation.
+允许组件一起工作，同时保持封装。
 
 ```typescript
 // Tabs.tsx - Parent component
@@ -73,9 +73,9 @@ Tabs.Panel = ({ value, children }: { value: string; children: React.ReactNode })
 </Tabs>
 ```
 
-### 2. Render Props Pattern
+### 2. 渲染道具模式
 
-Share code between components using a prop whose value is a function.
+使用值为函数的 prop 在组件之间共享代码。
 
 ```typescript
 interface DataFetcherProps<T> {
@@ -110,9 +110,9 @@ function DataFetcher<T>({ url, render }: DataFetcherProps<T>) {
 />
 ```
 
-### 3. Higher-Order Components (HOC)
+### 3. 高阶组件（HOC）
 
-Wrap components to add functionality.
+包装组件以添加功能。
 
 ```typescript
 // withAuth.tsx - HOC
@@ -136,9 +136,9 @@ const ProtectedDashboard = withAuth(Dashboard);
 const EnhancedComponent = withAuth(withLogger(Dashboard));
 ```
 
-### 4. Custom Hook Pattern (Preferred over HOC)
+### 4. 自定义 Hook 模式（优于 HOC）
 
-Extract and reuse component logic.
+提取并重用组件逻辑。
 
 ```typescript
 // hooks/useAuth.ts
@@ -175,9 +175,9 @@ function Dashboard() {
 }
 ```
 
-### 5. Provider Pattern
+### 5. 提供者模式
 
-Share data across component tree without prop drilling.
+跨组件树共享数据，无需进行 prop 钻取。
 
 ```typescript
 // contexts/ThemeContext.tsx
@@ -217,9 +217,9 @@ export function useTheme() {
 const { theme, toggleTheme } = useTheme();
 ```
 
-## TypeScript Best Practices
+## TypeScript 最佳实践
 
-### Component Props Typing
+### 组件 Props 类型
 
 ```typescript
 // ✅ Use interfaces for component props (extendable)
@@ -255,7 +255,7 @@ function Select<T>({ options, value, onChange, renderOption }: SelectProps<T>) {
 }
 ```
 
-### Hooks Typing
+### 钩子打字
 
 ```typescript
 // ✅ Type state explicitly when needed
@@ -299,7 +299,7 @@ const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
 };
 ```
 
-### Type Guards & Narrowing
+### 类型保护和缩小
 
 ```typescript
 // Type guard function
@@ -319,9 +319,9 @@ if (isUser(data)) {
 }
 ```
 
-## Error Handling Patterns
+## 错误处理模式
 
-### Error Boundaries
+### 误差边界
 
 ```typescript
 // ErrorBoundary.tsx
@@ -377,7 +377,7 @@ class ErrorBoundary extends React.Component<Props, State> {
 </ErrorBoundary>
 ```
 
-### Async Error Handling
+### 异步错误处理
 
 ```typescript
 // Hook for async operations with error handling
@@ -421,9 +421,9 @@ function Component() {
 }
 ```
 
-## Form Handling
+## 表格处理
 
-### Controlled Components (Recommended)
+### 受控组件（推荐）
 
 ```typescript
 function ContactForm() {
@@ -511,7 +511,7 @@ function ContactForm() {
 }
 ```
 
-### Form Libraries (For Complex Forms)
+### 表单库（适用于复杂表单）
 
 ```typescript
 // React Hook Form - Best performance
@@ -557,9 +557,9 @@ function Form() {
 }
 ```
 
-## Testing Best Practices
+## 测试最佳实践
 
-### Component Testing with React Testing Library
+### 使用 React 测试库进行组件测试
 
 ```typescript
 // Button.test.tsx
@@ -592,7 +592,7 @@ describe('Button', () => {
 });
 ```
 
-### Custom Hook Testing
+### 定制挂钩测试
 
 ```typescript
 // useCounter.test.ts
@@ -632,9 +632,9 @@ describe('useCounter', () => {
 });
 ```
 
-## Common Anti-Patterns to Avoid
+## 要避免的常见反模式
 
-### ❌ Anti-Pattern 1: Prop Drilling
+### ❌ 反模式 1：支柱钻井
 ```typescript
 // Bad: Passing props through many levels
 <App>
@@ -643,7 +643,7 @@ describe('useCounter', () => {
       <UserMenu user={user} />
 ```
 
-**✅ Solution: Context or State Management**
+**✅ 解决方案：上下文或状态管理**
 ```typescript
 <AuthProvider>
   <App>
@@ -652,7 +652,7 @@ describe('useCounter', () => {
         <UserMenu /> {/* useAuth() hook */}
 ```
 
-### ❌ Anti-Pattern 2: Large Components
+### ❌ 反模式 2：大型组件
 ```typescript
 // Bad: 500+ line component doing everything
 function Dashboard() {
@@ -664,7 +664,7 @@ function Dashboard() {
 }
 ```
 
-**✅ Solution: Split into smaller components**
+**✅解决方案：分成更小的组件**
 ```typescript
 function Dashboard() {
   return (
@@ -678,7 +678,7 @@ function Dashboard() {
 }
 ```
 
-### ❌ Anti-Pattern 3: Mutating State Directly
+### ❌ 反模式 3：直接改变状态
 ```typescript
 // Bad: Direct mutation
 const handleClick = () => {
@@ -687,14 +687,14 @@ const handleClick = () => {
 };
 ```
 
-**✅ Solution: Immutable updates**
+**✅ 解决方案：不可变更新**
 ```typescript
 const handleClick = () => {
   setUser({ ...user, name: 'New Name' });
 };
 ```
 
-### ❌ Anti-Pattern 4: Using Index as Key
+### ❌ 反模式 4：使用索引作为键
 ```typescript
 // Bad: Using array index
 {items.map((item, index) => (
@@ -702,14 +702,14 @@ const handleClick = () => {
 ))}
 ```
 
-**✅ Solution: Use unique IDs**
+**✅解决方案：使用唯一ID**
 ```typescript
 {items.map((item) => (
   <div key={item.id}>{item.name}</div>
 ))}
 ```
 
-### ❌ Anti-Pattern 5: Overusing useEffect
+### ❌反模式5：过度使用useEffect
 ```typescript
 // Bad: Unnecessary useEffect
 const [count, setCount] = useState(0);
@@ -720,13 +720,13 @@ useEffect(() => {
 }, [count]);
 ```
 
-**✅ Solution: Derived state**
+**✅解决方案：导出状态**
 ```typescript
 const [count, setCount] = useState(0);
 const doubled = count * 2; // No useEffect needed
 ```
 
-## Accessibility (a11y) Best Practices
+## 辅助功能 (a11y) 最佳实践
 
 ```typescript
 // ✅ Semantic HTML

@@ -703,10 +703,10 @@ func deriveAgentExecutionPlan(goal string) AgentExecutionPlan {
 			Mode:    "filter_then_read",
 			Steps: []AgentPlanStep{
 				{Title: "Filter matching files", ExpectedActionTypes: []string{"list_files_filtered"}, Status: "pending"},
-				{Title: "Read the selected files", ExpectedActionTypes: []string{"read_files_batch", "read_file"}, Status: "pending"},
+				{Title: "Read the selected files", ExpectedActionTypes: []string{"read_files_batch"}, Status: "pending"},
 				{Title: "Answer with the findings", ExpectedActionTypes: []string{"respond"}, Status: "pending"},
 			},
-			RequiredSequence: []string{"list_files_filtered", "read_files_batch|read_file", "respond"},
+			RequiredSequence: []string{"list_files_filtered", "read_files_batch", "respond"},
 		}
 	}
 

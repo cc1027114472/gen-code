@@ -1,8 +1,8 @@
-# Optimal React + Vite Project Structure Example
+# 最优 React + Vite 项目结构示例
 
-This is a complete, production-ready project structure example.
+这是一个完整的、可用于生产的项目结构示例。
 
-## Directory Tree
+## 目录树
 
 ```
 my-react-app/
@@ -144,7 +144,7 @@ my-react-app/
 └── README.md
 ```
 
-## Key Files Content
+## 关键文件内容
 
 ### src/main.tsx
 ```typescript
@@ -300,7 +300,7 @@ export interface ApiError {
 }
 ```
 
-### src/test/setup.ts
+### src/测试/setup.ts
 ```typescript
 import { expect, afterEach } from 'vitest';
 import { cleanup } from '@testing-library/react';
@@ -313,7 +313,7 @@ afterEach(() => {
 });
 ```
 
-### src/test/utils.tsx
+### src/测试/utils.tsx
 ```typescript
 import { render, RenderOptions } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -423,9 +423,9 @@ module.exports = {
 }
 ```
 
-## Creating This Structure
+## 创建这个结构
 
-Use the provided scripts to generate this structure:
+使用提供的脚本生成此结构：
 
 ```bash
 # Create a component
@@ -441,47 +441,47 @@ python scripts/create_hook.py useAuth --type custom
 mkdir -p src/features/auth/{components,hooks,api,store}
 ```
 
-## Best Practices Applied
+## 应用最佳实践
 
-1. ✅ Feature-based organization
-2. ✅ Colocation of related files
-3. ✅ Path aliases for clean imports
-4. ✅ Lazy loading for routes
-5. ✅ Centralized configuration
-6. ✅ Type-safe everything
-7. ✅ Test utilities and setup
-8. ✅ Consistent naming conventions
-9. ✅ Separation of concerns
-10. ✅ Barrel exports (index.ts)
+1. ✅ 基于功能的组织
+2. ✅ 相关文件的托管
+3. ✅ 用于干净导入的路径别名
+4. ✅ 路由延迟加载
+5. ✅ 集中配置
+6. ✅ 一切都类型安全
+7. ✅ 测试实用程序和设置
+8. ✅ 一致的命名约定
+9. ✅ 关注点分离
+10. ✅ 桶出口（index.ts）
 
-## Scaling Guidelines
+## 扩展指南
 
-### Small App (< 10 components)
-- Flat structure in `src/components`
-- Single `hooks` folder
-- Minimal organization
+### 小型应用程序（< 10 个组件）
+- 扁平结构在`src/components`
+- 单身的`hooks`文件夹
+- 最小的组织
 
-### Medium App (10-50 components)
-- Use feature folders
-- Separate pages
-- Shared components folder
-- Custom hooks folder
+### 中型应用程序（10-50 个组件）
+- 使用功能文件夹
+- 单独的页面
+- 共享组件文件夹
+- 自定义钩子文件夹
 
-### Large App (50+ components)
-- Full feature-based architecture
-- Domain-driven design
-- Microservice-ready structure
-- Consider monorepo (nx, turborepo)
+### 大型应用程序（50 多个组件）
+- 完整的基于特征的架构
+- 领域驱动设计
+- 微服务就绪结构
+- 考虑 monorepo（nx、turborepo）
 
-## Migration Path
+## 迁移路径
 
-If you have an existing project:
+如果您有现有项目：
 
-1. Add path aliases to vite.config.ts and tsconfig.json
-2. Create `features/` folder
-3. Move related components into features
-4. Extract shared components to `components/`
-5. Extract hooks to `hooks/`
-6. Create `lib/` for third-party setup
-7. Move pages to `pages/`
-8. Update imports gradually
+1. 为 vite.config.ts 和 tsconfig.json 添加路径别名
+2. 创造`features/`文件夹
+3. 将相关组件移至功能中
+4. 将共享组件提取到`components/`
+5. 将钩子提取到`hooks/`
+6. 创造`lib/`用于第三方设置
+7. 将页面移至`pages/`
+8. 逐步更新导入
