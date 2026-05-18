@@ -309,8 +309,8 @@ type apiStatus struct {
 	TaskCount           int    `json:"taskCount"`
 	EventCount          int    `json:"eventCount"`
 	Browser             struct {
-		ActiveTabID         string `json:"activeTabId"`
-		Tabs                []struct {
+		ActiveTabID string `json:"activeTabId"`
+		Tabs        []struct {
 			ID           string `json:"id"`
 			URL          string `json:"url"`
 			Title        string `json:"title"`
@@ -1141,8 +1141,8 @@ func normalizeBrowserURL(raw string) string {
 }
 
 func browserWorkspaceStateFromRemote(remote struct {
-	ActiveTabID         string `json:"activeTabId"`
-	Tabs                []struct {
+	ActiveTabID string `json:"activeTabId"`
+	Tabs        []struct {
 		ID           string `json:"id"`
 		URL          string `json:"url"`
 		Title        string `json:"title"`

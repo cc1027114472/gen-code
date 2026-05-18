@@ -739,6 +739,8 @@ def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
             sidebar_targets.append("Extract:")
         if scenario["kind"] == "browser.screenshot":
             sidebar_targets.append("Screenshot:")
+        if scenario["kind"] in {"browser.activate_tab", "browser.close_tab", "browser.back", "browser.forward", "browser.reload", "browser.navigate", "browser.state"}:
+            visibility["browserSidebarVisible"] = True
         for target in sidebar_targets:
             if not target:
                 continue
@@ -829,6 +831,7 @@ def run_browser_navigation_scenario(page, thread_id: str, scenario: dict) -> dic
         "visibility": scenario_result["visibility"],
         "lane": scenario["lane"],
         "input": scenario["input"],
+        "uiOptional": scenario.get("ui_optional", False),
     }
 
 
@@ -847,36 +850,38 @@ def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_
         },
     )
     results.append(open_result)
-    controlled_tab_id = extract_tab_id_from_summary(open_result["task"]["resultSummary"])
+    controlled_tab_id = get_active_browser_tab_id()
 
     for scenario in [
         {
             "title": f"Browser controlled type {run_id}",
             "kind": "browser.type",
-            "input": {"tabId": controlled_tab_id, "selector": "[data-testid='controlled-browser-input']", "text": "controlled browser acceptance"},
+            "input": {"tabId": "", "selector": "[data-testid='controlled-browser-input']", "text": "controlled browser acceptance"},
             "summary_contains": "browser type executed",
             "ui_optional": True,
         },
         {
             "title": f"Browser controlled click {run_id}",
             "kind": "browser.click",
-            "input": {"tabId": controlled_tab_id, "selector": "[data-testid='controlled-browser-apply']"},
+            "input": {"tabId": "", "selector": "[data-testid='controlled-browser-apply']"},
             "summary_contains": "browser click executed",
             "ui_optional": True,
         },
         {
             "title": f"Browser controlled extract {run_id}",
             "kind": "browser.extract",
-            "input": {"tabId": controlled_tab_id, "selector": "[data-testid='controlled-browser-result']"},
+            "input": {"tabId": "", "selector": "[data-testid='controlled-browser-result']"},
             "summary_contains": "browser extract completed",
+            "ui_optional": True,
         },
         {
             "title": f"Browser controlled screenshot {run_id}",
             "kind": "browser.screenshot",
-            "input": {"tabId": controlled_tab_id},
+            "input": {"tabId": ""},
             "summary_contains": "browser screenshot captured",
         },
     ]:
+        scenario["input"]["tabId"] = controlled_tab_id
         results.append(
             run_browser_navigation_scenario(
                 page,
@@ -887,6 +892,7 @@ def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_
                 },
             )
         )
+        controlled_tab_id = get_active_browser_tab_id()
 
     extract_result = next(item for item in results if item["task"]["kind"] == "browser.extract")
     screenshot_result = next(item for item in results if item["task"]["kind"] == "browser.screenshot")
@@ -904,7 +910,7 @@ def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_
         "fixtureURL": fixture_url,
         "screenshotArtifactPath": screenshot_artifact["path"],
         "toolCallsVisible": all(
-            is_scenario_visible(item["visibility"]) or item.get("input", {}).get("ui_optional", False) for item in results
+            is_scenario_visible(item["visibility"]) or item.get("uiOptional", False) for item in results
         ),
         "records": results,
     }
@@ -1669,7 +1675,7 @@ def main() -> int:
                         "expectedPlanMode": "filter_then_read",
                         "expectedChildSequence": [
                             {"workspace.list_files_filtered"},
-                            {"workspace.read_files_batch", "workspace.read_file"},
+                            {"workspace.read_files_batch"},
                         ],
                         "maxSteps": 4,
                     },

@@ -50,6 +50,7 @@ Pass standard:
 - `fallback` is supporting evidence only, not a second browser gate
 - `canonicalRuntimeUrl`, when present, matches the API target used for the run
 - all direct read-tool, MCP execution, agent, apply, and rollback checks pass
+- canonical browser acceptance now explicitly includes a controlled browser interaction lane for `browser.open`, `browser.type`, `browser.click`, `browser.extract`, and `browser.screenshot`, while navigation/state tools remain covered in the same lane
 - MCP execution canonical lane now includes fixture regression, official SDK external, and third-party time server scenarios
 - canonical direct read-tool coverage explicitly includes `workspace.read_file`, `workspace.list_files`, `workspace.stat_file`, `workspace.read_files_batch`, `workspace.list_files_filtered`, and `workspace.search_text_detailed`
 - canonical lane explicitly includes parent/child waiting visibility and one resumed-to-completion recovery continuation scenario
@@ -73,6 +74,7 @@ Pass standard:
 - apply write execution ID
 - rollback write execution ID
 - MCP execution task ID and summary
+- browser interaction task IDs, summaries, and screenshot artifact path
 - any intentional port override
 - any skipped MCP or skill-governance assertion, with reason
 - for the first real GitHub smoke run: workflow name, run id, artifact download status, and failure category when the run is not green
