@@ -124,6 +124,7 @@ Promoted this round:
 
 - `react-vite-expert`
 - `vercel-react-best-practices`
+- `skill-creator`
 
 Why:
 
@@ -146,18 +147,13 @@ Blocking checks before promotion:
 ### Needs-Trim: CC
 
 - `canvas-design`
-- `find-skills`
-- `skill-creator`
 - `ui-ux-pro-max`
-- `web-design-guidelines`
 
 Why:
 
 - these imports are valid CC-sourced staging items, but they carry extra references, asset packs, or supporting material that should be reduced before runtime-visible promotion
-- `planning-with-files` depends on hooks, scripts, and `~/.claude`-style environment wiring
-- `find-skills` depends on external skills tooling and runtime environment expectations
-- `web-design-guidelines` depends on live external rule fetching
-- `use-my-browser` should be reviewed carefully because it assumes browser/tooling integration beyond a plain copied markdown skill
+- `canvas-design` currently carries a large embedded font pack and license bundle that should be trimmed before promotion
+- `ui-ux-pro-max` currently points at project-external `src/ui-ux-pro-max` placeholders rather than a self-contained project-local copied package
 
 ### Trimmed And Promoted: CC
 

@@ -50,6 +50,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"ralph-loop",
 		"react-vite-expert",
 		"requesting-code-review",
+		"skill-creator",
 		"subagent-driven-development",
 		"systematic-debugging",
 		"tailwindcss",

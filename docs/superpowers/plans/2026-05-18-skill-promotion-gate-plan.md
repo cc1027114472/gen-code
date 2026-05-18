@@ -150,11 +150,11 @@ Current ready-localization CC promotion result:
 
 - `react-vite-expert`
 - `vercel-react-best-practices`
+- `skill-creator`
 
 #### Needs-Trim: CC
 
 - `canvas-design`
-- `skill-creator`
 - `ui-ux-pro-max`
 
 #### Defer: CC
