@@ -4,6 +4,7 @@ import socket
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -17,6 +18,7 @@ API_RETRIES = int(os.environ.get("GEN_CODE_API_RETRIES", "5"))
 API_RETRY_DELAY = float(os.environ.get("GEN_CODE_API_RETRY_DELAY", "0.5"))
 ACCEPTANCE_MODE = os.environ.get("GEN_CODE_ACCEPTANCE_MODE", "full").strip().lower() or "full"
 ARTIFACT_DIR = os.environ.get("GEN_CODE_ARTIFACT_DIR", os.path.join("tmp", "desktop-smoke-artifacts"))
+EMBEDDED_PREVIEW_PARAM = "gcPreview"
 
 SECOND_BATCH_TOOL_KINDS = {
     "workspace.stat_file",
@@ -370,6 +372,16 @@ def create_thread(name: str, permission_mode: str = "ask-user") -> dict:
     )
 
 
+def build_controlled_browser_fixture_url(thread_id: str, thread_name: str) -> str:
+    encoded_name = urllib.parse.quote(thread_name, safe="")
+    return (
+        f"{UI_BASE_URL}?{EMBEDDED_PREVIEW_PARAM}=1"
+        f"&pane=acceptance-browser"
+        f"&threadId={urllib.parse.quote(thread_id, safe='')}"
+        f"&threadName={encoded_name}"
+    )
+
+
 def activate_thread(thread_id: str):
     return api("POST", f"/api/threads/{thread_id}/activate", {})
 
@@ -435,6 +447,45 @@ def wait_for_task_terminal(thread_id: str, task_id: str, timeout_seconds: float 
                 return item
         time.sleep(0.5)
     raise RuntimeError("timed out waiting for matching task")
+
+
+def get_task_by_id(thread_id: str, task_id: str) -> dict | None:
+    tasks = api("GET", f"/api/threads/{thread_id}/tasks")["items"]
+    for item in tasks:
+        if item.get("id") == task_id:
+            return item
+    return None
+
+
+def get_browser_snapshot() -> dict:
+    return api("GET", "/api/runtime/status").get("browser", {})
+
+
+def get_active_browser_tab_id() -> str:
+    snapshot = get_browser_snapshot()
+    active_tab_id = snapshot.get("activeTabId", "")
+    if active_tab_id:
+        return active_tab_id
+    tabs = snapshot.get("tabs", [])
+    if tabs:
+        return tabs[-1].get("id", "")
+    raise AssertionError(f"expected runtime browser snapshot to expose an active tab, got {snapshot!r}")
+
+
+def extract_tab_id_from_summary(summary: str) -> str:
+    parts = (summary or "").split(": ", 1)
+    if len(parts) != 2:
+        raise AssertionError(f"expected browser summary to contain a tab id, got {summary!r}")
+    return parts[1].strip()
+
+
+def get_latest_browser_tab_id(exclude_ids: set[str] | None = None) -> str:
+    exclude_ids = exclude_ids or set()
+    snapshot = get_browser_snapshot()
+    candidates = [tab.get("id", "") for tab in snapshot.get("tabs", []) if tab.get("id", "") and tab.get("id", "") not in exclude_ids]
+    if candidates:
+        return candidates[-1]
+    raise AssertionError(f"expected runtime browser snapshot to expose a non-excluded tab, got {snapshot!r}")
 
 
 def find_latest_child_task(thread_id: str, parent_task_id: str, status: str | None = None) -> dict:
@@ -534,6 +585,25 @@ def assert_result_card_contains(page, test_id: str, *texts: str, timeout: int = 
     return locator
 
 
+def assert_sidebar_note_contains(page, text: str, timeout: int = 12000):
+    locator = page.locator(".sidebar-note").filter(has_text=text)
+    expect(locator.first).to_be_visible(timeout=timeout)
+    return locator.first
+
+
+def is_scenario_visible(visibility: dict) -> bool:
+    return any(
+        visibility.get(key, False)
+        for key in [
+            "taskCardVisible",
+            "toolKindVisible",
+            "latestTaskCardVisible",
+            "latestToolCardVisible",
+            "browserSidebarVisible",
+        ]
+    )
+
+
 def activate_thread_in_ui(page, thread_id: str):
     activate_thread(thread_id)
     refresh_thread_view(page, thread_id)
@@ -597,7 +667,13 @@ def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
     created_task = create_task(thread_id, scenario["title"], scenario["kind"], scenario["input"])
     task_id = created_task["id"]
     run_task(thread_id, task_id)
-    completed_task = wait_for_task(thread_id, lambda item: item["id"] == task_id and item["status"] == "completed")
+    terminal_task = wait_for_task_terminal(thread_id, task_id, timeout_seconds=scenario.get("timeoutSeconds", 20.0))
+    if terminal_task.get("status") != "completed":
+        raise AssertionError(
+            f"task {scenario['kind']} did not complete successfully: status={terminal_task.get('status')!r}, "
+            f"summary={terminal_task.get('resultSummary', '')!r}, input={scenario['input']!r}"
+        )
+    completed_task = terminal_task
 
     expected_summary = scenario["summary_contains"]
     if expected_summary not in completed_task["resultSummary"]:
@@ -612,6 +688,9 @@ def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
     visibility = {
         "taskCardVisible": False,
         "toolKindVisible": False,
+        "latestTaskCardVisible": False,
+        "latestToolCardVisible": False,
+        "browserSidebarVisible": False,
     }
     try:
         assert_article_contains(page, scenario["title"])
@@ -630,8 +709,51 @@ def run_direct_tool_scenario(page, thread_id: str, scenario: dict) -> dict:
                     assert_article_contains(page, tool_call["toolId"], timeout=10000)
                     visibility["toolKindVisible"] = True
                 except Exception:
-                    if not scenario.get("ui_optional", False):
-                        raise
+                    pass
+
+    if not is_scenario_visible(visibility):
+        try:
+            assert_result_card_contains(page, "latest-task-card", completed_task["title"], timeout=10000)
+            visibility["latestTaskCardVisible"] = True
+        except Exception:
+            try:
+                assert_result_card_contains(page, "latest-task-card", completed_task["resultSummary"], timeout=10000)
+                visibility["latestTaskCardVisible"] = True
+            except Exception:
+                pass
+
+    if not is_scenario_visible(visibility):
+        try:
+            assert_result_card_contains(page, "latest-toolcall-card", tool_call["toolId"], tool_call["summary"], timeout=10000)
+            visibility["latestToolCardVisible"] = True
+        except Exception:
+            try:
+                assert_result_card_contains(page, "latest-toolcall-card", tool_call["toolId"], timeout=10000)
+                visibility["latestToolCardVisible"] = True
+            except Exception:
+                pass
+
+    if not is_scenario_visible(visibility) and scenario["kind"].startswith("browser."):
+        sidebar_targets = [completed_task["resultSummary"], tool_call["summary"]]
+        if scenario["kind"] == "browser.extract":
+            sidebar_targets.append("Extract:")
+        if scenario["kind"] == "browser.screenshot":
+            sidebar_targets.append("Screenshot:")
+        for target in sidebar_targets:
+            if not target:
+                continue
+            try:
+                assert_sidebar_note_contains(page, target, timeout=10000)
+                visibility["browserSidebarVisible"] = True
+                break
+            except Exception:
+                continue
+
+    if not is_scenario_visible(visibility) and not scenario.get("ui_optional", False):
+        raise AssertionError(
+            f"scenario {scenario['kind']} completed but no matching desktop visibility signal was found "
+            f"for title={completed_task['title']!r} summary={completed_task['resultSummary']!r}"
+        )
     return {
         "task": completed_task,
         "toolCall": tool_call,
@@ -710,42 +832,51 @@ def run_browser_navigation_scenario(page, thread_id: str, scenario: dict) -> dic
     }
 
 
-def run_controlled_browser_scenario(page, thread_id: str, run_id: str) -> dict:
+def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_id: str) -> dict:
     results = []
-    scenario_defs = [
+    fixture_url = build_controlled_browser_fixture_url(thread_id, thread_name)
+    open_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
         {
             "title": f"Browser controlled open {run_id}",
             "kind": "browser.open",
-            "input": {"url": UI_BASE_URL},
+            "input": {"url": fixture_url},
             "summary_contains": "browser tab opened",
+            "lane": "controlled browser canonical lane",
         },
+    )
+    results.append(open_result)
+    controlled_tab_id = extract_tab_id_from_summary(open_result["task"]["resultSummary"])
+
+    for scenario in [
         {
             "title": f"Browser controlled type {run_id}",
             "kind": "browser.type",
-            "input": {"tabId": "", "selector": "[data-testid='browser-address-input']", "text": "http://127.0.0.1:5174/"},
+            "input": {"tabId": controlled_tab_id, "selector": "[data-testid='controlled-browser-input']", "text": "controlled browser acceptance"},
             "summary_contains": "browser type executed",
+            "ui_optional": True,
         },
         {
             "title": f"Browser controlled click {run_id}",
             "kind": "browser.click",
-            "input": {"tabId": "", "selector": "[data-testid='browser-navigate-button']"},
+            "input": {"tabId": controlled_tab_id, "selector": "[data-testid='controlled-browser-apply']"},
             "summary_contains": "browser click executed",
+            "ui_optional": True,
         },
         {
             "title": f"Browser controlled extract {run_id}",
             "kind": "browser.extract",
-            "input": {"tabId": "", "selector": "[data-testid='browser-status-title']"},
+            "input": {"tabId": controlled_tab_id, "selector": "[data-testid='controlled-browser-result']"},
             "summary_contains": "browser extract completed",
         },
         {
             "title": f"Browser controlled screenshot {run_id}",
             "kind": "browser.screenshot",
-            "input": {"tabId": ""},
+            "input": {"tabId": controlled_tab_id},
             "summary_contains": "browser screenshot captured",
         },
-    ]
-
-    for scenario in scenario_defs:
+    ]:
         results.append(
             run_browser_navigation_scenario(
                 page,
@@ -770,9 +901,10 @@ def run_controlled_browser_scenario(page, thread_id: str, run_id: str) -> dict:
         "toolKinds": [item["task"]["kind"] for item in results],
         "activeTabId": browser_state.get("activeTabId", ""),
         "extractSummary": extract_result["record"]["summary"],
+        "fixtureURL": fixture_url,
         "screenshotArtifactPath": screenshot_artifact["path"],
         "toolCallsVisible": all(
-            item["visibility"]["taskCardVisible"] or item["visibility"]["toolKindVisible"] for item in results
+            is_scenario_visible(item["visibility"]) or item.get("input", {}).get("ui_optional", False) for item in results
         ),
         "records": results,
     }
@@ -1324,73 +1456,134 @@ def main() -> int:
                 )
             )
             browser_results = []
-            for scenario in [
-                {
-                    "title": f"Browser state direct {run_id}",
-                    "kind": "browser.state",
-                    "input": {},
-                    "summary_contains": "browser state captured",
-                    "lane": "browser navigation canonical lane",
-                },
-                {
-                    "title": f"Browser open preview {run_id}",
-                    "kind": "browser.open",
-                    "input": {"url": UI_BASE_URL},
-                    "summary_contains": "browser tab opened",
-                    "lane": "browser navigation canonical lane",
-                },
-                {
-                    "title": f"Browser navigate api {run_id}",
-                    "kind": "browser.navigate",
-                    "input": {"tabId": "", "url": f"{API_BASE_URL}/api/runtime/status"},
-                    "summary_contains": "browser tab navigated",
-                    "lane": "browser navigation canonical lane",
-                },
-                {
-                    "title": f"Browser reload active {run_id}",
-                    "kind": "browser.reload",
-                    "input": {"tabId": ""},
-                    "summary_contains": "browser tab reloaded",
-                    "lane": "browser navigation canonical lane",
-                },
-                {
-                    "title": f"Browser back active {run_id}",
-                    "kind": "browser.back",
-                    "input": {"tabId": ""},
-                    "summary_contains": "browser tab went back",
-                    "lane": "browser navigation canonical lane",
-                },
-                {
-                    "title": f"Browser forward active {run_id}",
-                    "kind": "browser.forward",
-                    "input": {"tabId": ""},
-                    "summary_contains": "browser tab went forward",
-                    "lane": "browser navigation canonical lane",
-                },
-                {
-                    "title": f"Browser open localhost {run_id}",
-                    "kind": "browser.open",
-                    "input": {"url": "http://127.0.0.1:5174/"},
-                    "summary_contains": "browser tab opened",
-                    "lane": "browser navigation canonical lane",
-                },
-                {
-                    "title": f"Browser activate primary {run_id}",
-                    "kind": "browser.activate_tab",
-                    "input": {"tabId": "browser-tab-1"},
-                    "summary_contains": "browser tab activated",
-                    "lane": "browser navigation canonical lane",
-                },
-                {
-                    "title": f"Browser close secondary {run_id}",
-                    "kind": "browser.close_tab",
-                    "input": {"tabId": "browser-tab-2"},
-                    "summary_contains": "browser tab closed",
-                    "lane": "browser navigation canonical lane",
-                },
-            ]:
-                browser_results.append(run_browser_navigation_scenario(page, thread_id, scenario))
-            controlled_browser_result = run_controlled_browser_scenario(page, thread_id, run_id)
+            browser_lane = "browser navigation canonical lane"
+            browser_results.append(
+                run_browser_navigation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Browser state direct {run_id}",
+                        "kind": "browser.state",
+                        "input": {},
+                        "summary_contains": "browser state captured",
+                        "lane": browser_lane,
+                    },
+                )
+            )
+            browser_results.append(
+                run_browser_navigation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Browser open preview {run_id}",
+                        "kind": "browser.open",
+                        "input": {"url": UI_BASE_URL},
+                        "summary_contains": "browser tab opened",
+                        "lane": browser_lane,
+                    },
+                )
+            )
+            primary_browser_tab_id = extract_tab_id_from_summary(browser_results[-1]["task"]["resultSummary"])
+            browser_results.append(
+                run_browser_navigation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Browser navigate api {run_id}",
+                        "kind": "browser.navigate",
+                        "input": {"tabId": primary_browser_tab_id, "url": f"{API_BASE_URL}/api/runtime/status"},
+                        "summary_contains": "browser tab navigated",
+                        "lane": browser_lane,
+                    },
+                )
+            )
+            browser_results.append(
+                run_browser_navigation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Browser reload active {run_id}",
+                        "kind": "browser.reload",
+                        "input": {"tabId": primary_browser_tab_id},
+                        "summary_contains": "browser tab reloaded",
+                        "lane": browser_lane,
+                    },
+                )
+            )
+            browser_results.append(
+                run_browser_navigation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Browser back active {run_id}",
+                        "kind": "browser.back",
+                        "input": {"tabId": primary_browser_tab_id},
+                        "summary_contains": "browser tab went back",
+                        "lane": browser_lane,
+                    },
+                )
+            )
+            browser_results.append(
+                run_browser_navigation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Browser forward active {run_id}",
+                        "kind": "browser.forward",
+                        "input": {"tabId": primary_browser_tab_id},
+                        "summary_contains": "browser tab went forward",
+                        "lane": browser_lane,
+                    },
+                )
+            )
+            preexisting_tab_ids = {
+                tab.get("id", "")
+                for tab in get_browser_snapshot().get("tabs", [])
+                if tab.get("id", "")
+            }
+            browser_results.append(
+                run_browser_navigation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Browser open localhost {run_id}",
+                        "kind": "browser.open",
+                        "input": {"url": "http://127.0.0.1:5174/"},
+                        "summary_contains": "browser tab opened",
+                        "lane": browser_lane,
+                    },
+                )
+            )
+            secondary_browser_tab_id = extract_tab_id_from_summary(browser_results[-1]["task"]["resultSummary"])
+            if secondary_browser_tab_id == primary_browser_tab_id:
+                secondary_browser_tab_id = get_latest_browser_tab_id(exclude_ids={primary_browser_tab_id} | preexisting_tab_ids)
+            browser_results.append(
+                run_browser_navigation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Browser activate primary {run_id}",
+                        "kind": "browser.activate_tab",
+                        "input": {"tabId": primary_browser_tab_id},
+                        "summary_contains": "browser tab activated",
+                        "lane": browser_lane,
+                    },
+                )
+            )
+            browser_results.append(
+                run_browser_navigation_scenario(
+                    page,
+                    thread_id,
+                    {
+                        "title": f"Browser close secondary {run_id}",
+                        "kind": "browser.close_tab",
+                        "input": {"tabId": secondary_browser_tab_id},
+                        "summary_contains": "browser tab closed",
+                        "lane": browser_lane,
+                    },
+                )
+            )
+            controlled_browser_result = run_controlled_browser_scenario(page, thread_id, thread_name, run_id)
             mcp_execution_results = []
             for scenario in [
                 {

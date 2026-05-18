@@ -6,10 +6,14 @@ import {
   BrowserActivateTab,
   BrowserBack,
   BrowserCloseTab,
+  BrowserClick,
+  BrowserExtract,
   BrowserForward,
   BrowserNavigate,
   BrowserOpen,
   BrowserReload,
+  BrowserScreenshot,
+  BrowserType,
   CheckBridge,
   CreateTask,
   CreateThread,
@@ -226,6 +230,8 @@ export default function App() {
   const [draft, setDraft] = useState<Draft>(defaultDraft);
   const [browserOpen, setBrowserOpen] = useState(true);
   const [addressDraft, setAddressDraft] = useState(defaultPreviewURL);
+  const [browserSelectorDraft, setBrowserSelectorDraft] = useState("[data-testid='browser-address-input']");
+  const [browserTextDraft, setBrowserTextDraft] = useState("browser demo text");
   const [lastSubmittedPreviewURL, setLastSubmittedPreviewURL] = useState("");
   const addressInputRef = useRef<HTMLInputElement | null>(null);
   const addressDraftRef = useRef(defaultPreviewURL);
@@ -324,6 +330,10 @@ export default function App() {
     () => browserState?.tabs.find((tab) => tab.id === browserState.activeTabId) ?? browserState?.tabs[0] ?? null,
     [browserState],
   );
+  const browserLatestSummary = browserState?.latestActionSummary || "browser workspace ready";
+  const browserLatestError = browserState?.latestActionError || "";
+  const browserLatestExtract = browserState?.latestExtractText || "";
+  const browserLatestArtifactPath = browserState?.latestArtifactPath || "";
 
   const tasks: ExtendedRuntimeTask[] = extendedRuntime?.tasks ?? [];
   const taskMap = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
@@ -565,6 +575,17 @@ export default function App() {
     return threadPreviewMemory.current[threadID] || defaultPreviewURL;
   };
 
+  const applyBrowserState = (next: BrowserWorkspaceState) => {
+    setBrowserState(next);
+    setBrowserOpen(next.isOpen);
+    const nextActiveTab = next.tabs.find((tab) => tab.id === next.activeTabId) ?? next.tabs[0] ?? null;
+    if (nextActiveTab?.url && (addressDraftRef.current === lastSyncedPreviewURL.current || !addressDraftRef.current.trim())) {
+      setAddressDraft(nextActiveTab.url);
+      addressDraftRef.current = nextActiveTab.url;
+      lastSyncedPreviewURL.current = nextActiveTab.url;
+    }
+  };
+
   const navigatePreviewForThread = async (thread: RuntimeStatus["threads"][number], rawURL?: string) => {
     if (!browserOpen || !thread) {
       return;
@@ -757,8 +778,6 @@ export default function App() {
     if (activeThread && isThreadPreviewURL(openURL)) {
       previewOwnerThreadID.current = activeThread.id;
     }
-    setBrowserState(next);
-    setBrowserOpen(next.isOpen);
     const nextActiveTab = next.tabs.find((tab) => tab.id === next.activeTabId) ?? next.tabs[0];
     if (activeThread && nextActiveTab?.url && isThreadPreviewURL(nextActiveTab.url)) {
       threadPreviewMemory.current[activeThread.id] = nextActiveTab.url;
@@ -766,6 +785,7 @@ export default function App() {
       addressDraftRef.current = nextActiveTab.url;
       lastSyncedPreviewURL.current = nextActiveTab.url;
     }
+    applyBrowserState(next);
   };
 
   const handleNavigatePreview = async () => {
@@ -777,11 +797,38 @@ export default function App() {
 
     const next = await BrowserNavigate(activeBrowserTab?.id || "", draftValue);
     setLastSubmittedPreviewURL(draftValue);
-    setBrowserState(next);
-    setBrowserOpen(next.isOpen);
+    applyBrowserState(next);
     setAddressDraft(draftValue);
     addressDraftRef.current = draftValue;
     lastSyncedPreviewURL.current = draftValue;
+  };
+
+  const handleBrowserClick = async () => {
+    if (!activeBrowserTab) {
+      return;
+    }
+    applyBrowserState(await BrowserClick(activeBrowserTab.id, browserSelectorDraft));
+  };
+
+  const handleBrowserType = async () => {
+    if (!activeBrowserTab) {
+      return;
+    }
+    applyBrowserState(await BrowserType(activeBrowserTab.id, browserSelectorDraft, browserTextDraft));
+  };
+
+  const handleBrowserExtract = async () => {
+    if (!activeBrowserTab) {
+      return;
+    }
+    applyBrowserState(await BrowserExtract(activeBrowserTab.id, browserSelectorDraft));
+  };
+
+  const handleBrowserScreenshot = async () => {
+    if (!activeBrowserTab) {
+      return;
+    }
+    applyBrowserState(await BrowserScreenshot(activeBrowserTab.id));
   };
 
   const handleToggleBrowser = () => {
@@ -1234,14 +1281,14 @@ export default function App() {
                       data-tab-id={tab.id}
                       data-active={tab.isActive ? "true" : "false"}
                     >
-                      <button className="browser-tab__label" onClick={() => void BrowserActivateTab(tab.id).then(setBrowserState)} type="button">
+                      <button className="browser-tab__label" onClick={() => void BrowserActivateTab(tab.id).then(applyBrowserState)} type="button">
                         <span>{tab.title}</span>
                       </button>
                       <button
                         className="browser-tab__close"
                         onClick={(event) => {
                           event.stopPropagation();
-                          void BrowserCloseTab(tab.id).then(setBrowserState);
+                          void BrowserCloseTab(tab.id).then(applyBrowserState);
                         }}
                         type="button"
                       >
@@ -1256,13 +1303,13 @@ export default function App() {
 
                 <div className="browser-toolbar">
                   <div className="browser-toolbar__actions">
-                    <button className="browser-nav" onClick={() => activeBrowserTab && void BrowserBack(activeBrowserTab.id).then(setBrowserState)} type="button">
+                    <button className="browser-nav" onClick={() => activeBrowserTab && void BrowserBack(activeBrowserTab.id).then(applyBrowserState)} type="button">
                       后退
                     </button>
-                    <button className="browser-nav" onClick={() => activeBrowserTab && void BrowserForward(activeBrowserTab.id).then(setBrowserState)} type="button">
+                    <button className="browser-nav" onClick={() => activeBrowserTab && void BrowserForward(activeBrowserTab.id).then(applyBrowserState)} type="button">
                       前进
                     </button>
-                    <button className="browser-nav" onClick={() => activeBrowserTab && void BrowserReload(activeBrowserTab.id).then(setBrowserState)} type="button">
+                    <button className="browser-nav" onClick={() => activeBrowserTab && void BrowserReload(activeBrowserTab.id).then(applyBrowserState)} type="button">
                       刷新
                     </button>
                   </div>
@@ -1301,6 +1348,42 @@ export default function App() {
                     {activeBrowserTab?.title || "本地预览"}
                   </span>
                   <span className="mini-chip">{activeBrowserTab?.status || "就绪"}</span>
+                </div>
+
+                <div className="left-panel left-panel--muted">
+                  <p className="section-title">Browser Actions</p>
+                  <div className="browser-toolbar__actions">
+                    <input
+                      className="browser-address"
+                      value={browserSelectorDraft}
+                      onChange={(event) => setBrowserSelectorDraft(event.target.value)}
+                      placeholder="[data-testid='target'] / #id / .class"
+                    />
+                    <input
+                      className="browser-address"
+                      value={browserTextDraft}
+                      onChange={(event) => setBrowserTextDraft(event.target.value)}
+                      placeholder="type text"
+                    />
+                  </div>
+                  <div className="browser-toolbar__actions">
+                    <button className="browser-nav" onClick={() => void handleBrowserClick()} type="button">
+                      Click
+                    </button>
+                    <button className="browser-nav" onClick={() => void handleBrowserType()} type="button">
+                      Type
+                    </button>
+                    <button className="browser-nav" onClick={() => void handleBrowserExtract()} type="button">
+                      Extract
+                    </button>
+                    <button className="browser-nav" onClick={() => void handleBrowserScreenshot()} type="button">
+                      Shot
+                    </button>
+                  </div>
+                  <p className="sidebar-note">{`Latest: ${browserLatestSummary}`}</p>
+                  {browserLatestError ? <p className="sidebar-note">{`Error: ${browserLatestError}`}</p> : null}
+                  {browserLatestExtract ? <p className="sidebar-note">{`Extract: ${browserLatestExtract}`}</p> : null}
+                  {browserLatestArtifactPath ? <p className="sidebar-note">{`Screenshot: ${browserLatestArtifactPath}`}</p> : null}
                 </div>
 
                 {showPreviewDebug ? (
@@ -2159,6 +2242,8 @@ function EmbeddedPreviewPage({
   threadID: string;
   threadName: string;
 }) {
+  const [controlledInput, setControlledInput] = useState("browser demo text");
+  const [controlledResult, setControlledResult] = useState("等待受控浏览器动作");
   const paneTitle =
     pane === "thread-one" ? "线程一预览" : pane === "thread-two" ? "线程二预览" : "本地预览";
 
@@ -2207,6 +2292,43 @@ function EmbeddedPreviewPage({
                   </div>
                   <h4>{paneTitle}</h4>
                   <p>{`线程 ID=${threadID || "无"} / 线程名=${threadName || "无"} / 预览面板=${pane}`}</p>
+                </article>
+              </div>
+            </section>
+
+            <section className="flow-panel card">
+              <div className="section-header">
+                <div>
+                  <p className="section-title">受控浏览器 Fixture</p>
+                  <h3>用于 canonical full lane 的最小本地交互链路</h3>
+                </div>
+              </div>
+              <div className="flow-list">
+                <article className="flow-item flow-item--neutral">
+                  <div className="flow-item__header">
+                    <span className="mini-chip">controlled-browser</span>
+                    <span className="flow-item__meta">local fixture</span>
+                  </div>
+                  <h4 data-testid="controlled-browser-heading">受控浏览器验收面板</h4>
+                  <p>这个面板只暴露稳定的本地选择器，供 runtime browser tools 和 full acceptance 使用。</p>
+                  <div className="browser-toolbar__actions">
+                    <input
+                      className="browser-address"
+                      data-testid="controlled-browser-input"
+                      value={controlledInput}
+                      onChange={(event) => setControlledInput(event.target.value)}
+                      placeholder="输入受控浏览器测试文本"
+                    />
+                    <button
+                      className="browser-nav"
+                      data-testid="controlled-browser-apply"
+                      onClick={() => setControlledResult(`Controlled browser result: ${controlledInput || "empty"}`)}
+                      type="button"
+                    >
+                      应用输入
+                    </button>
+                  </div>
+                  <p data-testid="controlled-browser-result">{controlledResult}</p>
                 </article>
               </div>
             </section>
