@@ -504,7 +504,6 @@ func (d *Driver) applySessionCookiesForProfile(ctx context.Context, tab *tabSess
 	}
 	targetURL := target.Scheme + "://" + target.Host
 	actions := []chromedp.Action{
-		network.Enable(),
 		chromedp.ActionFunc(func(actionCtx context.Context) error {
 			for _, cookie := range profile.Cookies {
 				params := network.SetCookie(cookie.Name, cookie.Value).
