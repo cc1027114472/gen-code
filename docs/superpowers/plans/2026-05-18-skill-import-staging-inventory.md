@@ -61,6 +61,7 @@ Project-internal staging path:
 - `kb-audit-report-pack`
 - `openai-docs`
 - `plugin-creator`
+- `design-consultation`
 - `skill-creator`
 - `skill-installer`
 
@@ -76,28 +77,15 @@ Notes:
 - `imagegen`, `openai-docs`, `plugin-creator`, `skill-creator`, and `skill-installer` came from the Codex `.system` skill set, but runtime-visible `source` still remains `codex`
 - several promoted packages include helper assets, scripts, references, or plugin metadata beyond `SKILL.md`
 - `browser-use` and `chrome` were rebuilt from plugin-bundled staging shells into canonical project-local skill packages rooted at `<id>/SKILL.md`, with only the minimal retained scripts and docs needed for the current governed baseline
+- `design-consultation` was rebuilt from a garbled gstack-generated staging copy into a standalone canonical copied skill that keeps the design-system workflow while dropping gstack-only preamble, macros, telemetry hooks, and external path dependencies
 
 ### Needs-Trim: Codex
 
-- `design-consultation`
+- none
 
 Why:
 
-- `design-consultation` still depends on surrounding `gstack`-style commands and paths that do not fit the current standalone catalog baseline
-- the remaining blocked import still carries a much larger or looser bundle boundary than a normal governed skill
-- the remaining blocked import still needs standalone extraction before any promotion
-
-Promote target:
-
-- `internal/core/skill/catalog/codex`
-
-Blocking checks:
-
-- source-group confirmation
-- dependency and asset trimming
-- 1:1 Chinese localization audit
-- mojibake / garbled-text check per translated skill
-- static capability verification
+- no Codex staged imports remain in the `needs-trim` lane after `design-consultation` was rebuilt as a standalone canonical copied skill and promoted into `catalog/codex`
 
 ## CC Staging Imports
 

@@ -28,6 +28,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"codex-bug",
 		"codex-issue-digest",
 		"codex-pr-body",
+		"design-consultation",
 		"frontend-design",
 		"golang-backend-development",
 		"imagegen",

@@ -99,12 +99,13 @@
 - `kb-audit-report-pack`
 - `openai-docs`
 - `plugin-creator`
+- `design-consultation`
 - `skill-creator`
 - `skill-installer`
 
 #### Needs-Trim: Codex
 
-- `design-consultation`
+- none
 
 #### Ready: CC
 
@@ -166,6 +167,7 @@ Current ready-localization CC promotion result:
 
 - `codex/browser-use`: previously about `340` files, about `7.08 MB` before trim and canonical promotion
 - `codex/chrome`: previously about `345` files, about `7.78 MB` before trim and canonical promotion
+- `codex/design-consultation`: blocked earlier by a garbled generated copy plus gstack-only preamble and macro dependencies, then rebuilt as a standalone single-skill copied package before promotion
 - `cc/canvas-design`: about `83` files, about `5.3 MB`
 - `cc/gstack`: about `6426` files, about `119.54 MB`
 
