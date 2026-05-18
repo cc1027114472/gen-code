@@ -50,6 +50,8 @@ Project-internal staging path:
 ### Promoted: Codex
 
 - `architecture-blueprint-generator`
+- `browser-use`
+- `chrome`
 - `frontend-design`
 - `golang-backend-development`
 - `imagegen`
@@ -73,19 +75,17 @@ Notes:
 
 - `imagegen`, `openai-docs`, `plugin-creator`, `skill-creator`, and `skill-installer` came from the Codex `.system` skill set, but runtime-visible `source` still remains `codex`
 - several promoted packages include helper assets, scripts, references, or plugin metadata beyond `SKILL.md`
+- `browser-use` and `chrome` were rebuilt from plugin-bundled staging shells into canonical project-local skill packages rooted at `<id>/SKILL.md`, with only the minimal retained scripts and docs needed for the current governed baseline
 
 ### Needs-Trim: Codex
 
-- `browser-use`
-- `chrome`
 - `design-consultation`
 
 Why:
 
-- `browser-use` and `chrome` were copied from plugin-bundled version directories
 - `design-consultation` still depends on surrounding `gstack`-style commands and paths that do not fit the current standalone catalog baseline
-- the remaining blocked imports still carry a much larger or looser bundle boundary than a normal governed skill
-- the remaining blocked imports must be trimmed to the smallest machine-usable copy before any promotion
+- the remaining blocked import still carries a much larger or looser bundle boundary than a normal governed skill
+- the remaining blocked import still needs standalone extraction before any promotion
 
 Promote target:
 

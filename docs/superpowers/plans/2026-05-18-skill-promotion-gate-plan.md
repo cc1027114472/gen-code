@@ -88,6 +88,8 @@
 #### Promoted: Codex
 
 - `architecture-blueprint-generator`
+- `browser-use`
+- `chrome`
 - `frontend-design`
 - `golang-backend-development`
 - `imagegen`
@@ -102,8 +104,6 @@
 
 #### Needs-Trim: Codex
 
-- `browser-use`
-- `chrome`
 - `design-consultation`
 
 #### Ready: CC
@@ -164,12 +164,12 @@ Current ready-localization CC promotion result:
 
 ### Evidence behind current classification
 
-- `codex/browser-use`: about `340` files, about `7.08 MB`
-- `codex/chrome`: about `345` files, about `7.78 MB`
+- `codex/browser-use`: previously about `340` files, about `7.08 MB` before trim and canonical promotion
+- `codex/chrome`: previously about `345` files, about `7.78 MB` before trim and canonical promotion
 - `cc/canvas-design`: about `83` files, about `5.3 MB`
 - `cc/gstack`: about `6426` files, about `119.54 MB`
 
-These staged imports should not be promoted as-is because they would either bloat the active catalog or confuse the current governed skill model.
+These measurements explain why the large staged imports originally required trim or defer decisions before they could fit the governed skill baseline.
 
 ## Task 1: Freeze the promotion gate inventory
 

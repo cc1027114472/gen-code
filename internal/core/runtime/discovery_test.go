@@ -18,6 +18,8 @@ var governedProjectLocalSkillIDs = map[string][]string{
 	"codex": {
 		"babysit-pr",
 		"architecture-blueprint-generator",
+		"browser-use",
+		"chrome",
 		"code-review",
 		"code-review-breaking-changes",
 		"code-review-change-size",
