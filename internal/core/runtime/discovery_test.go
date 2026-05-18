@@ -57,6 +57,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"using-git-worktrees",
 		"use-my-browser",
 		"using-superpowers",
+		"vercel-react-best-practices",
 		"verification-before-completion",
 		"vite",
 		"web-design-guidelines",
@@ -338,7 +339,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.open",
 		Name:               "Browser Open",
-		Description:        "Open a new controlled local browser tab for a URL",
+		Description:        "Open a controlled browser tab for an allowlisted local or verified HTTPS URL",
 		InputSchemaSummary: `{"url":"http://127.0.0.1:3000/"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -349,7 +350,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.navigate",
 		Name:               "Browser Navigate",
-		Description:        "Navigate an existing controlled local browser tab to a URL",
+		Description:        "Navigate an existing controlled browser tab to an allowlisted local or verified HTTPS URL",
 		InputSchemaSummary: `{"tabId":"tab-1","url":"http://127.0.0.1:3000/"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -360,7 +361,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.click",
 		Name:               "Browser Click",
-		Description:        "Click a selector inside a controlled local browser tab",
+		Description:        "Click a selector inside a controlled browser tab",
 		InputSchemaSummary: `{"tabId":"tab-1","selector":"[data-testid='apply']"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -371,7 +372,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.type",
 		Name:               "Browser Type",
-		Description:        "Type text into a selector inside a controlled local browser tab",
+		Description:        "Type text into a selector inside a controlled browser tab",
 		InputSchemaSummary: `{"tabId":"tab-1","selector":"[data-testid='name']","text":"hello"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -382,7 +383,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.extract",
 		Name:               "Browser Extract",
-		Description:        "Extract text from a selector inside a controlled local browser tab",
+		Description:        "Extract text from a selector inside a controlled browser tab",
 		InputSchemaSummary: `{"tabId":"tab-1","selector":"[data-testid='result']"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -393,7 +394,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.screenshot",
 		Name:               "Browser Screenshot",
-		Description:        "Capture a screenshot for a controlled local browser tab",
+		Description:        "Capture a screenshot for a controlled browser tab",
 		InputSchemaSummary: `{"tabId":"tab-1"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
