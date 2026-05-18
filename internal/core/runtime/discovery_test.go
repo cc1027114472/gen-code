@@ -51,7 +51,9 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"breakdown-epic-pm",
 		"breakdown-feature-prd",
 		"canvas-design",
+		"careful",
 		"find-skills",
+		"freeze",
 		"create-implementation-plan",
 		"brainstorming",
 		"dispatching-parallel-agents",
@@ -71,6 +73,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"tailwindcss",
 		"test-driven-development",
 		"ui-ux-pro-max",
+		"unfreeze",
 		"using-git-worktrees",
 		"use-my-browser",
 		"using-superpowers",
@@ -320,6 +323,9 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 		CapabilityVerified:  false,
 		CapabilitySummary:   "missing primary skill document",
 	})
+	for _, item := range discovered.skills {
+		require.NotEqual(t, "gstack", item.ID)
+	}
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "deploy-helper",
 		Name:               "Deploy Helper",

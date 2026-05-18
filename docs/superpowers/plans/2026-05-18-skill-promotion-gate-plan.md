@@ -155,6 +155,12 @@ Current ready-localization CC promotion result:
 - `vercel-react-best-practices`
 - `skill-creator`
 
+Current `gstack` first split promotion result:
+
+- `careful`
+- `freeze`
+- `unfreeze`
+
 #### Needs-Trim: CC
 
 - none
@@ -162,6 +168,65 @@ Current ready-localization CC promotion result:
 #### Defer: CC
 
 - `gstack`
+
+Current meaning:
+
+- `gstack` is a suite-governance defer, not a normal single-skill `ready` or `needs-trim` item
+- no top-level `gstack` package is eligible for direct promotion in the current phase
+- the first lightweight split lane is complete for `careful`, `freeze`, and `unfreeze`
+- `guard` remains the next dependent follow-up because it explicitly depends on sibling `careful` and `freeze` assets
+
+### `gstack` Suite Governance Truth
+
+The staged tree under `internal/core/skill/imports/cc/gstack` is governed as a suite bundle. It stays outside the runtime-visible copied-skill baseline until a future suite-to-subskill split is designed and approved.
+
+Stable classification:
+
+- Suite infrastructure:
+  - top-level `package.json`
+  - `.gstack/`, `bin/`, `browse/`, `lib/`, `scripts/`, `supabase/`, `extension/`
+  - `node_modules/`, `test/`, and related bundled runtime, build, or test surfaces
+- Candidate sub-skills:
+  - nested directories with their own `SKILL.md`
+  - `careful`, `freeze`, and `unfreeze` have already been extracted into standalone `cc` copied packages and promoted
+  - `guard` remains a future split candidate, not a current promotion target
+- Non-promotable suite-only surfaces:
+  - telemetry, upgrade, routing, global-discover, repo-mode, learn/logging, browser-daemon, and related cross-skill orchestration flows
+
+Future `gstack` sub-skill eligibility rules:
+
+- must be a project-local self-contained copied package
+- must resolve all local scripts, templates, references, and user-visible guidance from within the retained package
+- must not depend on `~/.claude/skills/gstack/...`, `~/.gstack/...`, repo-external paths, or undeclared top-level suite helpers
+- must pass 1:1 Chinese localization audit
+- must pass mojibake review
+- must pass static capability audit
+- promotion packages must stay minimal and machine-usable:
+  - no automatic `node_modules` carryover
+  - no automatic `test/` carryover
+  - no automatic build artifact carryover unless the retained skill directly depends on it
+
+Stable blocker labels for future split candidates:
+
+- `suite-only dependency`
+- `missing standalone project-local truth`
+- `bundled runtime/tooling dependency`
+- `oversized asset bundle`
+- `localization pending`
+- `capability structure pending`
+
+Current product behavior lock:
+
+- do not add `catalog/cc/gstack`
+- do not add any `catalog/cc/<gstack-subskill>`
+- do not let runtime discovery read `imports/cc/gstack`
+- do not expose `gstack` or any nested `gstack` sub-skill through the current runtime-visible copied-skill baseline
+
+Next execution entry:
+
+- treat `guard` as the next sibling-aware split lane
+- after `guard`, choose 1 to 3 of the lightest remaining nested `gstack` skill candidates
+- for each candidate, define the minimal retained file set, suite-only exclusions, missing project-local truth, localization risk, and shared-infrastructure dependencies before starting trim or promotion work
 
 ### Evidence behind current classification
 

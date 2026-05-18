@@ -313,6 +313,9 @@ func TestLocalSkillCatalogUsesProjectLocalCopiedSkills(t *testing.T) {
 		"codex:code-review",
 		"codex:test-tui",
 		"cc:andrej-karpathy-skills",
+		"cc:careful",
+		"cc:freeze",
+		"cc:unfreeze",
 		"cc:writing-skills",
 	} {
 		item, ok := found[key]
@@ -328,6 +331,15 @@ func TestLocalSkillCatalogUsesProjectLocalCopiedSkills(t *testing.T) {
 	}
 	if !found["cc:writing-skills"].CapabilityVerified || found["cc:writing-skills"].CapabilitySummary == "" {
 		t.Fatal("expected project-local copied cc skill to expose capability verification")
+	}
+	if !found["cc:careful"].CapabilityVerified || found["cc:freeze"].CapabilitySummary == "" || !found["cc:unfreeze"].CapabilityVerified {
+		t.Fatal("expected promoted gstack split skills to expose stable capability verification")
+	}
+	if _, ok := found["cc:gstack"]; ok {
+		t.Fatal("expected deferred gstack suite to stay out of the runtime-visible fallback inventory")
+	}
+	if _, ok := found["cc:guard"]; ok {
+		t.Fatal("expected dependent follow-up guard skill to stay out of the runtime-visible fallback inventory")
 	}
 }
 

@@ -143,8 +143,11 @@ Why:
 
 - `agent-browser`
 - `canvas-design`
+- `careful`
+- `freeze`
 - `planning-with-files`
 - `ui-ux-pro-max`
+- `unfreeze`
 - `use-my-browser`
 
 Why:
@@ -153,6 +156,7 @@ Why:
 - retained user-visible markdown, templates, and script-facing guidance were completed with 1:1 Chinese localization
 - each promoted copy passed mojibake review, localization audit, and static capability verification before entering `catalog/cc`
 - `ui-ux-pro-max` was first rebuilt from a placeholder shell into a self-contained project-local package with `scripts/search.py` plus the minimal retained data files needed for `--design-system`, `--domain`, and `--stack` flows
+- `careful`, `freeze`, and `unfreeze` were extracted from the deferred `gstack` suite into standalone project-local copied packages so they could enter the normal `cc` promotion lane without making the full suite runtime-visible
 
 Promote target:
 
@@ -172,8 +176,10 @@ Blocking checks:
 
 Why:
 
-- `gstack` is the largest staged import and includes many nested sub-skills and support assets
-- it behaves more like a governed suite or bundled tool ecosystem than a normal single promoted skill
+- `gstack` is no longer tracked as a generic oversize defer; it is explicitly treated as a suite-governance defer
+- the staged package combines copied skill candidates with suite infrastructure, bundled tooling, browser runtime assets, build scripts, tests, and vendored dependencies
+- it behaves more like a governed suite or bundled tool ecosystem than a normal single promoted skill, so it cannot enter `catalog/cc` through the ordinary per-skill promotion lane
+- the first lightweight split lane is now complete for `careful`, `freeze`, and `unfreeze`, while `guard` remains the next dependent follow-up because it references sibling safety skills
 
 Promote target:
 
@@ -181,10 +187,46 @@ Promote target:
 
 Blocking checks:
 
-- separate bundle-governance design
+- suite-to-subskill governance design
 - explicit sub-skill visibility policy
 - runtime exposure policy
 - asset-retention policy
+- project-local standalone truth per future sub-skill
+- per-sub-skill localization, mojibake, and capability gates
+
+#### `gstack` Suite Governance Classification
+
+This section records the stable classification truth for `internal/core/skill/imports/cc/gstack`. It is governance evidence only and does not change runtime discovery.
+
+Suite infrastructure:
+
+- top-level `package.json` and bundled workspace metadata
+- `.gstack/`, `bin/`, `browse/`, `lib/`, `scripts/`, `supabase/`, `extension/`
+- `node_modules/`, `test/`, and other build/test/runtime support trees
+
+Candidate sub-skills:
+
+- directory skills with their own `SKILL.md`, such as `autoplan`, `benchmark`, `browse`, `canary`, `codex`, `connect-chrome`, `cso`, `design-consultation`, `design-html`, `design-review`, `design-shotgun`, `document-release`, `gstack-upgrade`, `guard`, `investigate`, `land-and-deploy`, `learn`, `office-hours`, `plan-ceo-review`, `plan-design-review`, `plan-eng-review`, `qa`, `qa-only`, `review`, `setup-browser-cookies`, `setup-deploy`, `ship`, and `unfreeze`
+- `careful`, `freeze`, and `unfreeze` have already been extracted into standalone `cc` copied packages and promoted through the normal skill lane
+- `guard` remains in the suite candidate set as the next dependent follow-up because it explicitly references sibling `careful` and `freeze` hook assets
+
+Non-promotable suite-only surfaces:
+
+- telemetry, upgrade, routing, global-discover, repo-mode, learn/logging, and browser-daemon style flows that coordinate multiple skills or the broader suite runtime
+- shared build, compile, browser server, and extension-host flows that support the suite as a product rather than a single governed copied skill
+
+Stable blocker labels for future `gstack` split work:
+
+- `suite-only dependency`
+- `missing standalone project-local truth`
+- `bundled runtime/tooling dependency`
+- `oversized asset bundle`
+- `localization pending`
+- `capability structure pending`
+
+Future split entry rule:
+
+- future work must start by selecting 1 to 3 of the lightest and least-coupled candidate sub-skills, then defining the minimal retained file set, suite-only exclusions, project-local truth gaps, and localization risk before any trim or promotion work begins
 
 ## Current Boundaries
 
