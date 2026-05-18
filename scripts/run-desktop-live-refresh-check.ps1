@@ -8,12 +8,14 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $env:GEN_CODE_UI_BASE_URL = if ($env:GEN_CODE_UI_BASE_URL) { $env:GEN_CODE_UI_BASE_URL } else { "http://127.0.0.1:5174/" }
 $env:GEN_CODE_API_BASE_URL = if ($env:GEN_CODE_API_BASE_URL) { $env:GEN_CODE_API_BASE_URL } else { "http://127.0.0.1:10008" }
 $env:GEN_CODE_ACCEPTANCE_MODE = "full"
+$env:GEN_CODE_BROWSER_ONLY_ACCEPTANCE = if ($env:GEN_CODE_BROWSER_ONLY_ACCEPTANCE) { $env:GEN_CODE_BROWSER_ONLY_ACCEPTANCE } else { "0" }
 $env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE = if ($env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE) { $env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE } else { "required" }
-$env:GEN_CODE_BROWSER_PUBLIC_BASE_URL = if ($env:GEN_CODE_BROWSER_PUBLIC_BASE_URL) { $env:GEN_CODE_BROWSER_PUBLIC_BASE_URL } else { "https://example.com/" }
+$env:GEN_CODE_BROWSER_PUBLIC_TARGETS = if ($env:GEN_CODE_BROWSER_PUBLIC_TARGETS) { $env:GEN_CODE_BROWSER_PUBLIC_TARGETS } else { "https://example.com/,https://example.org/" }
+$env:GEN_CODE_BROWSER_PUBLIC_BASE_URL = if ($env:GEN_CODE_BROWSER_PUBLIC_BASE_URL) { $env:GEN_CODE_BROWSER_PUBLIC_BASE_URL } else { (($env:GEN_CODE_BROWSER_PUBLIC_TARGETS -split ",")[0]).Trim() }
 $env:GOTOOLCHAIN = if ($env:GOTOOLCHAIN) { $env:GOTOOLCHAIN } else { "auto" }
 $env:PYTHONIOENCODING = if ($env:PYTHONIOENCODING) { $env:PYTHONIOENCODING } else { "utf-8" }
 $scriptPath = Join-Path $projectRoot "scripts\verify-desktop-live-refresh.py"
-$baselineLane = "canonical remote browser acceptance with desktop copy/runtime checks, authenticated fixture lane, and public-web read-only lane (5174 + 10008)"
+$baselineLane = "canonical remote browser acceptance with desktop copy/runtime checks, richer authenticated fixture lane, and multi-site public-web read-only lanes (5174 + 10008)"
 
 Write-Host "Desktop live refresh and copy/runtime alignment check"
 Write-Host "  project root : $projectRoot"
@@ -22,8 +24,9 @@ Write-Host "  script       : $scriptPath"
 Write-Host "  UI base URL  : $env:GEN_CODE_UI_BASE_URL"
 Write-Host "  API base URL : $env:GEN_CODE_API_BASE_URL"
 Write-Host "  mode         : $env:GEN_CODE_ACCEPTANCE_MODE"
-Write-Host "  public web   : mode=$env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE target=$env:GEN_CODE_BROWSER_PUBLIC_BASE_URL"
-Write-Host "  failures     : remote canonical live matrix + browser navigation/authenticated/public-web lanes + fallback evidence-only"
+Write-Host "  browser-only : $env:GEN_CODE_BROWSER_ONLY_ACCEPTANCE"
+Write-Host "  public web   : mode=$env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE targets=$env:GEN_CODE_BROWSER_PUBLIC_TARGETS"
+Write-Host "  failures     : remote canonical live matrix + browser navigation/richer-authenticated/multi-site-public-web lanes + fallback evidence-only"
 
 if (-not (Test-Path $scriptPath)) {
   Write-Error "Setup failure: verify-desktop-live-refresh.py not found at $scriptPath"
@@ -58,7 +61,7 @@ $frontendStdout = Join-Path $projectRoot "desktop\frontend\vite-full.stdout.log"
 $frontendStderr = Join-Path $projectRoot "desktop\frontend\vite-full.stderr.log"
 $serverStdout = Join-Path $projectRoot "server-full.stdout.log"
 $serverStderr = Join-Path $projectRoot "server-full.stderr.log"
-$forceCurrentBootstrap = if ($env:GEN_CODE_FORCE_CURRENT_BOOTSTRAP) { $env:GEN_CODE_FORCE_CURRENT_BOOTSTRAP -ne "0" } else { $true }
+$forceCurrentBootstrap = if ($env:GEN_CODE_FORCE_CURRENT_BOOTSTRAP) { $env:GEN_CODE_FORCE_CURRENT_BOOTSTRAP -ne "0" } else { $false }
 
 if (-not (Test-Path $artifactRoot)) {
   New-Item -ItemType Directory -Path $artifactRoot | Out-Null
@@ -66,17 +69,34 @@ if (-not (Test-Path $artifactRoot)) {
 $env:GEN_CODE_ARTIFACT_DIR = $artifactRoot
 $publicBrowserMode = $env:GEN_CODE_BROWSER_PUBLIC_WEB_MODE.Trim().ToLowerInvariant()
 $publicBrowserSkipModes = @("skip", "disabled", "off", "false", "0")
-$publicBrowserHost = ""
+$publicBrowserTargets = @()
+$publicBrowserHosts = @()
+if ($env:GEN_CODE_BROWSER_PUBLIC_TARGETS) {
+  $publicBrowserTargets = @(
+    $env:GEN_CODE_BROWSER_PUBLIC_TARGETS -split "[,\r\n]" |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      ForEach-Object { $_.Trim() }
+  )
+}
+if ($publicBrowserTargets.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($env:GEN_CODE_BROWSER_PUBLIC_BASE_URL)) {
+  $publicBrowserTargets = @($env:GEN_CODE_BROWSER_PUBLIC_BASE_URL.Trim())
+}
 if ($publicBrowserSkipModes -notcontains $publicBrowserMode) {
-  try {
-    $publicBrowserUri = [System.Uri]$env:GEN_CODE_BROWSER_PUBLIC_BASE_URL
-    if ($publicBrowserUri.Scheme -ne "https" -or [string]::IsNullOrWhiteSpace($publicBrowserUri.Host)) {
-      throw "public-web lane requires one explicit HTTPS target"
-    }
-    $publicBrowserHost = $publicBrowserUri.Host
-  } catch {
-    Write-Error "Setup failure: invalid GEN_CODE_BROWSER_PUBLIC_BASE_URL '$($env:GEN_CODE_BROWSER_PUBLIC_BASE_URL)'. $_"
+  if ($publicBrowserTargets.Count -eq 0) {
+    Write-Error "Setup failure: public-web lane requires at least one explicit HTTPS target"
     exit 2
+  }
+  foreach ($target in $publicBrowserTargets) {
+    try {
+      $publicBrowserUri = [System.Uri]$target
+      if ($publicBrowserUri.Scheme -ne "https" -or [string]::IsNullOrWhiteSpace($publicBrowserUri.Host)) {
+        throw "public-web lane requires HTTPS targets"
+      }
+      $publicBrowserHosts += $publicBrowserUri.Host
+    } catch {
+      Write-Error "Setup failure: invalid public-web target '$target'. $_"
+      exit 2
+    }
   }
 }
 $existingAllowedHosts = @()
@@ -86,8 +106,8 @@ if ($env:GENCODE_BROWSER_ALLOWED_HOSTS) {
 if ($env:GEN_CODE_BROWSER_ALLOWED_HOSTS) {
   $existingAllowedHosts += ($env:GEN_CODE_BROWSER_ALLOWED_HOSTS -split ",")
 }
-if (-not [string]::IsNullOrWhiteSpace($publicBrowserHost)) {
-  $existingAllowedHosts += $publicBrowserHost
+if ($publicBrowserHosts.Count -gt 0) {
+  $existingAllowedHosts += $publicBrowserHosts
 }
 $normalizedAllowedHosts = @(
   $existingAllowedHosts |
@@ -110,6 +130,30 @@ $browserPolicy = @{
           path = "/"
           sameSite = "Lax"
         }
+        @{
+          name = "gc_auth_profile"
+          value = "acceptance"
+          path = "/"
+          sameSite = "Lax"
+        }
+        @{
+          name = "gc_auth_role"
+          value = "reader"
+          path = "/"
+          sameSite = "Lax"
+        }
+        @{
+          name = "gc_auth_scope"
+          value = "controlled"
+          path = "/"
+          sameSite = "Lax"
+        }
+        @{
+          name = "gc_auth_transport"
+          value = "cookie"
+          path = "/"
+          sameSite = "Lax"
+        }
       )
     }
     "localhost" = @{
@@ -121,6 +165,30 @@ $browserPolicy = @{
           path = "/"
           sameSite = "Lax"
         }
+        @{
+          name = "gc_auth_profile"
+          value = "acceptance"
+          path = "/"
+          sameSite = "Lax"
+        }
+        @{
+          name = "gc_auth_role"
+          value = "reader"
+          path = "/"
+          sameSite = "Lax"
+        }
+        @{
+          name = "gc_auth_scope"
+          value = "controlled"
+          path = "/"
+          sameSite = "Lax"
+        }
+        @{
+          name = "gc_auth_transport"
+          value = "cookie"
+          path = "/"
+          sameSite = "Lax"
+        }
       )
     }
   }
@@ -128,7 +196,7 @@ $browserPolicy = @{
 $browserPolicy | ConvertTo-Json -Depth 8 | Set-Content -Path $browserPolicyPath -Encoding UTF8
 $env:GENCODE_BROWSER_POLICY_FILE = $browserPolicyPath
 $env:GEN_CODE_BROWSER_POLICY_FILE = $browserPolicyPath
-Write-Host "  browser cfg  : policy=$browserPolicyPath allowedHosts=$allowedHostsValue"
+Write-Host "  browser cfg  : policy=$browserPolicyPath allowedHosts=$allowedHostsValue targets=$($publicBrowserTargets -join ',')"
 
 function Wait-HttpOk {
   param(

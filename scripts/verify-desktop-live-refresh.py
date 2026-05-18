@@ -20,9 +20,18 @@ ACCEPTANCE_MODE = os.environ.get("GEN_CODE_ACCEPTANCE_MODE", "full").strip().low
 ARTIFACT_DIR = os.environ.get("GEN_CODE_ARTIFACT_DIR", os.path.join("tmp", "desktop-smoke-artifacts"))
 EMBEDDED_PREVIEW_PARAM = "gcPreview"
 AUTHENTICATED_SESSION_LABEL = "session=acceptance-session"
-AUTHENTICATED_RESULT_TEXT = "identity=authenticated-browser;session=acceptance-session;scope=controlled"
+AUTHENTICATED_PROFILE_LABEL = "profile=acceptance"
+AUTHENTICATED_ROLE_LABEL = "role=reader"
+AUTHENTICATED_SCOPE_LABEL = "scope=controlled"
+AUTHENTICATED_TRANSPORT_LABEL = "transport=cookie"
+AUTHENTICATED_RESULT_TEXT = (
+    "identity=authenticated-browser;session=acceptance-session;profile=acceptance;"
+    "role=reader;scope=controlled"
+)
 PUBLIC_BROWSER_BASE_URL = os.environ.get("GEN_CODE_BROWSER_PUBLIC_BASE_URL", "https://example.com/").strip()
+PUBLIC_BROWSER_TARGETS_RAW = os.environ.get("GEN_CODE_BROWSER_PUBLIC_TARGETS", "").strip()
 PUBLIC_BROWSER_MODE = os.environ.get("GEN_CODE_BROWSER_PUBLIC_WEB_MODE", "required").strip().lower() or "required"
+BROWSER_ONLY_ACCEPTANCE = os.environ.get("GEN_CODE_BROWSER_ONLY_ACCEPTANCE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 SECOND_BATCH_TOOL_KINDS = {
     "workspace.stat_file",
@@ -198,6 +207,35 @@ def fail(message: str, *, category: str, details=None):
     raise RuntimeError(json.dumps(payload, ensure_ascii=False))
 
 
+def parse_env_list(raw: str) -> list[str]:
+    text = (raw or "").strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    items = []
+    for line in text.replace("\r", "\n").split("\n"):
+        for part in line.split(","):
+            value = part.strip()
+            if value:
+                items.append(value)
+    return items
+
+
+def resolve_public_web_targets() -> list[str]:
+    targets = parse_env_list(PUBLIC_BROWSER_TARGETS_RAW)
+    if targets:
+        return targets
+    if PUBLIC_BROWSER_BASE_URL:
+        return [PUBLIC_BROWSER_BASE_URL]
+    return []
+
+
 def classify_public_web_mode() -> dict:
     if PUBLIC_BROWSER_MODE in PUBLIC_WEB_SKIP_MODES:
         return {
@@ -206,18 +244,21 @@ def classify_public_web_mode() -> dict:
             "classification": "disabled-by-config",
             "reason": f"public-web lane disabled by GEN_CODE_BROWSER_PUBLIC_WEB_MODE={PUBLIC_BROWSER_MODE!r}",
         }
-    if not PUBLIC_BROWSER_BASE_URL:
+    target_urls = resolve_public_web_targets()
+    if not target_urls:
         return {
             "enabled": False,
             "status": "skipped",
             "classification": "missing-target-url",
-            "reason": "GEN_CODE_BROWSER_PUBLIC_BASE_URL is empty",
+            "reason": "GEN_CODE_BROWSER_PUBLIC_BASE_URL / GEN_CODE_BROWSER_PUBLIC_TARGETS is empty",
         }
     return {
         "enabled": True,
         "status": "required",
         "classification": "configured",
-        "targetUrl": PUBLIC_BROWSER_BASE_URL,
+        "targetUrl": target_urls[0],
+        "targetUrls": target_urls,
+        "targetCount": len(target_urls),
     }
 
 
@@ -1102,7 +1143,91 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
                 "actualSummary": session_result["record"]["summary"],
             },
         )
-    extract_result = run_browser_navigation_scenario(
+    profile_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser authenticated profile {run_id}",
+            "kind": "browser.extract",
+            "input": {"tabId": authenticated_tab_id, "selector": "[data-testid='authenticated-browser-profile']"},
+            "summary_contains": "browser extract completed",
+            "lane": "authenticated browser canonical lane",
+            "ui_optional": True,
+        },
+    )
+    if AUTHENTICATED_PROFILE_LABEL not in profile_result["record"]["summary"]:
+        fail(
+            "authenticated browser profile extract did not return the expected profile label",
+            category="authenticated-browser-assertion",
+            details={
+                "expectedProfileLabel": AUTHENTICATED_PROFILE_LABEL,
+                "actualSummary": profile_result["record"]["summary"],
+            },
+        )
+    role_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser authenticated role {run_id}",
+            "kind": "browser.extract",
+            "input": {"tabId": authenticated_tab_id, "selector": "[data-testid='authenticated-browser-role']"},
+            "summary_contains": "browser extract completed",
+            "lane": "authenticated browser canonical lane",
+            "ui_optional": True,
+        },
+    )
+    if AUTHENTICATED_ROLE_LABEL not in role_result["record"]["summary"]:
+        fail(
+            "authenticated browser role extract did not return the expected role label",
+            category="authenticated-browser-assertion",
+            details={
+                "expectedRoleLabel": AUTHENTICATED_ROLE_LABEL,
+                "actualSummary": role_result["record"]["summary"],
+            },
+        )
+    scope_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser authenticated scope {run_id}",
+            "kind": "browser.extract",
+            "input": {"tabId": authenticated_tab_id, "selector": "[data-testid='authenticated-browser-scope']"},
+            "summary_contains": "browser extract completed",
+            "lane": "authenticated browser canonical lane",
+            "ui_optional": True,
+        },
+    )
+    if AUTHENTICATED_SCOPE_LABEL not in scope_result["record"]["summary"]:
+        fail(
+            "authenticated browser scope extract did not return the expected scope label",
+            category="authenticated-browser-assertion",
+            details={
+                "expectedScopeLabel": AUTHENTICATED_SCOPE_LABEL,
+                "actualSummary": scope_result["record"]["summary"],
+            },
+        )
+    transport_result = run_browser_navigation_scenario(
+        page,
+        thread_id,
+        {
+            "title": f"Browser authenticated transport {run_id}",
+            "kind": "browser.extract",
+            "input": {"tabId": authenticated_tab_id, "selector": "[data-testid='authenticated-browser-transport']"},
+            "summary_contains": "browser extract completed",
+            "lane": "authenticated browser canonical lane",
+            "ui_optional": True,
+        },
+    )
+    if AUTHENTICATED_TRANSPORT_LABEL not in transport_result["record"]["summary"]:
+        fail(
+            "authenticated browser transport extract did not return the expected transport label",
+            category="authenticated-browser-assertion",
+            details={
+                "expectedTransportLabel": AUTHENTICATED_TRANSPORT_LABEL,
+                "actualSummary": transport_result["record"]["summary"],
+            },
+        )
+    identity_result = run_browser_navigation_scenario(
         page,
         thread_id,
         {
@@ -1114,13 +1239,13 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
             "ui_optional": True,
         },
     )
-    if AUTHENTICATED_RESULT_TEXT not in extract_result["record"]["summary"]:
+    if AUTHENTICATED_RESULT_TEXT not in identity_result["record"]["summary"]:
         fail(
             "authenticated browser extract did not return the expected stable identity token",
             category="authenticated-browser-assertion",
             details={
                 "expectedResultText": AUTHENTICATED_RESULT_TEXT,
-                "actualSummary": extract_result["record"]["summary"],
+                "actualSummary": identity_result["record"]["summary"],
             },
         )
     screenshot_result = run_browser_navigation_scenario(
@@ -1140,28 +1265,67 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
     )
     return {
         "status": "passed",
-        "taskIds": [open_result["task"]["id"], session_result["task"]["id"], extract_result["task"]["id"], screenshot_result["task"]["id"]],
-        "taskKinds": [open_result["task"]["kind"], session_result["task"]["kind"], extract_result["task"]["kind"], screenshot_result["task"]["kind"]],
+        "taskIds": [
+            open_result["task"]["id"],
+            session_result["task"]["id"],
+            profile_result["task"]["id"],
+            role_result["task"]["id"],
+            scope_result["task"]["id"],
+            transport_result["task"]["id"],
+            identity_result["task"]["id"],
+            screenshot_result["task"]["id"],
+        ],
+        "taskKinds": [
+            open_result["task"]["kind"],
+            session_result["task"]["kind"],
+            profile_result["task"]["kind"],
+            role_result["task"]["kind"],
+            scope_result["task"]["kind"],
+            transport_result["task"]["kind"],
+            identity_result["task"]["kind"],
+            screenshot_result["task"]["kind"],
+        ],
         "resultSummaries": [
             open_result["task"]["resultSummary"],
             session_result["task"]["resultSummary"],
-            extract_result["task"]["resultSummary"],
+            profile_result["task"]["resultSummary"],
+            role_result["task"]["resultSummary"],
+            scope_result["task"]["resultSummary"],
+            transport_result["task"]["resultSummary"],
+            identity_result["task"]["resultSummary"],
             screenshot_result["task"]["resultSummary"],
         ],
         "tabId": authenticated_tab_id,
         "tabUrl": authenticated_tab_url,
         "fixtureURL": fixture_url,
         "sessionLabel": AUTHENTICATED_SESSION_LABEL,
+        "profileLabel": AUTHENTICATED_PROFILE_LABEL,
+        "roleLabel": AUTHENTICATED_ROLE_LABEL,
+        "scopeLabel": AUTHENTICATED_SCOPE_LABEL,
+        "transportLabel": AUTHENTICATED_TRANSPORT_LABEL,
         "resultText": AUTHENTICATED_RESULT_TEXT,
         "artifactPath": screenshot_artifact["path"],
         "screenshotArtifactPath": screenshot_artifact["path"],
         "visibility": {
             "openVisible": is_scenario_visible(open_result["visibility"]),
             "sessionVisible": is_scenario_visible(session_result["visibility"]) or session_result.get("uiOptional", False),
-            "extractVisible": is_scenario_visible(extract_result["visibility"]) or extract_result.get("uiOptional", False),
+            "profileVisible": is_scenario_visible(profile_result["visibility"]) or profile_result.get("uiOptional", False),
+            "roleVisible": is_scenario_visible(role_result["visibility"]) or role_result.get("uiOptional", False),
+            "scopeVisible": is_scenario_visible(scope_result["visibility"]) or scope_result.get("uiOptional", False),
+            "transportVisible": is_scenario_visible(transport_result["visibility"]) or transport_result.get("uiOptional", False),
+            "extractVisible": is_scenario_visible(identity_result["visibility"]) or identity_result.get("uiOptional", False),
             "screenshotVisible": is_scenario_visible(screenshot_result["visibility"]),
         },
-        "records": [open_result, session_result, extract_result, screenshot_result],
+        "records": [
+            open_result,
+            session_result,
+            profile_result,
+            role_result,
+            scope_result,
+            transport_result,
+            identity_result,
+            screenshot_result,
+        ],
     }
 
 
@@ -1169,81 +1333,144 @@ def run_public_web_browser_scenario(page, thread_id: str, run_id: str) -> dict:
     mode = classify_public_web_mode()
     if not mode["enabled"]:
         return mode
-    target_url = validate_public_web_target(PUBLIC_BROWSER_BASE_URL)
-    preflight = preflight_public_web_target(target_url)
-    open_result = run_browser_navigation_scenario(
-        page,
-        thread_id,
-        {
-            "title": f"Browser public open {run_id}",
-            "kind": "browser.open",
-            "input": {"url": target_url},
-            "summary_contains": "browser tab opened",
-            "lane": "public-web read-only browser lane",
-        },
-    )
-    public_tab_id = resolve_browser_tab_id(open_result)
-    public_tab_url = get_browser_tab_url(public_tab_id)
-    extract_result = run_browser_navigation_scenario(
-        page,
-        thread_id,
-        {
-            "title": f"Browser public extract {run_id}",
-            "kind": "browser.extract",
-            "input": {"tabId": public_tab_id, "selector": "h1"},
-            "summary_contains": "browser extract completed",
-            "lane": "public-web read-only browser lane",
-            "ui_optional": True,
-        },
-    )
-    parsed_target = urllib.parse.urlparse(target_url)
-    parsed_active = urllib.parse.urlparse(public_tab_url)
-    if parsed_active.scheme != "https" or parsed_active.hostname != parsed_target.hostname:
-        fail(
-            "public-web browser lane did not stay on the configured allowlisted host",
-            category="public-web-assertion",
-            details={
-                "targetUrl": target_url,
-                "activeTabUrl": public_tab_url,
+    target_urls = [validate_public_web_target(item) for item in mode.get("targetUrls", [])]
+    preflights = [preflight_public_web_target(item) for item in target_urls]
+    all_task_ids = []
+    all_task_kinds = []
+    all_result_summaries = []
+    all_records = []
+    target_results = []
+    public_tab_id = ""
+    public_tab_url = ""
+    last_extract_summary = ""
+    last_artifact_path = ""
+
+    for index, target_url in enumerate(target_urls):
+        preflight = preflights[index]
+        if index == 0:
+            navigation_result = run_browser_navigation_scenario(
+                page,
+                thread_id,
+                {
+                    "title": f"Browser public open {index + 1} {run_id}",
+                    "kind": "browser.open",
+                    "input": {"url": target_url},
+                    "summary_contains": "browser tab opened",
+                    "lane": "public-web read-only browser lane",
+                },
+            )
+        else:
+            navigation_result = run_browser_navigation_scenario(
+                page,
+                thread_id,
+                {
+                    "title": f"Browser public navigate {index + 1} {run_id}",
+                    "kind": "browser.navigate",
+                    "input": {"tabId": public_tab_id, "url": target_url},
+                    "summary_contains": "browser tab navigated",
+                    "lane": "public-web read-only browser lane",
+                },
+            )
+        public_tab_id = resolve_browser_tab_id(navigation_result)
+        public_tab_url = get_browser_tab_url(public_tab_id)
+        extract_result = run_browser_navigation_scenario(
+            page,
+            thread_id,
+            {
+                "title": f"Browser public extract {index + 1} {run_id}",
+                "kind": "browser.extract",
+                "input": {"tabId": public_tab_id, "selector": "h1"},
+                "summary_contains": "browser extract completed",
+                "lane": "public-web read-only browser lane",
+                "ui_optional": True,
             },
         )
-    screenshot_result = run_browser_navigation_scenario(
-        page,
-        thread_id,
-        {
-            "title": f"Browser public screenshot {run_id}",
-            "kind": "browser.screenshot",
-            "input": {"tabId": public_tab_id},
-            "summary_contains": "browser screenshot captured",
-            "lane": "public-web read-only browser lane",
-        },
-    )
-    screenshot_artifact = wait_for_artifact(
-        thread_id,
-        lambda item: item["kind"] == "browser.screenshot" and item["path"] in screenshot_result["task"]["resultSummary"],
-    )
+        parsed_target = urllib.parse.urlparse(target_url)
+        parsed_active = urllib.parse.urlparse(public_tab_url)
+        preflight_final_host = urllib.parse.urlparse(preflight.get("finalUrl", "")).hostname
+        allowed_hosts = {parsed_target.hostname, preflight_final_host}
+        if parsed_active.scheme != "https" or parsed_active.hostname not in allowed_hosts:
+            fail(
+                "public-web browser lane did not stay on the configured allowlisted host",
+                category="public-web-assertion",
+                details={
+                    "targetUrl": target_url,
+                    "activeTabUrl": public_tab_url,
+                    "allowedHosts": sorted([host for host in allowed_hosts if host]),
+                },
+            )
+        screenshot_result = run_browser_navigation_scenario(
+            page,
+            thread_id,
+            {
+                "title": f"Browser public screenshot {index + 1} {run_id}",
+                "kind": "browser.screenshot",
+                "input": {"tabId": public_tab_id},
+                "summary_contains": "browser screenshot captured",
+                "lane": "public-web read-only browser lane",
+            },
+        )
+        screenshot_artifact = wait_for_artifact(
+            thread_id,
+            lambda item: item["kind"] == "browser.screenshot" and item["path"] in screenshot_result["task"]["resultSummary"],
+        )
+        last_extract_summary = extract_result["record"]["summary"]
+        last_artifact_path = screenshot_artifact["path"]
+        scenario_records = [navigation_result, extract_result, screenshot_result]
+        all_records.extend(scenario_records)
+        all_task_ids.extend(item["task"]["id"] for item in scenario_records)
+        all_task_kinds.extend(item["task"]["kind"] for item in scenario_records)
+        all_result_summaries.extend(item["task"]["resultSummary"] for item in scenario_records)
+        target_results.append(
+            {
+                "index": index + 1,
+                "targetUrl": target_url,
+                "finalUrl": public_tab_url,
+                "tabId": public_tab_id,
+                "preflight": preflight,
+                "taskIds": [item["task"]["id"] for item in scenario_records],
+                "taskKinds": [item["task"]["kind"] for item in scenario_records],
+                "resultSummaries": [item["task"]["resultSummary"] for item in scenario_records],
+                "extractSummary": extract_result["record"]["summary"],
+                "artifactPath": screenshot_artifact["path"],
+                "visibility": {
+                    "navigationVisible": is_scenario_visible(navigation_result["visibility"]),
+                    "extractVisible": is_scenario_visible(extract_result["visibility"]) or extract_result.get("uiOptional", False),
+                    "screenshotVisible": is_scenario_visible(screenshot_result["visibility"]),
+                },
+            }
+        )
     return {
         "enabled": True,
         "status": "passed",
         "classification": "required-and-passed",
         "required": True,
-        "taskIds": [open_result["task"]["id"], extract_result["task"]["id"], screenshot_result["task"]["id"]],
-        "taskKinds": [open_result["task"]["kind"], extract_result["task"]["kind"], screenshot_result["task"]["kind"]],
-        "resultSummaries": [open_result["task"]["resultSummary"], extract_result["task"]["resultSummary"], screenshot_result["task"]["resultSummary"]],
+        "targetUrl": target_urls[0],
+        "targetUrls": target_urls,
+        "targetCount": len(target_urls),
+        "targetResults": target_results,
+        "taskIds": all_task_ids,
+        "taskKinds": all_task_kinds,
+        "resultSummaries": all_result_summaries,
         "tabId": public_tab_id,
         "tabUrl": public_tab_url,
-        "targetUrl": target_url,
         "transportScope": "public-web-read-only",
-        "preflight": preflight,
-        "extractSummary": extract_result["record"]["summary"],
-        "artifactPath": screenshot_artifact["path"],
-        "screenshotArtifactPath": screenshot_artifact["path"],
+        "preflight": preflights[0],
+        "preflights": preflights,
+        "extractSummary": last_extract_summary,
+        "artifactPath": last_artifact_path,
+        "screenshotArtifactPath": last_artifact_path,
         "visibility": {
-            "openVisible": is_scenario_visible(open_result["visibility"]),
-            "extractVisible": is_scenario_visible(extract_result["visibility"]) or extract_result.get("uiOptional", False),
-            "screenshotVisible": is_scenario_visible(screenshot_result["visibility"]),
+            "targetCount": len(target_results),
+            "targetsVisible": sum(
+                1
+                for item in target_results
+                if item["visibility"]["navigationVisible"]
+                and item["visibility"]["extractVisible"]
+                and item["visibility"]["screenshotVisible"]
+            ),
         },
-        "records": [open_result, extract_result, screenshot_result],
+        "records": all_records,
     }
 
 
@@ -1890,9 +2117,9 @@ def main() -> int:
                     page,
                     thread_id,
                     {
-                        "title": f"Browser open localhost {run_id}",
+                        "title": f"Browser open preview secondary {run_id}",
                         "kind": "browser.open",
-                        "input": {"url": "http://127.0.0.1:5174/"},
+                        "input": {"url": build_thread_preview_fixture_url(thread_id, thread_name, "thread-three")},
                         "summary_contains": "browser tab opened",
                         "lane": browser_lane,
                     },
@@ -1930,6 +2157,21 @@ def main() -> int:
             controlled_browser_result = run_controlled_browser_scenario(page, thread_id, thread_name, run_id)
             authenticated_browser_result = run_authenticated_browser_scenario(page, thread_id, thread_name, run_id)
             public_web_browser_result = run_public_web_browser_scenario(page, thread_id, run_id)
+            if BROWSER_ONLY_ACCEPTANCE:
+                result = build_browser_only_full_result(
+                    thread_id=thread_id,
+                    thread_name=thread_name,
+                    runtime_status=runtime_status,
+                    refresh_mode=refresh_mode,
+                    desktop_copy_runtime=desktop_copy_runtime,
+                    browser_results=browser_results,
+                    controlled_browser_result=controlled_browser_result,
+                    authenticated_browser_result=authenticated_browser_result,
+                    public_web_browser_result=public_web_browser_result,
+                )
+                write_json_artifact("desktop-full-summary.json", result)
+                print(json.dumps(result, ensure_ascii=False))
+                return 0
             mcp_execution_results = []
             for scenario in [
                 {
@@ -2404,7 +2646,23 @@ def validate_release_baseline(result: dict) -> None:
     authenticated_browser = remote_report.get("authenticatedBrowserVisibility") or {}
     if authenticated_browser.get("status") != "passed":
         raise AssertionError(f"authenticated browser lane did not pass: {authenticated_browser}")
-    for key in ("taskIds", "taskKinds", "resultSummaries", "tabId", "tabUrl", "fixtureURL", "sessionLabel", "resultText", "artifactPath", "screenshotArtifactPath", "visibility"):
+    for key in (
+        "taskIds",
+        "taskKinds",
+        "resultSummaries",
+        "tabId",
+        "tabUrl",
+        "fixtureURL",
+        "sessionLabel",
+        "profileLabel",
+        "roleLabel",
+        "scopeLabel",
+        "transportLabel",
+        "resultText",
+        "artifactPath",
+        "screenshotArtifactPath",
+        "visibility",
+    ):
         if key not in authenticated_browser:
             raise AssertionError(f"missing authenticated browser acceptance key: {key}")
     public_web_browser = remote_report.get("publicWebBrowserVisibility") or {}
@@ -2412,7 +2670,26 @@ def validate_release_baseline(result: dict) -> None:
     if public_web_status not in {"passed", "skipped"}:
         raise AssertionError(f"public-web browser lane must classify itself as passed or skipped: {public_web_browser}")
     if public_web_status == "passed":
-        for key in ("classification", "required", "taskIds", "taskKinds", "resultSummaries", "tabId", "tabUrl", "targetUrl", "transportScope", "preflight", "extractSummary", "artifactPath", "screenshotArtifactPath", "visibility"):
+        for key in (
+            "classification",
+            "required",
+            "taskIds",
+            "taskKinds",
+            "resultSummaries",
+            "tabId",
+            "tabUrl",
+            "targetUrl",
+            "targetUrls",
+            "targetCount",
+            "targetResults",
+            "transportScope",
+            "preflight",
+            "preflights",
+            "extractSummary",
+            "artifactPath",
+            "screenshotArtifactPath",
+            "visibility",
+        ):
             if key not in public_web_browser:
                 raise AssertionError(f"missing public-web browser acceptance key: {key}")
     else:
@@ -2443,6 +2720,93 @@ def validate_release_baseline(result: dict) -> None:
 
 def emit_release_baseline(result: dict) -> None:
     validate_release_baseline(result)
+
+
+def build_browser_only_full_result(
+    *,
+    thread_id: str,
+    thread_name: str,
+    runtime_status: dict,
+    refresh_mode: dict,
+    desktop_copy_runtime: dict,
+    browser_results: list,
+    controlled_browser_result: dict,
+    authenticated_browser_result: dict,
+    public_web_browser_result: dict,
+) -> dict:
+    acceptance_report = {
+        "remote": {
+            "mode": "browser-live",
+            "runtimeSource": runtime_status.get("runtimeSource", ""),
+            "runtimeTrust": runtime_status.get("runtimeTrust", ""),
+            "canonicalRuntimeUrl": runtime_status.get("canonicalRuntimeUrl", ""),
+            "uiBaseUrl": UI_BASE_URL,
+            "apiBaseUrl": API_BASE_URL,
+            "refreshMode": refresh_mode,
+            "copyAndRuntimeConsistency": desktop_copy_runtime,
+            "browserNavigationVisibility": {
+                "scenarioCount": len(browser_results),
+                "visibleByTitleCount": sum(
+                    1 for item in browser_results if item["visibility"]["taskCardVisible"]
+                ),
+                "visibleByToolKindFallbackCount": sum(
+                    1 for item in browser_results if item["visibility"]["toolKindVisible"]
+                ),
+            },
+            "controlledBrowserVisibility": controlled_browser_result,
+            "authenticatedBrowserVisibility": authenticated_browser_result,
+            "publicWebBrowserVisibility": public_web_browser_result,
+            "browserOnlyAcceptance": {
+                "enabled": True,
+                "skippedSections": [
+                    "direct-tools",
+                    "mcp-verified-lanes",
+                    "thread-mutations",
+                    "agent-run",
+                    "approval-flow",
+                    "write-execution",
+                    "rollback",
+                    "fallback-evidence",
+                ],
+            },
+        },
+        "fallback": {
+            "mode": "not-attempted",
+            "browserAutomation": "not attempted",
+            "reason": "browser-only acceptance isolates canonical remote browser lanes and skips fallback evidence collection",
+        },
+    }
+    return {
+        "ok": True,
+        "threadId": thread_id,
+        "threadName": thread_name,
+        "runtimeSource": runtime_status.get("runtimeSource", ""),
+        "runtimeTrust": runtime_status.get("runtimeTrust", ""),
+        "canonicalRuntimeUrl": runtime_status.get("canonicalRuntimeUrl", ""),
+        "uiBaseUrl": UI_BASE_URL,
+        "apiBaseUrl": API_BASE_URL,
+        "acceptanceMode": "full",
+        "refreshMode": refresh_mode,
+        "fallbackEvidenceMode": "not-attempted",
+        "browserOnlyAcceptance": True,
+        "browserNavigationTasks": [
+            {
+                "taskId": item["task"]["id"],
+                "title": item["task"]["title"],
+                "kind": item["task"]["kind"],
+                "lane": item["lane"],
+                "input": item["input"],
+                "resultSummary": item["task"]["resultSummary"],
+                "record": item["record"],
+                "visibility": item["visibility"],
+            }
+            for item in browser_results
+        ],
+        "controlledBrowserScenario": controlled_browser_result,
+        "authenticatedBrowserScenario": authenticated_browser_result,
+        "publicWebBrowserScenario": public_web_browser_result,
+        "acceptanceReport": acceptance_report,
+    }
 
 
 if __name__ == "__main__":
