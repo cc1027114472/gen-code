@@ -158,7 +158,13 @@ Current ready-localization CC promotion result:
 Current `gstack` first split promotion result:
 
 - `careful`
+- `connect-chrome`
 - `freeze`
+- `guard`
+- `setup-browser-cookies`
+- `setup-deploy`
+- `qa`
+- `review`
 - `unfreeze`
 
 #### Needs-Trim: CC
@@ -173,8 +179,8 @@ Current meaning:
 
 - `gstack` is a suite-governance defer, not a normal single-skill `ready` or `needs-trim` item
 - no top-level `gstack` package is eligible for direct promotion in the current phase
-- the first lightweight split lane is complete for `careful`, `freeze`, and `unfreeze`
-- `guard` remains the next dependent follow-up because it explicitly depends on sibling `careful` and `freeze` assets
+- the lightweight split lane is complete for `careful`, `freeze`, `unfreeze`, and the sibling-aware `guard`
+- the gstack-heavy preamble-retained lane is now complete for `setup-browser-cookies`, `connect-chrome`, `setup-deploy`, `qa`, and `review`
 
 ### `gstack` Suite Governance Truth
 
@@ -188,8 +194,7 @@ Stable classification:
   - `node_modules/`, `test/`, and related bundled runtime, build, or test surfaces
 - Candidate sub-skills:
   - nested directories with their own `SKILL.md`
-  - `careful`, `freeze`, and `unfreeze` have already been extracted into standalone `cc` copied packages and promoted
-  - `guard` remains a future split candidate, not a current promotion target
+- `careful`, `freeze`, `unfreeze`, `guard`, `setup-browser-cookies`, `connect-chrome`, `setup-deploy`, `qa`, and `review` have already been extracted into standalone `cc` copied packages and promoted
 - Non-promotable suite-only surfaces:
   - telemetry, upgrade, routing, global-discover, repo-mode, learn/logging, browser-daemon, and related cross-skill orchestration flows
 
@@ -224,8 +229,8 @@ Current product behavior lock:
 
 Next execution entry:
 
-- treat `guard` as the next sibling-aware split lane
-- after `guard`, choose 1 to 3 of the lightest remaining nested `gstack` skill candidates
+- choose 1 to 3 of the lightest remaining nested `gstack` skill candidates
+- prioritize heavier suite surfaces such as `ship`, `land-and-deploy`, or `browse`
 - for each candidate, define the minimal retained file set, suite-only exclusions, missing project-local truth, localization risk, and shared-infrastructure dependencies before starting trim or promotion work
 
 ### Evidence behind current classification

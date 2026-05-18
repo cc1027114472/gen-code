@@ -144,8 +144,14 @@ Why:
 - `agent-browser`
 - `canvas-design`
 - `careful`
+- `connect-chrome`
 - `freeze`
+- `guard`
 - `planning-with-files`
+- `setup-browser-cookies`
+- `setup-deploy`
+- `qa`
+- `review`
 - `ui-ux-pro-max`
 - `unfreeze`
 - `use-my-browser`
@@ -157,6 +163,9 @@ Why:
 - each promoted copy passed mojibake review, localization audit, and static capability verification before entering `catalog/cc`
 - `ui-ux-pro-max` was first rebuilt from a placeholder shell into a self-contained project-local package with `scripts/search.py` plus the minimal retained data files needed for `--design-system`, `--domain`, and `--stack` flows
 - `careful`, `freeze`, and `unfreeze` were extracted from the deferred `gstack` suite into standalone project-local copied packages so they could enter the normal `cc` promotion lane without making the full suite runtime-visible
+- `guard` followed as a sibling-aware copied skill that intentionally reuses the already promoted `careful` and `freeze` hook assets instead of duplicating them
+- `setup-browser-cookies`, `connect-chrome`, and `setup-deploy` were promoted as a gstack-heavy preamble-retained lane: the project-local copied truth is the cleaned and localized `SKILL.md`, while external browser, extension, user-state, and deploy-environment references remain documented as part of the workflow
+- `qa` and `review` now extend that same gstack-heavy preamble-retained lane with localized project-local `SKILL.md` copies plus their retained local markdown references and templates
 
 Promote target:
 
@@ -179,7 +188,7 @@ Why:
 - `gstack` is no longer tracked as a generic oversize defer; it is explicitly treated as a suite-governance defer
 - the staged package combines copied skill candidates with suite infrastructure, bundled tooling, browser runtime assets, build scripts, tests, and vendored dependencies
 - it behaves more like a governed suite or bundled tool ecosystem than a normal single promoted skill, so it cannot enter `catalog/cc` through the ordinary per-skill promotion lane
-- the first lightweight split lane is now complete for `careful`, `freeze`, and `unfreeze`, while `guard` remains the next dependent follow-up because it references sibling safety skills
+- the lightweight split lane is now complete for `careful`, `freeze`, `unfreeze`, and the sibling-aware `guard`
 
 Promote target:
 
@@ -207,8 +216,8 @@ Suite infrastructure:
 Candidate sub-skills:
 
 - directory skills with their own `SKILL.md`, such as `autoplan`, `benchmark`, `browse`, `canary`, `codex`, `connect-chrome`, `cso`, `design-consultation`, `design-html`, `design-review`, `design-shotgun`, `document-release`, `gstack-upgrade`, `guard`, `investigate`, `land-and-deploy`, `learn`, `office-hours`, `plan-ceo-review`, `plan-design-review`, `plan-eng-review`, `qa`, `qa-only`, `review`, `setup-browser-cookies`, `setup-deploy`, `ship`, and `unfreeze`
-- `careful`, `freeze`, and `unfreeze` have already been extracted into standalone `cc` copied packages and promoted through the normal skill lane
-- `guard` remains in the suite candidate set as the next dependent follow-up because it explicitly references sibling `careful` and `freeze` hook assets
+- `careful`, `freeze`, `unfreeze`, and `guard` have already been extracted into standalone `cc` copied packages and promoted through the normal skill lane
+- `qa` and `review` have now also been extracted into standalone `cc` copied packages with their retained local markdown assets promoted alongside them
 
 Non-promotable suite-only surfaces:
 
@@ -226,7 +235,7 @@ Stable blocker labels for future `gstack` split work:
 
 Future split entry rule:
 
-- future work must start by selecting 1 to 3 of the lightest and least-coupled candidate sub-skills, then defining the minimal retained file set, suite-only exclusions, project-local truth gaps, and localization risk before any trim or promotion work begins
+- future work should next focus on heavier remaining suite surfaces such as `ship`, `land-and-deploy`, or `browse`
 
 ## Current Boundaries
 

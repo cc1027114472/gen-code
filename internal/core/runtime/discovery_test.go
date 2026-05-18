@@ -52,8 +52,10 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"breakdown-feature-prd",
 		"canvas-design",
 		"careful",
+		"connect-chrome",
 		"find-skills",
 		"freeze",
+		"guard",
 		"create-implementation-plan",
 		"brainstorming",
 		"dispatching-parallel-agents",
@@ -63,15 +65,19 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"go-backend-clean-architecture",
 		"kb-audit-flow-prototype",
 		"planning-with-files",
+		"qa",
 		"receiving-code-review",
 		"ralph-loop",
 		"react-vite-expert",
+		"review",
 		"requesting-code-review",
 		"skill-creator",
 		"subagent-driven-development",
 		"systematic-debugging",
 		"tailwindcss",
 		"test-driven-development",
+		"setup-browser-cookies",
+		"setup-deploy",
 		"ui-ux-pro-max",
 		"unfreeze",
 		"using-git-worktrees",
@@ -493,6 +499,36 @@ func TestProjectLocalGovernedSkillCatalogIsFullyLocalized(t *testing.T) {
 			require.Equalf(t, group, item.Source, "expected source to remain stable for %s", key)
 			require.Truef(t, item.CapabilityVerified, "expected project-local copied skill %s to pass capability audit", key)
 			require.Equalf(t, "capability verified", item.CapabilitySummary, "expected project-local copied skill %s to report stable capability summary", key)
+		}
+	}
+}
+
+func TestGuardSiblingHookDependenciesResolveInProjectLocalCatalog(t *testing.T) {
+	workspace := workspaceRoot()
+
+	for _, path := range []string{
+		filepath.Join(workspace, "internal", "core", "skill", "imports", "cc", "guard", "SKILL.md"),
+		filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "guard", "SKILL.md"),
+		filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "careful", "bin", "check-careful.sh"),
+		filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "freeze", "bin", "check-freeze.sh"),
+		filepath.Join(workspace, "internal", "core", "skill", "imports", "cc", "careful", "bin", "check-careful.sh"),
+		filepath.Join(workspace, "internal", "core", "skill", "imports", "cc", "freeze", "bin", "check-freeze.sh"),
+	} {
+		_, err := os.Stat(path)
+		require.NoErrorf(t, err, "expected project-local guard dependency path to exist: %s", path)
+	}
+}
+
+func TestHeavyGstackCopiedSkillDocumentsExistInImportsAndCatalog(t *testing.T) {
+	workspace := workspaceRoot()
+
+	for _, id := range []string{"setup-browser-cookies", "connect-chrome", "setup-deploy", "qa", "review"} {
+		for _, root := range []string{
+			filepath.Join(workspace, "internal", "core", "skill", "imports", "cc"),
+			filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc"),
+		} {
+			_, err := os.Stat(filepath.Join(root, id, "SKILL.md"))
+			require.NoErrorf(t, err, "expected copied skill document to exist for %s under %s", id, root)
 		}
 	}
 }
