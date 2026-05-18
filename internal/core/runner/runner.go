@@ -34,6 +34,7 @@ const (
 	KindWorkspaceStat               = "workspace.stat_file"
 	KindWorkspaceReadBatch          = "workspace.read_files_batch"
 	KindConfigCheckEnv              = "config.check_env"
+	KindRuntimeCheckPrerequisites   = "runtime.check_prerequisites"
 	KindWorkspaceListFiltered       = "workspace.list_files_filtered"
 	KindWorkspaceSearchDetailed     = "workspace.search_text_detailed"
 	KindWorkspaceApplyPatch         = "workspace.apply_patch"
@@ -704,6 +705,11 @@ func (r *Runner) execute(ctx context.Context, threadID string, task session.Task
 			return "", err
 		}
 		return r.executeConfigCheckEnv(ctx, task.Input)
+	case KindRuntimeCheckPrerequisites:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		return r.executeRuntimeCheckPrerequisites(ctx, task.Input)
 	case KindWorkspaceListFiltered:
 		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
 			return "", err
@@ -1096,6 +1102,49 @@ func (r *Runner) executeConfigCheckEnv(ctx context.Context, raw string) (string,
 		return "", fmt.Errorf("config check failed: %s", summary)
 	}
 	return fmt.Sprintf("config check passed: %s", summary), nil
+}
+
+func (r *Runner) executeRuntimeCheckPrerequisites(ctx context.Context, raw string) (string, error) {
+	var input struct {
+		Workspace  string `json:"workspace"`
+		RequireEnv bool   `json:"requireEnv"`
+		Strict     bool   `json:"strict"`
+	}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &input); err != nil {
+			return "", err
+		}
+	}
+
+	workspaceRoot := r.registry.Workspace().ProjectRoot
+	scriptPath, err := resolveWorkspacePath(workspaceRoot, filepath.ToSlash(filepath.Join("tools", "check_runtime.py")))
+	if err != nil {
+		return "", err
+	}
+
+	args := []string{scriptPath}
+	if strings.TrimSpace(input.Workspace) != "" {
+		resolvedWorkspace, err := resolveWorkspacePath(workspaceRoot, input.Workspace)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--workspace", resolvedWorkspace)
+	}
+	if input.RequireEnv {
+		args = append(args, "--require-env")
+	}
+	if input.Strict {
+		args = append(args, "--strict")
+	}
+
+	command := exec.CommandContext(ctx, pythonExecutable(), args...)
+	command.Dir = workspaceRoot
+	output, err := command.CombinedOutput()
+	summary := compactSummary(string(output), 240)
+	if err != nil {
+		return "", fmt.Errorf("runtime check failed: %s", summary)
+	}
+	return fmt.Sprintf("runtime check passed: %s", summary), nil
 }
 
 func pythonExecutable() string {

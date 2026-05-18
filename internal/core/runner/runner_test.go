@@ -505,6 +505,70 @@ func TestRunnerFailsConfigCheckEnvToolForInvalidConfig(t *testing.T) {
 	require.Contains(t, result.ResultSummary, "broken.env")
 }
 
+func TestRunnerExecutesRuntimeCheckPrerequisitesTool(t *testing.T) {
+	projectRoot := t.TempDir()
+	scriptBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "tools", "check_runtime.py"))
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(projectRoot, "tools"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_runtime.py"), scriptBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "go.mod"), []byte("module example\n\ngo 1.24.0\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ".env.example"), []byte("APP_PORT=10008\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ".env"), []byte("APP_PORT=10008\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_config.py"), []byte("#!/usr/bin/env python3\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(projectRoot, "internal", "core"), 0o755))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Runtime Check",
+		PermissionMode: policy.ReadOnly,
+	})
+
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Check runtime",
+		Kind:  KindRuntimeCheckPrerequisites,
+		Input: `{}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry, nil).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "runtime check passed:")
+	require.Contains(t, result.ResultSummary, "PASS")
+}
+
+func TestRunnerFailsRuntimeCheckPrerequisitesToolForMissingEnv(t *testing.T) {
+	projectRoot := t.TempDir()
+	scriptBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "tools", "check_runtime.py"))
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(projectRoot, "tools"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_runtime.py"), scriptBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "go.mod"), []byte("module example\n\ngo 1.24.0\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, ".env.example"), []byte("APP_PORT=10008\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "tools", "check_config.py"), []byte("#!/usr/bin/env python3\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(projectRoot, "internal", "core"), 0o755))
+
+	registry := session.NewRegistry(projectRoot)
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Runtime Check Fail",
+		PermissionMode: policy.ReadOnly,
+	})
+
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Check runtime missing env",
+		Kind:  KindRuntimeCheckPrerequisites,
+		Input: `{"requireEnv":true}`,
+	})
+	require.True(t, ok)
+
+	result, err := New(registry, nil).RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", result.Status)
+	require.Contains(t, result.ResultSummary, "runtime check failed:")
+	require.Contains(t, result.ResultSummary, "FAIL")
+	require.Contains(t, result.ResultSummary, ".env")
+}
+
 func TestRunnerExecutesBrowserTasks(t *testing.T) {
 	registry := session.NewRegistry(t.TempDir())
 	thread := registry.CreateThread(session.CreateThreadInput{

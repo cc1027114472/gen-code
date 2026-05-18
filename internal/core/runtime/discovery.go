@@ -304,6 +304,17 @@ func discoverSiblingRuntimeContent(workspaceRoot string) discoverySet {
 			Executable:         true,
 		},
 		{
+			ID:                 "runtime.check_prerequisites",
+			Name:               "Runtime Check Prerequisites",
+			Description:        "Validate local workspace runtime prerequisites using tools/check_runtime.py",
+			InputSchemaSummary: `{"workspace":"optional workspace root path","requireEnv":false,"strict":false}`,
+			PermissionMode:     policy.ReadOnly,
+			Source:             "runtime",
+			Kind:               "runtime.check_prerequisites",
+			ReadOnly:           true,
+			Executable:         true,
+		},
+		{
 			ID:                 "workspace.list_files_filtered",
 			Name:               "Workspace List Files Filtered",
 			Description:        "List workspace entries filtered by a glob pattern",
