@@ -1,0 +1,4 @@
+interface:
+  display_name: "KB 审计治理总表"
+  short_description: "同步权限、字段、下钻与回写治理总表"
+  default_prompt: "Use $kb-audit-governance-sync to sync the governance tables for this kb-audit blueprint."

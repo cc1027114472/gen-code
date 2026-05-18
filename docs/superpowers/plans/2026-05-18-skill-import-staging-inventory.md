@@ -47,8 +47,9 @@ Each staged skill should be tracked with at least:
 Project-internal staging path:
 `internal/core/skill/imports/codex`
 
-### Ready: Codex
+### Promoted: Codex
 
+- `architecture-blueprint-generator`
 - `frontend-design`
 - `golang-backend-development`
 - `imagegen`
@@ -61,32 +62,30 @@ Project-internal staging path:
 - `skill-creator`
 - `skill-installer`
 
+Why:
+
+- each project-local copied package now has a clean project-internal truth under `imports/codex`
+- promoted copies passed the 1:1 Chinese localization audit
+- each promoted skill passed mojibake review on the retained project-local copy
+- static capability verification stayed `true` after promotion into `catalog/codex`
+
 Notes:
 
-- `imagegen`, `openai-docs`, `plugin-creator`, `skill-creator`, and `skill-installer` came from the Codex `.system` skill set.
-- Several imports include helper assets, scripts, references, or plugin metadata beyond `SKILL.md`.
-
-Blocking checks before promotion:
-
-- project-local copy integrity
-- 1:1 Chinese localization audit
-- mojibake / garbled-text check per translated skill
-- static capability verification
+- `imagegen`, `openai-docs`, `plugin-creator`, `skill-creator`, and `skill-installer` came from the Codex `.system` skill set, but runtime-visible `source` still remains `codex`
+- several promoted packages include helper assets, scripts, references, or plugin metadata beyond `SKILL.md`
 
 ### Needs-Trim: Codex
 
-- `architecture-blueprint-generator`
 - `browser-use`
 - `chrome`
 - `design-consultation`
 
 Why:
 
-- `architecture-blueprint-generator` currently shows mojibake in the staged `SKILL.md`, so it cannot be promoted until the copied text is repaired
-- both imports were copied from plugin-bundled version directories
+- `browser-use` and `chrome` were copied from plugin-bundled version directories
 - `design-consultation` still depends on surrounding `gstack`-style commands and paths that do not fit the current standalone catalog baseline
-- both carry a much larger file footprint than a normal governed skill
-- both must be trimmed to the smallest machine-usable copy before any promotion
+- the remaining blocked imports still carry a much larger or looser bundle boundary than a normal governed skill
+- the remaining blocked imports must be trimmed to the smallest machine-usable copy before any promotion
 
 Promote target:
 
@@ -146,18 +145,17 @@ Blocking checks before promotion:
 
 ### Needs-Trim: CC
 
-- `canvas-design`
 - `ui-ux-pro-max`
 
 Why:
 
-- these imports are valid CC-sourced staging items, but they carry extra references, asset packs, or supporting material that should be reduced before runtime-visible promotion
-- `canvas-design` currently carries a large embedded font pack and license bundle that should be trimmed before promotion
+- this import is a valid CC-sourced staging item, but it still points at project-external placeholders instead of a self-contained project-local copied package
 - `ui-ux-pro-max` currently points at project-external `src/ui-ux-pro-max` placeholders rather than a self-contained project-local copied package
 
 ### Trimmed And Promoted: CC
 
 - `agent-browser`
+- `canvas-design`
 - `planning-with-files`
 - `use-my-browser`
 

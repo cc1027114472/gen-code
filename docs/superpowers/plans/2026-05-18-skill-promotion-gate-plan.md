@@ -85,8 +85,9 @@
 
 ### Current classification truth
 
-#### Ready: Codex
+#### Promoted: Codex
 
+- `architecture-blueprint-generator`
 - `frontend-design`
 - `golang-backend-development`
 - `imagegen`
@@ -101,7 +102,6 @@
 
 #### Needs-Trim: Codex
 
-- `architecture-blueprint-generator`
 - `browser-use`
 - `chrome`
 - `design-consultation`
@@ -143,6 +143,7 @@ Current second promoted CC batch:
 Current first needs-trim CC batch promoted after trim + localization:
 
 - `agent-browser`
+- `canvas-design`
 - `planning-with-files`
 - `use-my-browser`
 
@@ -154,7 +155,6 @@ Current ready-localization CC promotion result:
 
 #### Needs-Trim: CC
 
-- `canvas-design`
 - `ui-ux-pro-max`
 
 #### Defer: CC

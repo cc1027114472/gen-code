@@ -1,0 +1,4 @@
+interface:
+  display_name: "KB 审计产品蓝图总控"
+  short_description: "统一推进 kb-audit 产品蓝图全套文档"
+  default_prompt: "Use $kb-audit-product-blueprint to continue or audit the kb-audit product blueprint document system."

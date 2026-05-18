@@ -1,0 +1,4 @@
+interface:
+  display_name: "KB 审计逐页文档"
+  short_description: "编写逐页原型、功能清单与字段文档"
+  default_prompt: "Use $kb-audit-page-docs to create or rewrite page-level blueprint documents for this kb-audit project."

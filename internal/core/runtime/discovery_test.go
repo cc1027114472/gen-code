@@ -17,6 +17,7 @@ import (
 var governedProjectLocalSkillIDs = map[string][]string{
 	"codex": {
 		"babysit-pr",
+		"architecture-blueprint-generator",
 		"code-review",
 		"code-review-breaking-changes",
 		"code-review-change-size",
@@ -26,7 +27,17 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"codex-issue-digest",
 		"codex-pr-body",
 		"frontend-design",
+		"golang-backend-development",
+		"imagegen",
+		"kb-audit-governance-sync",
+		"kb-audit-page-docs",
+		"kb-audit-product-blueprint",
+		"kb-audit-report-pack",
+		"openai-docs",
+		"plugin-creator",
 		"remote-tests",
+		"skill-creator",
+		"skill-installer",
 		"test-tui",
 	},
 	"cc": {
@@ -36,6 +47,7 @@ var governedProjectLocalSkillIDs = map[string][]string{
 		"breakdown-epic-arch",
 		"breakdown-epic-pm",
 		"breakdown-feature-prd",
+		"canvas-design",
 		"find-skills",
 		"create-implementation-plan",
 		"brainstorming",
@@ -340,7 +352,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.open",
 		Name:               "Browser Open",
-		Description:        "Open a controlled browser tab for an allowlisted local or verified HTTPS URL",
+		Description:        "Open a controlled browser tab for an allowlisted local URL, a managed authenticated session target, or a verified HTTPS read-only target",
 		InputSchemaSummary: `{"url":"http://127.0.0.1:3000/"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -351,7 +363,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.navigate",
 		Name:               "Browser Navigate",
-		Description:        "Navigate an existing controlled browser tab to an allowlisted local or verified HTTPS URL",
+		Description:        "Navigate an existing controlled browser tab to an allowlisted local URL, a managed authenticated session target, or a verified HTTPS read-only target",
 		InputSchemaSummary: `{"tabId":"tab-1","url":"http://127.0.0.1:3000/"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -384,7 +396,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.extract",
 		Name:               "Browser Extract",
-		Description:        "Extract text from a selector inside a controlled browser tab",
+		Description:        "Extract text from a selector inside a controlled browser tab, authenticated fixture target, or verified HTTPS read-only target",
 		InputSchemaSummary: `{"tabId":"tab-1","selector":"[data-testid='result']"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
@@ -395,7 +407,7 @@ func TestDiscoverSiblingRuntimeContentUsesProjectLocalSkillCatalog(t *testing.T)
 	require.Contains(t, discovered.tools, tool.Descriptor{
 		ID:                 "browser.screenshot",
 		Name:               "Browser Screenshot",
-		Description:        "Capture a screenshot for a controlled browser tab",
+		Description:        "Capture a screenshot for a controlled browser tab, authenticated fixture target, or verified HTTPS read-only target",
 		InputSchemaSummary: `{"tabId":"tab-1"}`,
 		PermissionMode:     policy.ReadOnly,
 		Source:             "runtime",
