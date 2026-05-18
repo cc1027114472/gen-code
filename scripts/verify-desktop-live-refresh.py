@@ -1101,7 +1101,11 @@ def run_browser_navigation_scenario_with_retry(page, thread_id: str, scenario: d
             if attempt >= retry_count:
                 raise
             message = str(exc)
-            if "browser: session unavailable" not in message and "context deadline exceeded" not in message:
+            if (
+                "browser: session unavailable" not in message
+                and "context deadline exceeded" not in message
+                and "websocket url timeout reached" not in message
+            ):
                 raise
             current_input = current_scenario.setdefault("input", {})
             current_tab_id = (current_input.get("tabId") or "").strip()
@@ -1132,7 +1136,7 @@ def refresh_browser_tab_id(current_tab_id: str, fallback_exclude_ids: set[str] |
 def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_id: str) -> dict:
     results = []
     fixture_url = build_controlled_browser_fixture_url(thread_id, thread_name)
-    open_result = run_browser_navigation_scenario(
+    open_result = run_browser_navigation_scenario_with_retry(
         page,
         thread_id,
         {
@@ -1177,7 +1181,7 @@ def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_
     ]:
         scenario["input"]["tabId"] = controlled_tab_id
         results.append(
-            run_browser_navigation_scenario(
+            run_browser_navigation_scenario_with_retry(
                 page,
                 thread_id,
                 {
@@ -1214,7 +1218,7 @@ def run_controlled_browser_scenario(page, thread_id: str, thread_name: str, run_
 
 def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, run_id: str) -> dict:
     fixture_url = build_authenticated_browser_fixture_url(thread_id, thread_name)
-    open_result = run_browser_navigation_scenario(
+    open_result = run_browser_navigation_scenario_with_retry(
         page,
         thread_id,
         {
@@ -1227,7 +1231,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
     )
     authenticated_tab_id = resolve_browser_tab_id(open_result)
     authenticated_tab_url = get_browser_tab_url(authenticated_tab_id)
-    session_result = run_browser_navigation_scenario(
+    session_result = run_browser_navigation_scenario_with_retry(
         page,
         thread_id,
         {
@@ -1249,7 +1253,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
                 "actualSummary": session_result["record"]["summary"],
             },
         )
-    profile_result = run_browser_navigation_scenario(
+    profile_result = run_browser_navigation_scenario_with_retry(
         page,
         thread_id,
         {
@@ -1271,7 +1275,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
                 "actualSummary": profile_result["record"]["summary"],
             },
         )
-    role_result = run_browser_navigation_scenario(
+    role_result = run_browser_navigation_scenario_with_retry(
         page,
         thread_id,
         {
@@ -1293,7 +1297,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
                 "actualSummary": role_result["record"]["summary"],
             },
         )
-    scope_result = run_browser_navigation_scenario(
+    scope_result = run_browser_navigation_scenario_with_retry(
         page,
         thread_id,
         {
@@ -1315,7 +1319,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
                 "actualSummary": scope_result["record"]["summary"],
             },
         )
-    transport_result = run_browser_navigation_scenario(
+    transport_result = run_browser_navigation_scenario_with_retry(
         page,
         thread_id,
         {
@@ -1337,7 +1341,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
                 "actualSummary": transport_result["record"]["summary"],
             },
         )
-    identity_result = run_browser_navigation_scenario(
+    identity_result = run_browser_navigation_scenario_with_retry(
         page,
         thread_id,
         {
@@ -1359,7 +1363,7 @@ def run_authenticated_browser_scenario(page, thread_id: str, thread_name: str, r
                 "actualSummary": identity_result["record"]["summary"],
             },
         )
-    screenshot_result = run_browser_navigation_scenario(
+    screenshot_result = run_browser_navigation_scenario_with_retry(
         page,
         thread_id,
         {
