@@ -16,6 +16,12 @@
   unchanged
 - intended isolation model:
   `common` shared, `codex` isolated, `cc` isolated
+- runtime truth rule:
+  `imports is staging evidence, catalog is runtime truth`
+- same-name rule:
+  same-name skills may exist in both `codex` and `cc`, but promotion and runtime visibility must remain group-scoped
+- translation hygiene rule:
+  every translated skill must be checked for mojibake or other garbled text before it can be promoted
 
 This staging inventory exists so later phases can decide which imported skills should be promoted into:
 
@@ -24,17 +30,25 @@ This staging inventory exists so later phases can decide which imported skills s
 
 without mixing `codex` and `cc` provenance or silently expanding the runtime-visible skill set.
 
+## Gate-State Summary Schema
+
+Each staged skill should be tracked with at least:
+
+- `skill`
+- `source_group`
+- `gate_state`
+- `why`
+- `promote_target`
+- `blocking_checks`
+- `notes`
+
 ## Codex Staging Imports
 
 Project-internal staging path:
 `internal/core/skill/imports/codex`
 
-Imported items:
+### Ready: Codex
 
-- `architecture-blueprint-generator`
-- `browser-use`
-- `chrome`
-- `design-consultation`
 - `frontend-design`
 - `golang-backend-development`
 - `imagegen`
@@ -49,50 +63,132 @@ Imported items:
 
 Notes:
 
-- `browser-use` and `chrome` were copied from plugin-bundled version directories and kept in staging only.
 - `imagegen`, `openai-docs`, `plugin-creator`, `skill-creator`, and `skill-installer` came from the Codex `.system` skill set.
 - Several imports include helper assets, scripts, references, or plugin metadata beyond `SKILL.md`.
+
+Blocking checks before promotion:
+
+- project-local copy integrity
+- 1:1 Chinese localization audit
+- mojibake / garbled-text check per translated skill
+- static capability verification
+
+### Needs-Trim: Codex
+
+- `architecture-blueprint-generator`
+- `browser-use`
+- `chrome`
+- `design-consultation`
+
+Why:
+
+- `architecture-blueprint-generator` currently shows mojibake in the staged `SKILL.md`, so it cannot be promoted until the copied text is repaired
+- both imports were copied from plugin-bundled version directories
+- `design-consultation` still depends on surrounding `gstack`-style commands and paths that do not fit the current standalone catalog baseline
+- both carry a much larger file footprint than a normal governed skill
+- both must be trimmed to the smallest machine-usable copy before any promotion
+
+Promote target:
+
+- `internal/core/skill/catalog/codex`
+
+Blocking checks:
+
+- source-group confirmation
+- dependency and asset trimming
+- 1:1 Chinese localization audit
+- mojibake / garbled-text check per translated skill
+- static capability verification
 
 ## CC Staging Imports
 
 Project-internal staging path:
 `internal/core/skill/imports/cc`
 
-Imported items:
+### Ready: CC
 
-- `agent-browser`
 - `architecture-blueprint-generator`
 - `breakdown-epic-arch`
 - `breakdown-epic-pm`
 - `breakdown-feature-prd`
-- `canvas-design`
 - `create-implementation-plan`
-- `find-skills`
 - `frontend-design`
 - `go-backend-clean-architecture`
-- `gstack`
 - `kb-audit-flow-prototype`
-- `planning-with-files`
 - `ralph-loop`
 - `react-vite-expert`
-- `skill-creator`
 - `tailwindcss`
-- `ui-ux-pro-max`
-- `use-my-browser`
 - `vercel-react-best-practices`
 - `vite`
-- `web-design-guidelines`
 
 Notes:
 
-- `gstack` is the largest staged import and includes many nested sub-skills and support assets.
 - Several imports overlap by name with Codex-visible skills, such as `architecture-blueprint-generator`, `frontend-design`, and `skill-creator`.
 - These same-name imports are intentionally kept separate in staging so later promotion can preserve source isolation.
+
+Blocking checks before promotion:
+
+- project-local copy integrity
+- 1:1 Chinese localization audit
+- mojibake / garbled-text check per translated skill
+- static capability verification
+
+### Needs-Trim: CC
+
+- `agent-browser`
+- `canvas-design`
+- `find-skills`
+- `planning-with-files`
+- `skill-creator`
+- `ui-ux-pro-max`
+- `use-my-browser`
+- `web-design-guidelines`
+
+Why:
+
+- these imports are valid CC-sourced staging items, but they carry extra references, asset packs, or supporting material that should be reduced before runtime-visible promotion
+- `planning-with-files` depends on hooks, scripts, and `~/.claude`-style environment wiring
+- `find-skills` depends on external skills tooling and runtime environment expectations
+- `web-design-guidelines` depends on live external rule fetching
+- `use-my-browser` should be reviewed carefully because it assumes browser/tooling integration beyond a plain copied markdown skill
+
+Promote target:
+
+- `internal/core/skill/catalog/cc`
+
+Blocking checks:
+
+- source-group confirmation
+- dependency and asset trimming
+- 1:1 Chinese localization audit
+- mojibake / garbled-text check per translated skill
+- static capability verification
+
+### Defer: CC
+
+- `gstack`
+
+Why:
+
+- `gstack` is the largest staged import and includes many nested sub-skills and support assets
+- it behaves more like a governed suite or bundled tool ecosystem than a normal single promoted skill
+
+Promote target:
+
+- none in the current phase
+
+Blocking checks:
+
+- separate bundle-governance design
+- explicit sub-skill visibility policy
+- runtime exposure policy
+- asset-retention policy
 
 ## Current Boundaries
 
 - These staged imports are **not** read by `discoverSiblingRuntimeContent(...)`.
 - These staged imports are **not** surfaced by `skills list`, `/api/skills`, or desktop fallback skill inventory.
+- These staged imports are staging evidence only; `catalog/{codex,cc}` remains the runtime-visible truth.
 - The current runtime-visible skill truth remains:
   - built-in `common.browser`
   - project-local `catalog/codex`
@@ -104,9 +200,25 @@ Before any staged import is promoted into the runtime-visible catalog, it should
 
 1. source-to-group confirmation (`codex` or `cc`)
 2. project-local copy integrity check
-3. localization audit decision
-4. static capability verification
-5. runtime / CLI / desktop inventory update
-6. capability matrix and governance baseline sync
+3. 1:1 Chinese localization audit decision
+4. mojibake / garbled-text check for the translated skill body and references
+5. static capability verification
+6. runtime / CLI / desktop inventory update
+7. capability matrix and governance baseline sync
+
+### Mandatory per-skill mojibake check
+
+This is a hard gate for every translated or promoted skill, not a spot check:
+
+- inspect the project-local copy that will be used inside `gen-code`
+- inspect `SKILL.md` and any copied local Markdown or text references shipped with that skill
+- reject mojibake, replacement glyphs, broken punctuation, mixed-encoding artifacts, or visibly garbled Chinese text
+- fix the project-local copy before the skill can be treated as promotion-ready
+- preserve the existing isolation model while doing this review:
+  - `codex` runtime view = `common + codex`
+  - `cc` runtime view = `common + cc`
+  - same-name `codex` and `cc` skills must stay isolated, not merged
+
+`ready` only means structurally promotable. It does not waive the mandatory mojibake / garbled-text check.
 
 Until that work is complete, this staging inventory is the only supported truth for the newly copied project-internal imports.
