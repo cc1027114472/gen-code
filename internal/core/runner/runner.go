@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"llmtrace/internal/core/browser"
 	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/provider"
@@ -34,6 +35,18 @@ const (
 	KindWorkspaceSearchDetailed     = "workspace.search_text_detailed"
 	KindWorkspaceApplyPatch         = "workspace.apply_patch"
 	KindWorkspaceApplyPatchRollback = "workspace.apply_patch.rollback"
+	KindBrowserState                = "browser.state"
+	KindBrowserOpen                 = "browser.open"
+	KindBrowserNavigate             = "browser.navigate"
+	KindBrowserBack                 = "browser.back"
+	KindBrowserForward              = "browser.forward"
+	KindBrowserReload               = "browser.reload"
+	KindBrowserCloseTab             = "browser.close_tab"
+	KindBrowserActivateTab          = "browser.activate_tab"
+	KindBrowserClick                = "browser.click"
+	KindBrowserType                 = "browser.type"
+	KindBrowserExtract              = "browser.extract"
+	KindBrowserScreenshot           = "browser.screenshot"
 	KindMCPToolInvoke               = "mcp.tool.invoke"
 	KindModelResponse               = "model.response.create"
 	KindAgentRun                    = "agent.run"
@@ -74,6 +87,7 @@ type Runner struct {
 	registry Registry
 	models   ModelExecutor
 	mcp      *mcp.Manager
+	browser  browser.Core
 }
 
 type ModelExecutor interface {
@@ -81,12 +95,25 @@ type ModelExecutor interface {
 }
 
 func New(registry Registry, models ModelExecutor) *Runner {
-	return &Runner{registry: registry, models: models}
+	return &Runner{
+		registry: registry,
+		models:   models,
+		browser:  browser.NewDriver(),
+	}
 }
 
 func (r *Runner) WithMCP(manager *mcp.Manager) *Runner {
 	r.mcp = manager
 	return r
+}
+
+func (r *Runner) WithBrowser(core browser.Core) *Runner {
+	r.browser = core
+	return r
+}
+
+func (r *Runner) BrowserState(ctx context.Context) (browser.Snapshot, error) {
+	return r.browserCore().State(ctx)
 }
 
 func (r *Runner) RecoverInterruptedTasks() error {
@@ -721,6 +748,141 @@ func (r *Runner) execute(ctx context.Context, threadID string, task session.Task
 			return fmt.Sprintf("no matches for %q under %s", input.Query, workspaceRelative(r.registry.Workspace().ProjectRoot, searchRoot)), nil
 		}
 		return fmt.Sprintf("found %d detailed matches for %q: %s", len(matches), input.Query, compactSummary(strings.Join(matches, " | "), 240)), nil
+	case KindBrowserState:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		if _, err := r.browserCore().State(ctx); err != nil {
+			return "", err
+		}
+		return "browser state captured", nil
+	case KindBrowserOpen:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		var input browser.OpenRequest
+		if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
+			return "", err
+		}
+		snapshot, err := r.browserCore().Open(ctx, input)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser tab opened: %s", browserSummaryTabID(snapshot.ActiveTabID, snapshot.Tabs)), nil
+	case KindBrowserNavigate:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		var input browser.NavigateRequest
+		if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
+			return "", err
+		}
+		snapshot, err := r.browserCore().Navigate(ctx, input)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser tab navigated: %s", browserSummaryTabID(input.TabID, snapshot.Tabs)), nil
+	case KindBrowserBack:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		tabID, err := r.executeBrowserTabTask(ctx, task.Input, r.browserCore().Back)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser tab went back: %s", tabID), nil
+	case KindBrowserForward:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		tabID, err := r.executeBrowserTabTask(ctx, task.Input, r.browserCore().Forward)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser tab went forward: %s", tabID), nil
+	case KindBrowserReload:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		tabID, err := r.executeBrowserTabTask(ctx, task.Input, r.browserCore().Reload)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser tab reloaded: %s", tabID), nil
+	case KindBrowserCloseTab:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		tabID, err := r.executeBrowserTabTask(ctx, task.Input, r.browserCore().CloseTab)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser tab closed: %s", tabID), nil
+	case KindBrowserActivateTab:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		tabID, err := r.executeBrowserTabTask(ctx, task.Input, r.browserCore().ActivateTab)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser tab activated: %s", tabID), nil
+	case KindBrowserClick:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		var input browser.ClickRequest
+		if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
+			return "", err
+		}
+		snapshot, err := r.browserCore().Click(ctx, input)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser click executed: %s", browserSummaryTabID(input.TabID, snapshot.Tabs)), nil
+	case KindBrowserType:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		var input browser.TypeRequest
+		if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
+			return "", err
+		}
+		snapshot, err := r.browserCore().Type(ctx, input)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser type executed: %s", browserSummaryTabID(input.TabID, snapshot.Tabs)), nil
+	case KindBrowserExtract:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		var input browser.ExtractRequest
+		if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
+			return "", err
+		}
+		result, err := r.browserCore().Extract(ctx, input)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser extract completed: %s", browserSummaryTabID(input.TabID, result.Snapshot.Tabs)), nil
+	case KindBrowserScreenshot:
+		if err := ensureReadAllowed(thread.PermissionMode); err != nil {
+			return "", err
+		}
+		var input browser.ScreenshotRequest
+		if err := json.Unmarshal([]byte(task.Input), &input); err != nil {
+			return "", err
+		}
+		result, err := r.browserCore().Screenshot(ctx, input)
+		if err != nil {
+			return "", err
+		}
+		artifactPath, err := r.recordBrowserScreenshotArtifact(threadID, task, input.TabID, result.Bytes)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("browser screenshot captured: %s", artifactPath), nil
 	case KindWorkspaceApplyPatch:
 		approvedWrite := task.ApprovalStatus == "approved" || task.ApprovalStatus == "executed" || task.ApprovalStatus == "direct"
 		if err := ensureWriteAllowed(thread.PermissionMode, approvedWrite); err != nil {
@@ -804,6 +966,89 @@ func (r *Runner) execute(ctx context.Context, threadID string, task session.Task
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedTaskKind, task.Kind)
 	}
+}
+
+func (r *Runner) browserCore() browser.Core {
+	if r.browser == nil {
+		r.browser = browser.NewDriver()
+	}
+	return r.browser
+}
+
+func (r *Runner) recordBrowserScreenshotArtifact(threadID string, task session.Task, preferredTabID string, content []byte) (string, error) {
+	tabID := strings.TrimSpace(preferredTabID)
+	if tabID == "" {
+		snapshot, err := r.browserCore().State(context.Background())
+		if err == nil {
+			tabID = browserSummaryTabID(snapshot.ActiveTabID, snapshot.Tabs)
+		}
+	}
+	if tabID == "" {
+		tabID = "unknown-tab"
+	}
+	workspaceRoot := r.registry.Workspace().ProjectRoot
+	artifactDir := filepath.Join(workspaceRoot, ".gen-code", "artifacts", "browser")
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		return "", err
+	}
+	fileName := fmt.Sprintf("%s-%s.png", task.ID, sanitizeArtifactID(tabID))
+	artifactPath := filepath.Join(artifactDir, fileName)
+	if err := os.WriteFile(artifactPath, content, 0o644); err != nil {
+		return "", err
+	}
+	if _, err := r.registry.AppendArtifact(threadID, session.AppendArtifactInput{
+		Path: artifactPath,
+		Kind: "browser.screenshot",
+	}); err != nil {
+		return "", err
+	}
+	return artifactPath, nil
+}
+
+func (r *Runner) executeBrowserTabTask(ctx context.Context, raw string, execute func(context.Context, browser.TabRequest) (browser.Snapshot, error)) (string, error) {
+	var input browser.TabRequest
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return "", err
+	}
+	snapshot, err := execute(ctx, input)
+	if err != nil {
+		return "", err
+	}
+	return browserSummaryTabID(input.TabID, snapshot.Tabs), nil
+}
+
+func browserSummaryTabID(preferred string, tabs []browser.Tab) string {
+	preferred = strings.TrimSpace(preferred)
+	if preferred != "" {
+		return preferred
+	}
+	if len(tabs) > 0 && strings.TrimSpace(tabs[0].ID) != "" {
+		return tabs[0].ID
+	}
+	return "unknown-tab"
+}
+
+func sanitizeArtifactID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	builder := strings.Builder{}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '-' || r == '_':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('-')
+		}
+	}
+	return strings.Trim(builder.String(), "-")
 }
 
 func (r *Runner) parentTask(threadID string, taskID string) (session.Task, error) {

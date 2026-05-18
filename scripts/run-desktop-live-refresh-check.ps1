@@ -11,7 +11,7 @@ $env:GEN_CODE_ACCEPTANCE_MODE = "full"
 $env:GOTOOLCHAIN = if ($env:GOTOOLCHAIN) { $env:GOTOOLCHAIN } else { "auto" }
 $env:PYTHONIOENCODING = if ($env:PYTHONIOENCODING) { $env:PYTHONIOENCODING } else { "utf-8" }
 $scriptPath = Join-Path $projectRoot "scripts\verify-desktop-live-refresh.py"
-$baselineLane = "canonical remote browser acceptance with desktop copy/runtime checks (5174 + 10008)"
+$baselineLane = "canonical remote browser acceptance with desktop copy/runtime checks and browser navigation lane (5174 + 10008)"
 
 Write-Host "Desktop live refresh and copy/runtime alignment check"
 Write-Host "  project root : $projectRoot"
@@ -20,7 +20,7 @@ Write-Host "  script       : $scriptPath"
 Write-Host "  UI base URL  : $env:GEN_CODE_UI_BASE_URL"
 Write-Host "  API base URL : $env:GEN_CODE_API_BASE_URL"
 Write-Host "  mode         : $env:GEN_CODE_ACCEPTANCE_MODE"
-Write-Host "  failures     : remote canonical live matrix + fallback evidence-only"
+Write-Host "  failures     : remote canonical live matrix + browser navigation lane + fallback evidence-only"
 
 if (-not (Test-Path $scriptPath)) {
   Write-Error "Setup failure: verify-desktop-live-refresh.py not found at $scriptPath"

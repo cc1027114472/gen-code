@@ -19,6 +19,23 @@ type Status struct {
 	ActiveThreadID      string `json:"activeThreadId,omitempty"`
 	TaskCount           int    `json:"taskCount,omitempty"`
 	EventCount          int    `json:"eventCount,omitempty"`
+	Browser             BrowserSnapshot `json:"browser,omitempty"`
+}
+
+type BrowserSnapshot struct {
+	ActiveTabID         string       `json:"activeTabId,omitempty"`
+	Tabs                []BrowserTab `json:"tabs,omitempty"`
+	LatestActionSummary string       `json:"latestActionSummary,omitempty"`
+	LatestActionError   string       `json:"latestActionError,omitempty"`
+}
+
+type BrowserTab struct {
+	ID           string `json:"id"`
+	URL          string `json:"url"`
+	Title        string `json:"title"`
+	Loading      bool   `json:"loading"`
+	CanGoBack    bool   `json:"canGoBack"`
+	CanGoForward bool   `json:"canGoForward"`
 }
 
 // WorkspaceDescriptor describes the current workspace container.

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"llmtrace/internal/appserver/runtimecontract"
+	"llmtrace/internal/core/browser"
 	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/provider"
@@ -41,6 +42,7 @@ type Status struct {
 	ActiveSkillGroup       skill.Group `json:"active_skill_group"`
 	ConfiguredMCPServers   int         `json:"configured_mcp_server_count"`
 	PermissionMode         policy.Mode `json:"permission_mode"`
+	Browser                runtimecontract.BrowserSnapshot `json:"browser"`
 }
 
 // BridgeCheckResult describes the result of a lightweight bridge verification.
@@ -144,6 +146,7 @@ func (s *Service) Snapshot() Status {
 		ActiveSkillGroup:       s.skillGroup,
 		ConfiguredMCPServers:   len(s.mcp.List()),
 		PermissionMode:         s.permission,
+		Browser:                s.browserSnapshot(),
 	}
 }
 
@@ -181,7 +184,41 @@ func (s *Service) Status(context.Context) (runtimecontract.Status, error) {
 		ActiveThreadID:      snapshot.ActiveThreadID,
 		TaskCount:           snapshot.ActiveThreadTaskCount,
 		EventCount:          snapshot.ActiveThreadEventCount,
+		Browser:             snapshot.Browser,
 	}, nil
+}
+
+func (s *Service) browserSnapshot() runtimecontract.BrowserSnapshot {
+	if s == nil || s.runner == nil {
+		return runtimecontract.BrowserSnapshot{}
+	}
+	snapshot, err := s.runner.BrowserState(context.Background())
+	if err != nil {
+		return runtimecontract.BrowserSnapshot{
+			LatestActionError: err.Error(),
+		}
+	}
+	return toBrowserSnapshot(snapshot)
+}
+
+func toBrowserSnapshot(snapshot browser.Snapshot) runtimecontract.BrowserSnapshot {
+	tabs := make([]runtimecontract.BrowserTab, 0, len(snapshot.Tabs))
+	for _, item := range snapshot.Tabs {
+		tabs = append(tabs, runtimecontract.BrowserTab{
+			ID:           item.ID,
+			URL:          item.URL,
+			Title:        item.Title,
+			Loading:      item.Loading,
+			CanGoBack:    item.CanGoBack,
+			CanGoForward: item.CanGoForward,
+		})
+	}
+	return runtimecontract.BrowserSnapshot{
+		ActiveTabID:         snapshot.ActiveTabID,
+		Tabs:                tabs,
+		LatestActionSummary: snapshot.LatestActionSummary,
+		LatestActionError:   snapshot.LatestActionError,
+	}
 }
 
 // Workspace returns the current workspace descriptor.

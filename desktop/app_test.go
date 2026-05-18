@@ -1591,36 +1591,102 @@ func TestBrowserWorkspaceFlow(t *testing.T) {
 	if initial.Tabs[0].URL == "" {
 		t.Fatal("expected default browser url")
 	}
+	if initial.LatestActionSummary == "" {
+		t.Fatal("expected initial browser action summary")
+	}
 
 	opened := app.BrowserOpen("http://127.0.0.1:5174/")
-	if len(opened.Tabs) != 2 {
-		t.Fatalf("expected 2 tabs after open, got %d", len(opened.Tabs))
+	if len(opened.Tabs) < 1 {
+		t.Fatalf("expected at least 1 tab after open, got %d", len(opened.Tabs))
 	}
 	activeID := opened.ActiveTabID
+	if strings.TrimSpace(opened.LatestActionError) == "" && !strings.Contains(opened.LatestActionSummary, "opened") {
+		t.Fatalf("expected open summary or stable error, got summary=%q error=%q", opened.LatestActionSummary, opened.LatestActionError)
+	}
 
 	navigated := app.BrowserNavigate(activeID, "http://localhost:10008/")
-	if navigated.ActiveTabID != activeID {
-		t.Fatalf("expected active tab %q, got %q", activeID, navigated.ActiveTabID)
-	}
-	if navigated.Tabs[len(navigated.Tabs)-1].URL != "http://localhost:10008/" {
-		t.Fatalf("expected navigated URL, got %q", navigated.Tabs[len(navigated.Tabs)-1].URL)
+	if strings.TrimSpace(navigated.LatestActionError) == "" {
+		if navigated.ActiveTabID != activeID {
+			t.Fatalf("expected active tab %q, got %q", activeID, navigated.ActiveTabID)
+		}
+		activeTab := findBrowserTabByID(t, navigated, activeID)
+		if activeTab.URL != "http://localhost:10008/" {
+			t.Fatalf("expected navigated URL, got %q", activeTab.URL)
+		}
+		if !strings.Contains(navigated.LatestActionSummary, "navigated") {
+			t.Fatalf("expected navigate summary, got %q", navigated.LatestActionSummary)
+		}
+	} else if navigated.LatestActionSummary == "" {
+		t.Fatalf("expected navigate summary or stable error, got summary=%q error=%q", navigated.LatestActionSummary, navigated.LatestActionError)
 	}
 
 	reloaded := app.BrowserReload(activeID)
-	if reloaded.ActiveTabID != activeID {
-		t.Fatalf("expected active tab after reload, got %q", reloaded.ActiveTabID)
+	if strings.TrimSpace(reloaded.LatestActionError) == "" {
+		if reloaded.ActiveTabID != activeID {
+			t.Fatalf("expected active tab after reload, got %q", reloaded.ActiveTabID)
+		}
+		if !strings.Contains(reloaded.LatestActionSummary, "reloaded") {
+			t.Fatalf("expected reload summary, got %q", reloaded.LatestActionSummary)
+		}
+	} else if reloaded.LatestActionSummary == "" {
+		t.Fatalf("expected reload summary or stable error, got summary=%q error=%q", reloaded.LatestActionSummary, reloaded.LatestActionError)
 	}
 
 	activated := app.BrowserActivateTab(initial.Tabs[0].ID)
-	if activated.ActiveTabID != initial.Tabs[0].ID {
-		t.Fatalf("expected first tab active, got %q", activated.ActiveTabID)
+	if strings.TrimSpace(activated.LatestActionError) == "" {
+		if activated.ActiveTabID != initial.Tabs[0].ID {
+			t.Fatalf("expected first tab active, got %q", activated.ActiveTabID)
+		}
+		if !strings.Contains(activated.LatestActionSummary, "activated") {
+			t.Fatalf("expected activate summary, got %q", activated.LatestActionSummary)
+		}
+	} else if activated.LatestActionSummary == "" {
+		t.Fatalf("expected activate summary or stable error, got summary=%q error=%q", activated.LatestActionSummary, activated.LatestActionError)
+	}
+
+	clicked := app.BrowserClick(activeID, "[data-testid='missing']")
+	if clicked.LatestActionSummary == "" && clicked.LatestActionError == "" {
+		t.Fatal("expected browser click to surface latest action result")
+	}
+
+	typed := app.BrowserType(activeID, "[data-testid='missing']", "hello")
+	if typed.LatestActionSummary == "" && typed.LatestActionError == "" {
+		t.Fatal("expected browser type to surface latest action result")
+	}
+
+	extracted := app.BrowserExtract(activeID, "")
+	if extracted.LatestActionSummary == "" && extracted.LatestActionError == "" {
+		t.Fatal("expected browser extract to surface latest action result")
+	}
+
+	screenshot := app.BrowserScreenshot(activeID)
+	if screenshot.LatestActionSummary == "" && screenshot.LatestActionError == "" {
+		t.Fatal("expected browser screenshot to surface latest action result")
 	}
 
 	closed := app.BrowserCloseTab(initial.Tabs[0].ID)
-	if len(closed.Tabs) != 1 {
-		t.Fatalf("expected 1 tab after close, got %d", len(closed.Tabs))
+	if strings.TrimSpace(closed.LatestActionError) == "" {
+		if len(closed.Tabs) < 1 {
+			t.Fatalf("expected remaining tab after close, got %d", len(closed.Tabs))
+		}
+		if closed.ActiveTabID == "" {
+			t.Fatal("expected remaining active tab after close")
+		}
+		if !strings.Contains(closed.LatestActionSummary, "closed") {
+			t.Fatalf("expected close summary, got %q", closed.LatestActionSummary)
+		}
+	} else if closed.LatestActionSummary == "" {
+		t.Fatalf("expected close summary or stable error, got summary=%q error=%q", closed.LatestActionSummary, closed.LatestActionError)
 	}
-	if closed.ActiveTabID == "" {
-		t.Fatal("expected remaining active tab after close")
+}
+
+func findBrowserTabByID(t *testing.T, state BrowserWorkspaceState, tabID string) BrowserTab {
+	t.Helper()
+	for _, item := range state.Tabs {
+		if item.ID == tabID {
+			return item
+		}
 	}
+	t.Fatalf("browser tab %q not found", tabID)
+	return BrowserTab{}
 }

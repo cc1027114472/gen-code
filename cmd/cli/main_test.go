@@ -90,7 +90,7 @@ func TestToolsListPrintsExecutionMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tools":
-			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"workspace.read_file","name":"Read File","description":"Read a file from workspace","permissionMode":"read-only","source":"runtime","kind":"workspace.read_file","readOnly":true,"executable":true},{"id":"workspace.stat_file","name":"Stat File","description":"Stat a workspace file","permissionMode":"read-only","source":"runtime","kind":"workspace.stat_file","readOnly":true,"executable":true},{"id":"workspace.read_files_batch","name":"Read Files Batch","description":"Read workspace files","permissionMode":"read-only","source":"runtime","kind":"workspace.read_files_batch","readOnly":true,"executable":true},{"id":"workspace.list_files_filtered","name":"List Files Filtered","description":"List filtered files","permissionMode":"read-only","source":"runtime","kind":"workspace.list_files_filtered","readOnly":true,"executable":true},{"id":"workspace.search_text_detailed","name":"Search Text Detailed","description":"Search text with details","permissionMode":"read-only","source":"runtime","kind":"workspace.search_text_detailed","readOnly":true,"executable":true}]}}`))
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"workspace.read_file","name":"Read File","description":"Read a file from workspace","permissionMode":"read-only","source":"runtime","kind":"workspace.read_file","readOnly":true,"executable":true},{"id":"workspace.stat_file","name":"Stat File","description":"Stat a workspace file","permissionMode":"read-only","source":"runtime","kind":"workspace.stat_file","readOnly":true,"executable":true},{"id":"workspace.read_files_batch","name":"Read Files Batch","description":"Read workspace files","permissionMode":"read-only","source":"runtime","kind":"workspace.read_files_batch","readOnly":true,"executable":true},{"id":"workspace.list_files_filtered","name":"List Files Filtered","description":"List filtered files","permissionMode":"read-only","source":"runtime","kind":"workspace.list_files_filtered","readOnly":true,"executable":true},{"id":"workspace.search_text_detailed","name":"Search Text Detailed","description":"Search text with details","permissionMode":"read-only","source":"runtime","kind":"workspace.search_text_detailed","readOnly":true,"executable":true},{"id":"browser.state","name":"Browser State","description":"Inspect the current browser workspace state","permissionMode":"read-only","source":"runtime","kind":"browser.state","readOnly":true,"executable":true},{"id":"browser.open","name":"Browser Open","description":"Open a new controlled local browser tab for a URL","permissionMode":"read-only","source":"runtime","kind":"browser.open","readOnly":true,"executable":true},{"id":"browser.navigate","name":"Browser Navigate","description":"Navigate an existing controlled local browser tab to a URL","permissionMode":"read-only","source":"runtime","kind":"browser.navigate","readOnly":true,"executable":true}]}}`))
 		case "/api/runtime/status":
 			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":0,"eventCount":0}}`))
 		default:
@@ -115,8 +115,38 @@ func TestToolsListPrintsExecutionMetadata(t *testing.T) {
 	require.Contains(t, output, "kind=workspace.read_files_batch")
 	require.Contains(t, output, "kind=workspace.list_files_filtered")
 	require.Contains(t, output, "kind=workspace.search_text_detailed")
+	require.Contains(t, output, "kind=browser.state")
+	require.Contains(t, output, "kind=browser.open")
+	require.Contains(t, output, "kind=browser.navigate")
 	require.Contains(t, output, "executable=true")
 	require.Contains(t, output, "readOnly=true")
+}
+
+func TestToolsListIncludesRepresentativeBrowserTools(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tools":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"items":[{"id":"browser.state","name":"Browser State","description":"Inspect the current browser workspace state","permissionMode":"read-only","source":"runtime","kind":"browser.state","readOnly":true,"executable":false},{"id":"browser.open","name":"Browser Open","description":"Open a new browser tab for a URL","permissionMode":"ask-user","source":"runtime","kind":"browser.open","readOnly":false,"executable":false},{"id":"browser.navigate","name":"Browser Navigate","description":"Navigate an existing browser tab to a URL","permissionMode":"ask-user","source":"runtime","kind":"browser.navigate","readOnly":false,"executable":false}]}}`))
+		case "/api/runtime/status":
+			_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"state":"running","ready":true,"message":"remote ready","runtimeSource":"remote-app-server","runtimeSourceDetail":"canonical shared runtime served by the app-server entry","runtimeTrust":"canonical","workspaceId":"gen-code","projectRoot":"D:/repo/gen-code","threadCount":1,"activeThreadId":"thread-1","taskCount":0,"eventCount":0}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GENCODE_RUNTIME_BASE_URL", server.URL)
+
+	output := captureOutput(t, func() {
+		err := run(context.Background(), []string{"tools", "list"})
+		require.NoError(t, err)
+	})
+
+	require.Contains(t, output, "browser.state")
+	require.Contains(t, output, "browser.open")
+	require.Contains(t, output, "browser.navigate")
+	require.Contains(t, output, "permission=ask-user")
+	require.Contains(t, output, "kind=browser.open")
 }
 
 func TestSkillsListPrintsGovernanceBaseline(t *testing.T) {

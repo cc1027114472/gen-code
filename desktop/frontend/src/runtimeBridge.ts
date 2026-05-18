@@ -214,6 +214,7 @@ export type BrowserTab = {
   url: string;
   status: string;
   isActive: boolean;
+  loading?: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
 };
@@ -222,6 +223,10 @@ export type BrowserWorkspaceState = {
   isOpen: boolean;
   tabs: BrowserTab[];
   activeTabId: string;
+  latestActionSummary?: string;
+  latestActionError?: string;
+  latestExtractText?: string;
+  latestArtifactPath?: string;
 };
 
 export type RuntimeStatus = {
@@ -295,6 +300,7 @@ export type RuntimeStatus = {
   statePath: string;
   usesProjectLocalStore: boolean;
   recoverySummary: string;
+  browser?: BrowserWorkspaceState;
   updatedAt: string;
 };
 
@@ -314,7 +320,6 @@ type BrowserImportMeta = ImportMeta & {
 };
 
 const defaultRuntimeBaseURL = "http://127.0.0.1:10008";
-let fallbackBrowserState: BrowserWorkspaceState | null = null;
 const defaultFetchRetries = 4;
 const defaultFetchRetryDelayMs = 250;
 
@@ -322,6 +327,17 @@ type RuntimeStatusView = Pick<RuntimeStatus, "runtimeSource" | "runtimeSourceDet
 
 function hasWailsBridge() {
   return typeof window !== "undefined" && !!window.go?.main?.App;
+}
+
+function dynamicBrowserBridge() {
+  return window.go?.main?.App as
+    | {
+        BrowserClick?: (tabId: string, selector: string) => Promise<BrowserWorkspaceState> | BrowserWorkspaceState;
+        BrowserType?: (tabId: string, selector: string, text: string) => Promise<BrowserWorkspaceState> | BrowserWorkspaceState;
+        BrowserExtract?: (tabId: string, selector: string) => Promise<BrowserWorkspaceState> | BrowserWorkspaceState;
+        BrowserScreenshot?: (tabId: string) => Promise<BrowserWorkspaceState> | BrowserWorkspaceState;
+      }
+    | undefined;
 }
 
 function runtimeBaseURL() {
@@ -808,144 +824,174 @@ export async function RejectTask(threadID: string, taskID: string): Promise<Runt
   return buildRuntimeStatus();
 }
 
-function defaultBrowserState(): BrowserWorkspaceState {
-  return {
-    isOpen: true,
-    activeTabId: "browser-tab-local",
-    tabs: [
-      {
-        id: "browser-tab-local",
-        title: "127.0.0.1:5174",
-        url: "http://127.0.0.1:5174/",
-        status: "ready",
-        isActive: true,
-        canGoBack: false,
-        canGoForward: false,
-      },
-    ],
-  };
-}
-
 function cloneBrowserState(state: BrowserWorkspaceState): BrowserWorkspaceState {
   return {
     isOpen: state.isOpen,
     activeTabId: state.activeTabId,
+    latestActionSummary: state.latestActionSummary || "",
+    latestActionError: state.latestActionError || "",
+    latestExtractText: state.latestExtractText || "",
+    latestArtifactPath: state.latestArtifactPath || "",
     tabs: state.tabs.map((tab) => ({ ...tab })),
   };
 }
 
-function ensureFallbackBrowserState(): BrowserWorkspaceState {
-  if (!fallbackBrowserState) {
-    fallbackBrowserState = defaultBrowserState();
+async function invokeBrowserTool(kind: string, input: Record<string, unknown>): Promise<BrowserWorkspaceState> {
+  const runtime = await buildRuntimeStatus();
+  if (!runtime.activeThreadId) {
+    throw new Error("no active thread");
   }
-  return fallbackBrowserState;
+  const created = await fetchEnvelope<TaskDescriptor>(`/api/threads/${encodeURIComponent(runtime.activeThreadId)}/tasks`, {
+    method: "POST",
+    body: JSON.stringify({
+      title: kind,
+      kind,
+      input: JSON.stringify(input),
+    }),
+  });
+  await fetchEnvelope<TaskDescriptor>(
+    `/api/threads/${encodeURIComponent(runtime.activeThreadId)}/tasks/${encodeURIComponent(created.id)}/run`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+  const next = await buildRuntimeStatus();
+  const normalized = normalizeBrowserState(next.browser);
+  if (kind === "browser.extract") {
+    const extractCall = [...next.toolCalls].reverse().find((item) => item.toolId === "browser.extract");
+    if (extractCall?.summary) {
+      normalized.latestExtractText = extractCall.summary;
+    }
+  }
+  if (kind === "browser.screenshot") {
+    const screenshotArtifact = [...next.artifacts].reverse().find((item) => item.kind === "browser.screenshot");
+    if (screenshotArtifact?.path) {
+      normalized.latestArtifactPath = screenshotArtifact.path;
+    }
+  }
+  return normalized;
+}
+
+function normalizeBrowserState(state?: BrowserWorkspaceState | null): BrowserWorkspaceState {
+  if (!state) {
+    return {
+      isOpen: false,
+      activeTabId: "",
+      latestActionSummary: "",
+      latestActionError: "",
+      latestExtractText: "",
+      latestArtifactPath: "",
+      tabs: [],
+    };
+  }
+  return {
+    isOpen: state.isOpen ?? (state.tabs?.length ?? 0) > 0,
+    activeTabId: state.activeTabId || "",
+    latestActionSummary: state.latestActionSummary || "",
+    latestActionError: state.latestActionError || "",
+    latestExtractText: state.latestExtractText || "",
+    latestArtifactPath: state.latestArtifactPath || "",
+    tabs: (state.tabs || []).map((tab) => ({
+      id: tab.id,
+      title: tab.title,
+      url: tab.url,
+      status: tab.status || (tab.loading ? "loading" : "ready"),
+      isActive: tab.isActive || tab.id === state.activeTabId,
+      loading: tab.loading,
+      canGoBack: !!tab.canGoBack,
+      canGoForward: !!tab.canGoForward,
+    })),
+  };
 }
 
 export async function GetBrowserState(): Promise<BrowserWorkspaceState> {
   if (hasWailsBridge()) {
     return WailsBrowserState();
   }
-  return cloneBrowserState(ensureFallbackBrowserState());
+  const runtime = await buildRuntimeStatus();
+  return normalizeBrowserState(runtime.browser);
 }
 
 export async function BrowserOpen(url?: string): Promise<BrowserWorkspaceState> {
   if (hasWailsBridge()) {
     return WailsBrowserOpen(url || "");
   }
-  const current = ensureFallbackBrowserState();
-  const nextID = `browser-tab-local-${current.tabs.length + 1}`;
-  current.tabs = current.tabs.map((item: BrowserTab) => ({ ...item, isActive: false }));
-  current.tabs.push({
-    id: nextID,
-    title: url || "本地预览",
-    url: url || "http://127.0.0.1:5174/",
-    status: "ready",
-    isActive: true,
-    canGoBack: false,
-    canGoForward: false,
+  return invokeBrowserTool("browser.open", {
+    url: (url || "http://127.0.0.1:5174/").trim(),
   });
-  current.activeTabId = nextID;
-  current.isOpen = true;
-  return cloneBrowserState(current);
 }
 
 export async function BrowserNavigate(tabId: string, url: string): Promise<BrowserWorkspaceState> {
   if (hasWailsBridge()) {
     return WailsBrowserNavigate(tabId, url);
   }
-  const current = ensureFallbackBrowserState();
-  const targetID = tabId || current.activeTabId || current.tabs[0]?.id || "browser-tab-local";
-  const hasTarget = current.tabs.some((item: BrowserTab) => item.id === targetID);
-  if (hasTarget) {
-    current.tabs = current.tabs.map((item: BrowserTab) =>
-      item.id === targetID
-        ? { ...item, title: url, url, status: "ready", isActive: true, canGoBack: false, canGoForward: false }
-        : { ...item, isActive: false },
-    );
-  } else {
-    current.tabs = [
-      ...current.tabs.map((item: BrowserTab) => ({ ...item, isActive: false })),
-      {
-        id: targetID,
-        title: url,
-        url,
-        status: "ready",
-        isActive: true,
-        canGoBack: false,
-        canGoForward: false,
-      },
-    ];
-  }
-  current.activeTabId = targetID;
-  current.isOpen = true;
-  return cloneBrowserState(current);
+  return invokeBrowserTool("browser.navigate", { tabId, url: url.trim() });
 }
 
 export async function BrowserBack(tabId: string): Promise<BrowserWorkspaceState> {
   if (hasWailsBridge()) {
     return WailsBrowserBack(tabId);
   }
-  return cloneBrowserState(ensureFallbackBrowserState());
+  return invokeBrowserTool("browser.back", { tabId });
 }
 
 export async function BrowserForward(tabId: string): Promise<BrowserWorkspaceState> {
   if (hasWailsBridge()) {
     return WailsBrowserForward(tabId);
   }
-  return cloneBrowserState(ensureFallbackBrowserState());
+  return invokeBrowserTool("browser.forward", { tabId });
 }
 
 export async function BrowserReload(tabId: string): Promise<BrowserWorkspaceState> {
   if (hasWailsBridge()) {
     return WailsBrowserReload(tabId);
   }
-  return cloneBrowserState(ensureFallbackBrowserState());
+  return invokeBrowserTool("browser.reload", { tabId });
 }
 
 export async function BrowserCloseTab(tabId: string): Promise<BrowserWorkspaceState> {
   if (hasWailsBridge()) {
     return WailsBrowserCloseTab(tabId);
   }
-  const current = ensureFallbackBrowserState();
-  current.tabs = current.tabs.filter((item: BrowserTab) => item.id !== tabId);
-  if (current.tabs.length === 0) {
-    fallbackBrowserState = defaultBrowserState();
-    return cloneBrowserState(fallbackBrowserState);
-  }
-  if (!current.tabs.some((item: BrowserTab) => item.id === current.activeTabId)) {
-    current.activeTabId = current.tabs[0].id;
-  }
-  current.tabs = current.tabs.map((item: BrowserTab) => ({ ...item, isActive: item.id === current.activeTabId }));
-  return cloneBrowserState(current);
+  return invokeBrowserTool("browser.close_tab", { tabId });
 }
 
 export async function BrowserActivateTab(tabId: string): Promise<BrowserWorkspaceState> {
   if (hasWailsBridge()) {
     return WailsBrowserActivateTab(tabId);
   }
-  const current = ensureFallbackBrowserState();
-  current.activeTabId = tabId;
-  current.tabs = current.tabs.map((item: BrowserTab) => ({ ...item, isActive: item.id === tabId }));
-  current.isOpen = true;
-  return cloneBrowserState(current);
+  return invokeBrowserTool("browser.activate_tab", { tabId });
+}
+
+export async function BrowserClick(tabId: string, selector: string): Promise<BrowserWorkspaceState> {
+  const bridge = dynamicBrowserBridge();
+  if (bridge?.BrowserClick) {
+    return bridge.BrowserClick(tabId, selector);
+  }
+  return invokeBrowserTool("browser.click", { tabId, selector });
+}
+
+export async function BrowserType(tabId: string, selector: string, text: string): Promise<BrowserWorkspaceState> {
+  const bridge = dynamicBrowserBridge();
+  if (bridge?.BrowserType) {
+    return bridge.BrowserType(tabId, selector, text);
+  }
+  return invokeBrowserTool("browser.type", { tabId, selector, text });
+}
+
+export async function BrowserExtract(tabId: string, selector: string): Promise<BrowserWorkspaceState> {
+  const bridge = dynamicBrowserBridge();
+  if (bridge?.BrowserExtract) {
+    return bridge.BrowserExtract(tabId, selector);
+  }
+  return invokeBrowserTool("browser.extract", { tabId, selector });
+}
+
+export async function BrowserScreenshot(tabId: string): Promise<BrowserWorkspaceState> {
+  const bridge = dynamicBrowserBridge();
+  if (bridge?.BrowserScreenshot) {
+    return bridge.BrowserScreenshot(tabId);
+  }
+  return invokeBrowserTool("browser.screenshot", { tabId });
 }

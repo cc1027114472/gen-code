@@ -26,6 +26,14 @@ export function BrowserCloseTab(arg1) {
   return window["go"]["main"]["App"]["BrowserCloseTab"](arg1);
 }
 
+export function BrowserClick(arg1,arg2) {
+  return window["go"]["main"]["App"]["BrowserClick"](arg1,arg2);
+}
+
+export function BrowserExtract(arg1,arg2) {
+  return window["go"]["main"]["App"]["BrowserExtract"](arg1,arg2);
+}
+
 export function BrowserForward(arg1) {
   return window["go"]["main"]["App"]["BrowserForward"](arg1);
 }
@@ -42,8 +50,16 @@ export function BrowserReload(arg1) {
   return window["go"]["main"]["App"]["BrowserReload"](arg1);
 }
 
+export function BrowserScreenshot(arg1) {
+  return window["go"]["main"]["App"]["BrowserScreenshot"](arg1);
+}
+
 export function BrowserState() {
   return window["go"]["main"]["App"]["BrowserState"]();
+}
+
+export function BrowserType(arg1,arg2,arg3) {
+  return window["go"]["main"]["App"]["BrowserType"](arg1,arg2,arg3);
 }
 
 export function CheckBridge() {

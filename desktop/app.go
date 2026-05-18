@@ -35,9 +35,8 @@ const (
 var localIDCounter atomic.Uint64
 
 type App struct {
-	ctx     context.Context
-	store   *localRuntimeStore
-	browser *browserWorkspace
+	ctx   context.Context
+	store *localRuntimeStore
 }
 
 type apiEnvelope[T any] struct {
@@ -93,6 +92,7 @@ type RuntimeStatus struct {
 	StatePath             string                  `json:"statePath"`
 	UsesProjectLocalStore bool                    `json:"usesProjectLocalStore"`
 	RecoverySummary       string                  `json:"recoverySummary"`
+	Browser               BrowserWorkspaceState   `json:"browser"`
 	UpdatedAt             string                  `json:"updatedAt"`
 }
 
@@ -277,14 +277,19 @@ type BrowserTab struct {
 	URL          string `json:"url"`
 	Status       string `json:"status"`
 	IsActive     bool   `json:"isActive"`
+	Loading      bool   `json:"loading"`
 	CanGoBack    bool   `json:"canGoBack"`
 	CanGoForward bool   `json:"canGoForward"`
 }
 
 type BrowserWorkspaceState struct {
-	IsOpen      bool         `json:"isOpen"`
-	Tabs        []BrowserTab `json:"tabs"`
-	ActiveTabID string       `json:"activeTabId"`
+	IsOpen              bool         `json:"isOpen"`
+	Tabs                []BrowserTab `json:"tabs"`
+	ActiveTabID         string       `json:"activeTabId"`
+	LatestActionSummary string       `json:"latestActionSummary"`
+	LatestActionError   string       `json:"latestActionError"`
+	LatestExtractText   string       `json:"latestExtractText"`
+	LatestArtifactPath  string       `json:"latestArtifactPath"`
 }
 
 type apiStatus struct {
@@ -303,6 +308,19 @@ type apiStatus struct {
 	ActiveThreadID      string `json:"activeThreadId"`
 	TaskCount           int    `json:"taskCount"`
 	EventCount          int    `json:"eventCount"`
+	Browser             struct {
+		ActiveTabID         string `json:"activeTabId"`
+		Tabs                []struct {
+			ID           string `json:"id"`
+			URL          string `json:"url"`
+			Title        string `json:"title"`
+			Loading      bool   `json:"loading"`
+			CanGoBack    bool   `json:"canGoBack"`
+			CanGoForward bool   `json:"canGoForward"`
+		} `json:"tabs"`
+		LatestActionSummary string `json:"latestActionSummary"`
+		LatestActionError   string `json:"latestActionError"`
+	} `json:"browser"`
 }
 
 type apiThread struct {
@@ -463,14 +481,6 @@ type runtimeClient struct {
 	client  http.Client
 }
 
-type browserWorkspace struct {
-	mu         sync.Mutex
-	isOpen     bool
-	tabs       []BrowserTab
-	activeTab  string
-	nextTabNum int
-}
-
 type localRuntimeStore struct {
 	mu sync.Mutex
 	db *sql.DB
@@ -603,8 +613,7 @@ type persistedRuntimeFlag struct {
 
 func NewApp() *App {
 	return &App{
-		store:   newLocalRuntimeStore(),
-		browser: newBrowserWorkspace(),
+		store: newLocalRuntimeStore(),
 	}
 }
 
@@ -624,59 +633,189 @@ func (a *App) GetAppInfo() string {
 }
 
 func (a *App) BrowserState() BrowserWorkspaceState {
-	if a == nil || a.browser == nil {
-		return BrowserWorkspaceState{}
-	}
-	return a.browser.State()
+	return a.currentBrowserState()
 }
 
 func (a *App) BrowserOpen(rawURL string) BrowserWorkspaceState {
-	if a == nil || a.browser == nil {
-		return BrowserWorkspaceState{}
-	}
-	return a.browser.Open(rawURL)
+	return a.runBrowserTool("browser.open", map[string]string{
+		"url": normalizeBrowserURL(rawURL),
+	})
 }
 
 func (a *App) BrowserNavigate(tabID string, rawURL string) BrowserWorkspaceState {
-	if a == nil || a.browser == nil {
-		return BrowserWorkspaceState{}
-	}
-	return a.browser.Navigate(tabID, rawURL)
+	return a.runBrowserTool("browser.navigate", map[string]string{
+		"tabId": tabID,
+		"url":   normalizeBrowserURL(rawURL),
+	})
 }
 
 func (a *App) BrowserBack(tabID string) BrowserWorkspaceState {
-	if a == nil || a.browser == nil {
-		return BrowserWorkspaceState{}
-	}
-	return a.browser.Back(tabID)
+	return a.runBrowserTool("browser.back", map[string]string{
+		"tabId": tabID,
+	})
 }
 
 func (a *App) BrowserForward(tabID string) BrowserWorkspaceState {
-	if a == nil || a.browser == nil {
-		return BrowserWorkspaceState{}
-	}
-	return a.browser.Forward(tabID)
+	return a.runBrowserTool("browser.forward", map[string]string{
+		"tabId": tabID,
+	})
 }
 
 func (a *App) BrowserReload(tabID string) BrowserWorkspaceState {
-	if a == nil || a.browser == nil {
-		return BrowserWorkspaceState{}
-	}
-	return a.browser.Reload(tabID)
+	return a.runBrowserTool("browser.reload", map[string]string{
+		"tabId": tabID,
+	})
 }
 
 func (a *App) BrowserCloseTab(tabID string) BrowserWorkspaceState {
-	if a == nil || a.browser == nil {
-		return BrowserWorkspaceState{}
-	}
-	return a.browser.CloseTab(tabID)
+	return a.runBrowserTool("browser.close_tab", map[string]string{
+		"tabId": tabID,
+	})
 }
 
 func (a *App) BrowserActivateTab(tabID string) BrowserWorkspaceState {
-	if a == nil || a.browser == nil {
-		return BrowserWorkspaceState{}
+	return a.runBrowserTool("browser.activate_tab", map[string]string{
+		"tabId": tabID,
+	})
+}
+
+func (a *App) BrowserClick(tabID string, selector string) BrowserWorkspaceState {
+	return a.runBrowserTool("browser.click", map[string]string{
+		"tabId":    tabID,
+		"selector": selector,
+	})
+}
+
+func (a *App) BrowserType(tabID string, selector string, text string) BrowserWorkspaceState {
+	return a.runBrowserTool("browser.type", map[string]string{
+		"tabId":    tabID,
+		"selector": selector,
+		"text":     text,
+	})
+}
+
+func (a *App) BrowserExtract(tabID string, selector string) BrowserWorkspaceState {
+	return a.runBrowserTool("browser.extract", map[string]string{
+		"tabId":    tabID,
+		"selector": selector,
+	})
+}
+
+func (a *App) BrowserScreenshot(tabID string) BrowserWorkspaceState {
+	return a.runBrowserTool("browser.screenshot", map[string]string{
+		"tabId": tabID,
+	})
+}
+
+func (a *App) currentBrowserState() BrowserWorkspaceState {
+	status, err := a.collectRuntimeStatus()
+	if err == nil && len(status.Browser.Tabs) > 0 {
+		return status.Browser
 	}
-	return a.browser.ActivateTab(tabID)
+	return defaultBrowserWorkspaceState("browser workspace ready", "", "", "")
+}
+
+func (a *App) runBrowserTool(kind string, input map[string]string) BrowserWorkspaceState {
+	status := a.currentBrowserState()
+	client := newRuntimeClient()
+	current, err := a.ensureActiveBrowserThread(client)
+	if err != nil {
+		status.LatestActionError = err.Error()
+		return status
+	}
+
+	created, err := createTaskDescriptor(client, current.ActiveThreadID, TaskCreateInput{
+		Title: kind,
+		Kind:  kind,
+		Input: mustJSON(input),
+	})
+	if err != nil {
+		status.LatestActionError = err.Error()
+		return status
+	}
+
+	if _, err := runTask(client, current.ActiveThreadID, created.ID, current.Tasks); err != nil {
+		status.LatestActionError = err.Error()
+		latest := a.currentBrowserState()
+		if strings.TrimSpace(latest.LatestActionError) == "" {
+			latest.LatestActionError = err.Error()
+		}
+		return latest
+	}
+
+	next := a.currentBrowserState()
+	if kind == "browser.extract" {
+		next.LatestExtractText = latestToolCallSummaryForKind(current.ActiveThreadID, "browser.extract")
+	}
+	if kind == "browser.screenshot" {
+		next.LatestArtifactPath = latestArtifactPathForKind(current.ActiveThreadID, "browser.screenshot")
+	}
+	return next
+}
+
+func (a *App) ensureActiveBrowserThread(client runtimeClient) (RuntimeStatus, error) {
+	current, err := a.collectRuntimeStatus()
+	if err == nil && strings.TrimSpace(current.ActiveThreadID) != "" {
+		return current, nil
+	}
+
+	if _, createErr := createThread(client, "Browser Workspace"); createErr != nil {
+		if err != nil {
+			return RuntimeStatus{}, err
+		}
+		return RuntimeStatus{}, createErr
+	}
+
+	next, nextErr := a.collectRuntimeStatus()
+	if nextErr != nil {
+		return RuntimeStatus{}, nextErr
+	}
+	if strings.TrimSpace(next.ActiveThreadID) == "" {
+		return RuntimeStatus{}, fmt.Errorf("browser: active thread is required")
+	}
+	return next, nil
+}
+
+func mustJSON(input any) string {
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return "{}"
+	}
+	return string(payload)
+}
+
+func latestToolCallSummaryForKind(threadID string, kind string) string {
+	client := newRuntimeClient()
+	var payload struct {
+		Items []apiToolCall `json:"items"`
+	}
+	if err := client.fetchEnvelope("/api/threads/"+url.PathEscape(threadID)+"/tool-calls", &payload); err != nil {
+		return ""
+	}
+	for index := len(payload.Items) - 1; index >= 0; index-- {
+		item := payload.Items[index]
+		if item.ToolID == kind && strings.TrimSpace(item.Summary) != "" {
+			return item.Summary
+		}
+	}
+	return ""
+}
+
+func latestArtifactPathForKind(threadID string, kind string) string {
+	client := newRuntimeClient()
+	var payload struct {
+		Items []apiArtifact `json:"items"`
+	}
+	if err := client.fetchEnvelope("/api/threads/"+url.PathEscape(threadID)+"/artifacts", &payload); err != nil {
+		return ""
+	}
+	for index := len(payload.Items) - 1; index >= 0; index-- {
+		item := payload.Items[index]
+		if item.Kind == kind && strings.TrimSpace(item.Path) != "" {
+			return item.Path
+		}
+	}
+	return ""
 }
 
 func (a *App) GetRuntimeStatus() RuntimeStatus {
@@ -952,6 +1091,7 @@ func collectRemoteRuntimeStatus(client runtimeClient, workspaceRoot string, base
 	status.StateStore = fallbackText(runtimeStatus.StateStore, "sqlite")
 	status.StatePath = fallbackText(runtimeStatus.StatePath, defaultStateStorePath(workspaceRoot))
 	status.UsesProjectLocalStore = strings.EqualFold(status.StateStore, "sqlite")
+	status.Browser = browserWorkspaceStateFromRemote(runtimeStatus.Browser)
 	status.SupportsSSE = true
 	if runtimeStatus.ActiveThreadID != "" {
 		status.SSEEndpoint = strings.TrimRight(runtimeBaseURL(), "/") + "/api/threads/" + url.PathEscape(runtimeStatus.ActiveThreadID) + "/events/stream"
@@ -978,16 +1118,6 @@ func newRuntimeClient() runtimeClient {
 	}
 }
 
-func newBrowserWorkspace() *browserWorkspace {
-	workspace := &browserWorkspace{
-		isOpen:     true,
-		tabs:       []BrowserTab{},
-		nextTabNum: 1,
-	}
-	workspace.openLocked(defaultBrowserURL())
-	return workspace
-}
-
 func defaultBrowserURL() string {
 	base := strings.TrimSpace(os.Getenv("GENCODE_DESKTOP_BROWSER_URL"))
 	if base != "" {
@@ -1008,6 +1138,48 @@ func normalizeBrowserURL(raw string) string {
 		return "http://" + trimmed
 	}
 	return trimmed
+}
+
+func browserWorkspaceStateFromRemote(remote struct {
+	ActiveTabID         string `json:"activeTabId"`
+	Tabs                []struct {
+		ID           string `json:"id"`
+		URL          string `json:"url"`
+		Title        string `json:"title"`
+		Loading      bool   `json:"loading"`
+		CanGoBack    bool   `json:"canGoBack"`
+		CanGoForward bool   `json:"canGoForward"`
+	} `json:"tabs"`
+	LatestActionSummary string `json:"latestActionSummary"`
+	LatestActionError   string `json:"latestActionError"`
+}) BrowserWorkspaceState {
+	tabs := make([]BrowserTab, 0, len(remote.Tabs))
+	for _, item := range remote.Tabs {
+		tabs = append(tabs, BrowserTab{
+			ID:           item.ID,
+			Title:        item.Title,
+			URL:          item.URL,
+			Status:       browserTabStatus(item.Loading),
+			IsActive:     item.ID == remote.ActiveTabID,
+			Loading:      item.Loading,
+			CanGoBack:    item.CanGoBack,
+			CanGoForward: item.CanGoForward,
+		})
+	}
+	return BrowserWorkspaceState{
+		IsOpen:              len(tabs) > 0,
+		Tabs:                tabs,
+		ActiveTabID:         remote.ActiveTabID,
+		LatestActionSummary: remote.LatestActionSummary,
+		LatestActionError:   remote.LatestActionError,
+	}
+}
+
+func browserTabStatus(loading bool) string {
+	if loading {
+		return "loading"
+	}
+	return "ready"
 }
 
 func browserTabTitle(rawURL string) string {
@@ -1033,193 +1205,27 @@ func cloneBrowserTabs(items []BrowserTab, activeID string) []BrowserTab {
 	return cloned
 }
 
-func (b *browserWorkspace) State() BrowserWorkspaceState {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return BrowserWorkspaceState{
-		IsOpen:      b.isOpen,
-		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
-		ActiveTabID: b.activeTab,
-	}
-}
-
-func (b *browserWorkspace) Open(rawURL string) BrowserWorkspaceState {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.isOpen = true
-	b.openLocked(rawURL)
-	return BrowserWorkspaceState{
-		IsOpen:      b.isOpen,
-		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
-		ActiveTabID: b.activeTab,
-	}
-}
-
-func (b *browserWorkspace) Navigate(tabID string, rawURL string) BrowserWorkspaceState {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	targetID := strings.TrimSpace(tabID)
-	targetURL := normalizeBrowserURL(rawURL)
-	if targetID == "" {
-		b.openLocked(targetURL)
-	} else {
-		for index, item := range b.tabs {
-			if item.ID != targetID {
-				continue
-			}
-			item.URL = targetURL
-			item.Title = browserTabTitle(targetURL)
-			item.Status = "ready"
-			item.CanGoBack = false
-			item.CanGoForward = false
-			b.tabs[index] = item
-			b.activeTab = item.ID
-			break
-		}
-	}
-	return BrowserWorkspaceState{
-		IsOpen:      true,
-		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
-		ActiveTabID: b.activeTab,
-	}
-}
-
-func (b *browserWorkspace) Reload(tabID string) BrowserWorkspaceState {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	targetID := strings.TrimSpace(tabID)
-	if targetID == "" {
-		targetID = b.activeTab
-	}
-	for index, item := range b.tabs {
-		if item.ID != targetID {
-			continue
-		}
-		item.Status = "ready"
-		b.tabs[index] = item
-		b.activeTab = item.ID
-		break
-	}
-	return BrowserWorkspaceState{
-		IsOpen:      b.isOpen,
-		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
-		ActiveTabID: b.activeTab,
-	}
-}
-
-func (b *browserWorkspace) Back(tabID string) BrowserWorkspaceState {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	targetID := strings.TrimSpace(tabID)
-	if targetID == "" {
-		targetID = b.activeTab
-	}
-	for index, item := range b.tabs {
-		if item.ID != targetID {
-			continue
-		}
-		item.CanGoBack = false
-		b.tabs[index] = item
-		b.activeTab = item.ID
-		break
-	}
-	return BrowserWorkspaceState{
-		IsOpen:      b.isOpen,
-		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
-		ActiveTabID: b.activeTab,
-	}
-}
-
-func (b *browserWorkspace) Forward(tabID string) BrowserWorkspaceState {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	targetID := strings.TrimSpace(tabID)
-	if targetID == "" {
-		targetID = b.activeTab
-	}
-	for index, item := range b.tabs {
-		if item.ID != targetID {
-			continue
-		}
-		item.CanGoForward = false
-		b.tabs[index] = item
-		b.activeTab = item.ID
-		break
-	}
-	return BrowserWorkspaceState{
-		IsOpen:      b.isOpen,
-		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
-		ActiveTabID: b.activeTab,
-	}
-}
-
-func (b *browserWorkspace) CloseTab(tabID string) BrowserWorkspaceState {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	targetID := strings.TrimSpace(tabID)
-	if targetID == "" {
-		targetID = b.activeTab
-	}
-	filtered := make([]BrowserTab, 0, len(b.tabs))
-	for _, item := range b.tabs {
-		if item.ID == targetID {
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	b.tabs = filtered
-	if len(b.tabs) == 0 {
-		b.openLocked(defaultBrowserURL())
-	}
-	if !browserTabExists(b.tabs, b.activeTab) {
-		b.activeTab = b.tabs[len(b.tabs)-1].ID
-	}
-	return BrowserWorkspaceState{
-		IsOpen:      b.isOpen,
-		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
-		ActiveTabID: b.activeTab,
-	}
-}
-
-func (b *browserWorkspace) ActivateTab(tabID string) BrowserWorkspaceState {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	targetID := strings.TrimSpace(tabID)
-	if browserTabExists(b.tabs, targetID) {
-		b.activeTab = targetID
-		b.isOpen = true
-	}
-	return BrowserWorkspaceState{
-		IsOpen:      b.isOpen,
-		Tabs:        cloneBrowserTabs(b.tabs, b.activeTab),
-		ActiveTabID: b.activeTab,
-	}
-}
-
-func (b *browserWorkspace) openLocked(rawURL string) {
-	targetURL := normalizeBrowserURL(rawURL)
-	tabID := fmt.Sprintf("browser-tab-%d", b.nextTabNum)
-	b.nextTabNum++
+func defaultBrowserWorkspaceState(summary string, actionErr string, extractText string, artifactPath string) BrowserWorkspaceState {
+	targetURL := defaultBrowserURL()
 	tab := BrowserTab{
-		ID:           tabID,
+		ID:           "browser-tab-default",
 		Title:        browserTabTitle(targetURL),
 		URL:          targetURL,
 		Status:       "ready",
 		IsActive:     true,
+		Loading:      false,
 		CanGoBack:    false,
 		CanGoForward: false,
 	}
-	b.tabs = append(b.tabs, tab)
-	b.activeTab = tabID
-}
-
-func browserTabExists(items []BrowserTab, targetID string) bool {
-	for _, item := range items {
-		if item.ID == targetID {
-			return true
-		}
+	return BrowserWorkspaceState{
+		IsOpen:              true,
+		Tabs:                []BrowserTab{tab},
+		ActiveTabID:         tab.ID,
+		LatestActionSummary: fallbackText(strings.TrimSpace(summary), "browser workspace ready"),
+		LatestActionError:   strings.TrimSpace(actionErr),
+		LatestExtractText:   strings.TrimSpace(extractText),
+		LatestArtifactPath:  strings.TrimSpace(artifactPath),
 	}
-	return false
 }
 
 func runtimeBaseURL() string {
@@ -1264,12 +1270,20 @@ func activateThread(client runtimeClient, id string) (RuntimeStatus, error) {
 }
 
 func createTask(client runtimeClient, threadID string, input TaskCreateInput) (RuntimeStatus, error) {
+	_, err := createTaskDescriptor(client, threadID, input)
+	if err != nil {
+		return RuntimeStatus{}, err
+	}
+	return NewApp().GetRuntimeStatus(), nil
+}
+
+func createTaskDescriptor(client runtimeClient, threadID string, input TaskCreateInput) (apiTask, error) {
 	trimmedThreadID := strings.TrimSpace(threadID)
 	if trimmedThreadID == "" {
-		return RuntimeStatus{}, fmt.Errorf("thread id is required")
+		return apiTask{}, fmt.Errorf("thread id is required")
 	}
 	normalized := normalizeTaskCreateInput(input)
-	var created map[string]any
+	var created apiTask
 	requestBody := map[string]string{
 		"title": normalized.Title,
 		"kind":  normalized.Kind,
@@ -1278,10 +1292,10 @@ func createTask(client runtimeClient, threadID string, input TaskCreateInput) (R
 	if err := client.postEnvelope("/api/threads/"+url.PathEscape(trimmedThreadID)+"/tasks", requestBody, &created); err != nil {
 		legacyBody := map[string]string{"title": normalized.Title}
 		if legacyErr := client.postEnvelope("/api/threads/"+url.PathEscape(trimmedThreadID)+"/tasks", legacyBody, &created); legacyErr != nil {
-			return RuntimeStatus{}, err
+			return apiTask{}, err
 		}
 	}
-	return NewApp().GetRuntimeStatus(), nil
+	return created, nil
 }
 
 func runTask(client runtimeClient, threadID string, taskID string, tasks []TaskSummary) (RuntimeStatus, error) {

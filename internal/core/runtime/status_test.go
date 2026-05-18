@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -19,6 +20,35 @@ import (
 	"llmtrace/internal/core/state"
 	"llmtrace/internal/core/tool"
 )
+
+func TestRuntimeToolsExposeBuiltInBrowserDescriptors(t *testing.T) {
+	projectRoot := t.TempDir()
+	store, err := state.Open(projectRoot)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	service := newServiceFromDiscoveryWithStore(
+		discoverySet{tools: append([]tool.Descriptor(nil), builtinBrowserToolDescriptors...)},
+		store,
+		provider.NewRegistry(""),
+	)
+
+	tools, err := service.Tools(context.Background())
+	require.NoError(t, err)
+
+	toolIDs := make([]string, 0, len(tools))
+	for _, item := range tools {
+		toolIDs = append(toolIDs, item.ID)
+	}
+
+	require.True(t, slices.Contains(toolIDs, "browser.open"))
+	require.True(t, slices.Contains(toolIDs, "browser.navigate"))
+	require.True(t, slices.Contains(toolIDs, "browser.state"))
+	require.True(t, slices.Contains(toolIDs, "browser.click"))
+	require.True(t, slices.Contains(toolIDs, "browser.type"))
+	require.True(t, slices.Contains(toolIDs, "browser.extract"))
+	require.True(t, slices.Contains(toolIDs, "browser.screenshot"))
+}
 
 func TestServiceContractShapesExposeStructuredMetadata(t *testing.T) {
 	projectRoot := t.TempDir()

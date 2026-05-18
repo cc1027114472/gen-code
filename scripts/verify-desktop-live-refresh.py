@@ -692,6 +692,92 @@ def run_mcp_execution_scenario(page, thread_id: str, scenario: dict) -> dict:
     }
 
 
+def run_browser_navigation_scenario(page, thread_id: str, scenario: dict) -> dict:
+    scenario_result = run_direct_tool_scenario(page, thread_id, scenario)
+    completed_task = scenario_result["task"]
+    record = wait_for_tool_call(
+        thread_id,
+        lambda item: item["toolId"] == scenario["kind"]
+        and item["status"] == "completed"
+        and scenario["summary_contains"] in item["summary"],
+    )
+    return {
+        "task": completed_task,
+        "record": record,
+        "visibility": scenario_result["visibility"],
+        "lane": scenario["lane"],
+        "input": scenario["input"],
+    }
+
+
+def run_controlled_browser_scenario(page, thread_id: str, run_id: str) -> dict:
+    results = []
+    scenario_defs = [
+        {
+            "title": f"Browser controlled open {run_id}",
+            "kind": "browser.open",
+            "input": {"url": UI_BASE_URL},
+            "summary_contains": "browser tab opened",
+        },
+        {
+            "title": f"Browser controlled type {run_id}",
+            "kind": "browser.type",
+            "input": {"tabId": "", "selector": "[data-testid='browser-address-input']", "text": "http://127.0.0.1:5174/"},
+            "summary_contains": "browser type executed",
+        },
+        {
+            "title": f"Browser controlled click {run_id}",
+            "kind": "browser.click",
+            "input": {"tabId": "", "selector": "[data-testid='browser-navigate-button']"},
+            "summary_contains": "browser click executed",
+        },
+        {
+            "title": f"Browser controlled extract {run_id}",
+            "kind": "browser.extract",
+            "input": {"tabId": "", "selector": "[data-testid='browser-status-title']"},
+            "summary_contains": "browser extract completed",
+        },
+        {
+            "title": f"Browser controlled screenshot {run_id}",
+            "kind": "browser.screenshot",
+            "input": {"tabId": ""},
+            "summary_contains": "browser screenshot captured",
+        },
+    ]
+
+    for scenario in scenario_defs:
+        results.append(
+            run_browser_navigation_scenario(
+                page,
+                thread_id,
+                {
+                    **scenario,
+                    "lane": "controlled browser canonical lane",
+                },
+            )
+        )
+
+    extract_result = next(item for item in results if item["task"]["kind"] == "browser.extract")
+    screenshot_result = next(item for item in results if item["task"]["kind"] == "browser.screenshot")
+    screenshot_artifact = wait_for_artifact(
+        thread_id,
+        lambda item: item["kind"] == "browser.screenshot" and item["path"] in screenshot_result["task"]["resultSummary"],
+    )
+    browser_state = api("GET", "/api/runtime/status").get("browser", {})
+
+    return {
+        "taskIds": [item["task"]["id"] for item in results],
+        "toolKinds": [item["task"]["kind"] for item in results],
+        "activeTabId": browser_state.get("activeTabId", ""),
+        "extractSummary": extract_result["record"]["summary"],
+        "screenshotArtifactPath": screenshot_artifact["path"],
+        "toolCallsVisible": all(
+            item["visibility"]["taskCardVisible"] or item["visibility"]["toolKindVisible"] for item in results
+        ),
+        "records": results,
+    }
+
+
 def wait_for_new_assistant_message(thread_id: str, baseline_count: int, timeout_seconds: float = 60.0) -> dict:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
@@ -1237,6 +1323,74 @@ def main() -> int:
                     },
                 )
             )
+            browser_results = []
+            for scenario in [
+                {
+                    "title": f"Browser state direct {run_id}",
+                    "kind": "browser.state",
+                    "input": {},
+                    "summary_contains": "browser state captured",
+                    "lane": "browser navigation canonical lane",
+                },
+                {
+                    "title": f"Browser open preview {run_id}",
+                    "kind": "browser.open",
+                    "input": {"url": UI_BASE_URL},
+                    "summary_contains": "browser tab opened",
+                    "lane": "browser navigation canonical lane",
+                },
+                {
+                    "title": f"Browser navigate api {run_id}",
+                    "kind": "browser.navigate",
+                    "input": {"tabId": "", "url": f"{API_BASE_URL}/api/runtime/status"},
+                    "summary_contains": "browser tab navigated",
+                    "lane": "browser navigation canonical lane",
+                },
+                {
+                    "title": f"Browser reload active {run_id}",
+                    "kind": "browser.reload",
+                    "input": {"tabId": ""},
+                    "summary_contains": "browser tab reloaded",
+                    "lane": "browser navigation canonical lane",
+                },
+                {
+                    "title": f"Browser back active {run_id}",
+                    "kind": "browser.back",
+                    "input": {"tabId": ""},
+                    "summary_contains": "browser tab went back",
+                    "lane": "browser navigation canonical lane",
+                },
+                {
+                    "title": f"Browser forward active {run_id}",
+                    "kind": "browser.forward",
+                    "input": {"tabId": ""},
+                    "summary_contains": "browser tab went forward",
+                    "lane": "browser navigation canonical lane",
+                },
+                {
+                    "title": f"Browser open localhost {run_id}",
+                    "kind": "browser.open",
+                    "input": {"url": "http://127.0.0.1:5174/"},
+                    "summary_contains": "browser tab opened",
+                    "lane": "browser navigation canonical lane",
+                },
+                {
+                    "title": f"Browser activate primary {run_id}",
+                    "kind": "browser.activate_tab",
+                    "input": {"tabId": "browser-tab-1"},
+                    "summary_contains": "browser tab activated",
+                    "lane": "browser navigation canonical lane",
+                },
+                {
+                    "title": f"Browser close secondary {run_id}",
+                    "kind": "browser.close_tab",
+                    "input": {"tabId": "browser-tab-2"},
+                    "summary_contains": "browser tab closed",
+                    "lane": "browser navigation canonical lane",
+                },
+            ]:
+                browser_results.append(run_browser_navigation_scenario(page, thread_id, scenario))
+            controlled_browser_result = run_controlled_browser_scenario(page, thread_id, run_id)
             mcp_execution_results = []
             for scenario in [
                 {
@@ -1517,6 +1671,16 @@ def main() -> int:
                             1 for item in direct_results if item["visibility"]["toolKindVisible"]
                         ),
                     },
+                    "browserNavigationVisibility": {
+                        "scenarioCount": len(browser_results),
+                        "visibleByTitleCount": sum(
+                            1 for item in browser_results if item["visibility"]["taskCardVisible"]
+                        ),
+                        "visibleByToolKindFallbackCount": sum(
+                            1 for item in browser_results if item["visibility"]["toolKindVisible"]
+                        ),
+                    },
+                    "controlledBrowserVisibility": controlled_browser_result,
                     "mcpExecutionVisibility": {
                         "scenarioCount": len(mcp_execution_results),
                         "visibleByTitleCount": sum(
@@ -1574,6 +1738,20 @@ def main() -> int:
                     }
                     for item in direct_results
                 ],
+                "browserNavigationTasks": [
+                    {
+                        "taskId": item["task"]["id"],
+                        "title": item["task"]["title"],
+                        "kind": item["task"]["kind"],
+                        "lane": item["lane"],
+                        "input": item["input"],
+                        "resultSummary": item["task"]["resultSummary"],
+                        "record": item["record"],
+                        "visibility": item["visibility"],
+                    }
+                    for item in browser_results
+                ],
+                "controlledBrowserScenario": controlled_browser_result,
                 "mcpExecutionResults": [
                     {
                         "taskId": item["task"]["id"],
@@ -1673,6 +1851,13 @@ def validate_release_baseline(result: dict) -> None:
             raise AssertionError(f"missing remote acceptance key: {key}")
     if "uiFirstCanonicalAgentScenario" not in remote_report:
         raise AssertionError("missing UI-first canonical agent scenario in remote acceptance report")
+    browser_visibility = remote_report.get("browserNavigationVisibility") or {}
+    if browser_visibility.get("scenarioCount", 0) < 1:
+        raise AssertionError("missing browser navigation canonical acceptance evidence")
+    controlled_browser = remote_report.get("controlledBrowserVisibility") or {}
+    for key in ("taskIds", "toolKinds", "activeTabId", "extractSummary", "screenshotArtifactPath", "toolCallsVisible"):
+        if key not in controlled_browser:
+            raise AssertionError(f"missing controlled browser acceptance key: {key}")
 
     agent_failure_matrix = remote_report.get("agentFailureMatrix") or {}
     for key in (

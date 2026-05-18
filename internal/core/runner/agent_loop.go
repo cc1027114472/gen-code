@@ -41,6 +41,10 @@ type AgentRunInput struct {
 type AgentAction struct {
 	Type             string   `json:"type"`
 	ReasoningSummary string   `json:"reasoningSummary,omitempty"`
+	URL              string   `json:"url,omitempty"`
+	TabID            string   `json:"tabId,omitempty"`
+	Selector         string   `json:"selector,omitempty"`
+	Text             string   `json:"text,omitempty"`
 	Path             string   `json:"path,omitempty"`
 	Paths            []string `json:"paths,omitempty"`
 	Pattern          string   `json:"pattern,omitempty"`
@@ -342,6 +346,60 @@ func (r *Runner) runAgentLoop(ctx context.Context, thread session.Thread, parent
 					return "", err
 				}
 				return "agent waiting for approval", nil
+			}
+		case "browser_open":
+			if strings.TrimSpace(action.URL) == "" {
+				state.FailureReason = "agent action url is required"
+				return "", fmt.Errorf("agent action url is required")
+			}
+			if err := r.runAgentChildTask(ctx, thread, parent, &state, KindBrowserOpen, map[string]string{
+				"url": strings.TrimSpace(action.URL),
+			}, childTaskTitle("Browser open", action.URL)); err != nil {
+				return "", err
+			}
+		case "browser_state":
+			if err := r.runAgentChildTask(ctx, thread, parent, &state, KindBrowserState, map[string]any{}, "Browser state"); err != nil {
+				return "", err
+			}
+		case "browser_click":
+			if strings.TrimSpace(action.Selector) == "" {
+				state.FailureReason = "agent action selector is required"
+				return "", fmt.Errorf("agent action selector is required")
+			}
+			if err := r.runAgentChildTask(ctx, thread, parent, &state, KindBrowserClick, map[string]string{
+				"tabId":    strings.TrimSpace(action.TabID),
+				"selector": strings.TrimSpace(action.Selector),
+			}, childTaskTitle("Browser click", action.Selector)); err != nil {
+				return "", err
+			}
+		case "browser_type":
+			if strings.TrimSpace(action.Selector) == "" {
+				state.FailureReason = "agent action selector is required"
+				return "", fmt.Errorf("agent action selector is required")
+			}
+			if strings.TrimSpace(action.Text) == "" {
+				state.FailureReason = "agent action text is required"
+				return "", fmt.Errorf("agent action text is required")
+			}
+			if err := r.runAgentChildTask(ctx, thread, parent, &state, KindBrowserType, map[string]string{
+				"tabId":    strings.TrimSpace(action.TabID),
+				"selector": strings.TrimSpace(action.Selector),
+				"text":     action.Text,
+			}, childTaskTitle("Browser type", action.Selector)); err != nil {
+				return "", err
+			}
+		case "browser_extract":
+			if err := r.runAgentChildTask(ctx, thread, parent, &state, KindBrowserExtract, map[string]string{
+				"tabId":    strings.TrimSpace(action.TabID),
+				"selector": strings.TrimSpace(action.Selector),
+			}, childTaskTitle("Browser extract", fallbackAgentText(action.Selector, action.TabID))); err != nil {
+				return "", err
+			}
+		case "browser_screenshot":
+			if err := r.runAgentChildTask(ctx, thread, parent, &state, KindBrowserScreenshot, map[string]string{
+				"tabId": strings.TrimSpace(action.TabID),
+			}, childTaskTitle("Browser screenshot", action.TabID)); err != nil {
+				return "", err
 			}
 		default:
 			state.FailureReason = fmt.Sprintf("agent action %q is not supported", action.Type)
@@ -840,7 +898,7 @@ func buildAgentPrompt(messages []session.MessageRecord, tasks []session.Task, st
 	}
 	modeGuidance := buildAgentModeGuidance(state.Plan.Mode)
 	return fmt.Sprintf(
-		"You are a minimal coding agent for a single thread.\nGoal: %s\nCurrent step: %d of %d.\nAllowed actions: respond, read_file, list_files, stat_file, read_files_batch, list_files_filtered, search_text, search_text_detailed, apply_patch.\nChoose actions deliberately: use stat_file for one file's existence or metadata, read_files_batch for multiple text files, list_files_filtered for directory filtering by pattern, search_text_detailed when you need file and line matches, search_text for lightweight path-only discovery, and apply_patch when the goal explicitly asks for a code or file modification.\nPlan mode: %s\nPlan summary: %s\nRequired action sequence: %s\nCurrent required step: %s\nMode guidance: %s\nSequence guidance: when the goal asks you to filter a directory by pattern and then inspect specific files, first call list_files_filtered, then call read_files_batch for the selected files, then respond. When the goal explicitly asks you to modify files and then report the outcome, call apply_patch before respond. Do not skip the required step when the goal explicitly asks for it. If you violate the required action sequence, the run fails immediately.\nReturn JSON only with keys type, reasoningSummary, path, paths, pattern, query, limit, patch, response.\nDo not include markdown fences, prose outside JSON, or unsupported keys.\nNever use any action outside the allowed set.\nRecent messages:\n%s\nRecent tasks:\n%s\n",
+		"You are a minimal coding agent for a single thread.\nGoal: %s\nCurrent step: %d of %d.\nAllowed actions: respond, read_file, list_files, stat_file, read_files_batch, list_files_filtered, search_text, search_text_detailed, apply_patch, browser_open, browser_state, browser_click, browser_type, browser_extract, browser_screenshot.\nChoose actions deliberately: use stat_file for one file's existence or metadata, read_files_batch for multiple text files, list_files_filtered for directory filtering by pattern, search_text_detailed when you need file and line matches, search_text for lightweight path-only discovery, apply_patch when the goal explicitly asks for a code or file modification, and browser_* actions only for controlled local browser workflows.\nPlan mode: %s\nPlan summary: %s\nRequired action sequence: %s\nCurrent required step: %s\nMode guidance: %s\nSequence guidance: when the goal asks you to filter a directory by pattern and then inspect specific files, first call list_files_filtered, then call read_files_batch for the selected files, then respond. When the goal explicitly asks you to modify files and then report the outcome, call apply_patch before respond. Do not skip the required step when the goal explicitly asks for it. If you violate the required action sequence, the run fails immediately.\nReturn JSON only with keys type, reasoningSummary, url, tabId, selector, text, path, paths, pattern, query, limit, patch, response.\nDo not include markdown fences, prose outside JSON, or unsupported keys.\nNever use any action outside the allowed set.\nRecent messages:\n%s\nRecent tasks:\n%s\n",
 		state.Goal,
 		state.StepIndex+1,
 		state.MaxSteps,
@@ -870,7 +928,7 @@ func buildAgentCorrectionPrompt(messages []session.MessageRecord, tasks []sessio
 		taskLines = []string{"- no tasks yet"}
 	}
 	return fmt.Sprintf(
-		"Your previous agent action was rejected.\nGoal: %s\nPlan mode: %s\nCurrent required step: %s\nRequired action sequence: %s\nRejected action type: %s\nRejected reasoning: %s\nValidation error: %s\nCorrection rule: return one corrected JSON action for the current required step only. Do not explain the mistake. Do not repeat the rejected action unless it matches the current required step. For this correction, choose only from: %s.\nMode guidance: %s\nReturn JSON only with keys type, reasoningSummary, path, paths, pattern, query, limit, patch, response.\nRecent messages:\n%s\nRecent tasks:\n%s\n",
+		"Your previous agent action was rejected.\nGoal: %s\nPlan mode: %s\nCurrent required step: %s\nRequired action sequence: %s\nRejected action type: %s\nRejected reasoning: %s\nValidation error: %s\nCorrection rule: return one corrected JSON action for the current required step only. Do not explain the mistake. Do not repeat the rejected action unless it matches the current required step. For this correction, choose only from: %s.\nMode guidance: %s\nReturn JSON only with keys type, reasoningSummary, url, tabId, selector, text, path, paths, pattern, query, limit, patch, response.\nRecent messages:\n%s\nRecent tasks:\n%s\n",
 		state.Goal,
 		fallbackAgentText(state.Plan.Mode, "freeform"),
 		fallbackAgentText(state.CurrentStepTitle, "current step"),
@@ -925,7 +983,7 @@ func parseAgentActionWithState(raw string, state AgentRunState) (AgentAction, er
 	action = inheritAgentActionContext(action, state)
 	action = populateAgentResponseFallback(normalized, action)
 	switch action.Type {
-	case "respond", "read_file", "list_files", "stat_file", "read_files_batch", "list_files_filtered", "search_text", "search_text_detailed", "apply_patch":
+	case "respond", "read_file", "list_files", "stat_file", "read_files_batch", "list_files_filtered", "search_text", "search_text_detailed", "apply_patch", "browser_open", "browser_state", "browser_click", "browser_type", "browser_extract", "browser_screenshot":
 		return action, nil
 	default:
 		return AgentAction{}, fmt.Errorf("agent action %q is not supported", action.Type)
@@ -950,6 +1008,18 @@ func normalizeAgentActionType(value string) string {
 		return "search_text_detailed"
 	case "workspace.apply_patch":
 		return "apply_patch"
+	case "browser.open":
+		return "browser_open"
+	case "browser.state":
+		return "browser_state"
+	case "browser.click":
+		return "browser_click"
+	case "browser.type":
+		return "browser_type"
+	case "browser.extract":
+		return "browser_extract"
+	case "browser.screenshot":
+		return "browser_screenshot"
 	default:
 		return strings.TrimSpace(value)
 	}
@@ -988,6 +1058,10 @@ func inheritAgentActionContext(action AgentAction, state AgentRunState) AgentAct
 		if strings.TrimSpace(action.Path) == "" {
 			action.Path = strings.TrimSpace(state.LastAction.Path)
 		}
+	case "browser_click", "browser_type", "browser_extract", "browser_screenshot":
+		if strings.TrimSpace(action.TabID) == "" {
+			action.TabID = strings.TrimSpace(state.LastAction.TabID)
+		}
 	}
 	return action
 }
@@ -1007,6 +1081,28 @@ func inferAgentActionType(action AgentAction, state AgentRunState) string {
 
 	if strings.TrimSpace(action.Response) != "" && allow("respond") {
 		return "respond"
+	}
+	if strings.TrimSpace(action.URL) != "" && allow("browser_open") {
+		return "browser_open"
+	}
+	if strings.TrimSpace(action.Selector) != "" && strings.TrimSpace(action.Text) != "" && allow("browser_type") {
+		return "browser_type"
+	}
+	if strings.TrimSpace(action.Selector) != "" {
+		if allow("browser_click") {
+			return "browser_click"
+		}
+		if allow("browser_extract") {
+			return "browser_extract"
+		}
+	}
+	if strings.TrimSpace(action.TabID) != "" {
+		if allow("browser_screenshot") {
+			return "browser_screenshot"
+		}
+		if allow("browser_state") {
+			return "browser_state"
+		}
 	}
 	if strings.TrimSpace(action.Patch) != "" && allow("apply_patch") {
 		return "apply_patch"

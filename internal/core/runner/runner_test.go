@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"llmtrace/internal/core/browser"
 	"llmtrace/internal/core/mcp"
 	"llmtrace/internal/core/policy"
 	"llmtrace/internal/core/provider"
@@ -46,6 +48,193 @@ func (s *scriptedModelExecutor) CreateResponse(context.Context, provider.Respons
 	result := s.results[s.index]
 	s.index++
 	return result, nil
+}
+
+type stubBrowserCore struct {
+	activeID string
+	tabs     map[string]browser.Tab
+	order    []string
+	nextID   int
+	values   map[string]string
+}
+
+func (s *stubBrowserCore) State(context.Context) (browser.Snapshot, error) {
+	return s.snapshot(), nil
+}
+
+func (s *stubBrowserCore) Open(_ context.Context, request browser.OpenRequest) (browser.Snapshot, error) {
+	if !stubBrowserURLAllowed(request.URL) {
+		return browser.Snapshot{}, browser.ErrURLNotAllowed
+	}
+	s.ensureTabs()
+	s.nextID++
+	tabID := fmt.Sprintf("browser-tab-%d", s.nextID)
+	s.tabs[tabID] = browser.Tab{ID: tabID, URL: request.URL}
+	s.order = append(s.order, tabID)
+	s.activeID = tabID
+	return s.snapshot(), nil
+}
+
+func (s *stubBrowserCore) Navigate(_ context.Context, request browser.NavigateRequest) (browser.Snapshot, error) {
+	if !stubBrowserURLAllowed(request.URL) {
+		return browser.Snapshot{}, browser.ErrURLNotAllowed
+	}
+	tab, err := s.lookup(request.TabID)
+	if err != nil {
+		return browser.Snapshot{}, err
+	}
+	tab.URL = request.URL
+	s.tabs[request.TabID] = tab
+	s.activeID = request.TabID
+	return s.snapshot(), nil
+}
+
+func (s *stubBrowserCore) Back(_ context.Context, request browser.TabRequest) (browser.Snapshot, error) {
+	if _, err := s.lookup(request.TabID); err != nil {
+		return browser.Snapshot{}, err
+	}
+	s.activeID = request.TabID
+	return s.snapshot(), nil
+}
+
+func (s *stubBrowserCore) Forward(_ context.Context, request browser.TabRequest) (browser.Snapshot, error) {
+	if _, err := s.lookup(request.TabID); err != nil {
+		return browser.Snapshot{}, err
+	}
+	s.activeID = request.TabID
+	return s.snapshot(), nil
+}
+
+func (s *stubBrowserCore) Reload(_ context.Context, request browser.TabRequest) (browser.Snapshot, error) {
+	if _, err := s.lookup(request.TabID); err != nil {
+		return browser.Snapshot{}, err
+	}
+	s.activeID = request.TabID
+	return s.snapshot(), nil
+}
+
+func (s *stubBrowserCore) CloseTab(_ context.Context, request browser.TabRequest) (browser.Snapshot, error) {
+	if _, err := s.lookup(request.TabID); err != nil {
+		return browser.Snapshot{}, err
+	}
+	delete(s.tabs, request.TabID)
+	filtered := make([]string, 0, len(s.order))
+	for _, id := range s.order {
+		if id != request.TabID {
+			filtered = append(filtered, id)
+		}
+	}
+	s.order = filtered
+	if s.activeID == request.TabID {
+		s.activeID = ""
+		if len(s.order) > 0 {
+			s.activeID = s.order[0]
+		}
+	}
+	return s.snapshot(), nil
+}
+
+func (s *stubBrowserCore) ActivateTab(_ context.Context, request browser.TabRequest) (browser.Snapshot, error) {
+	if _, err := s.lookup(request.TabID); err != nil {
+		return browser.Snapshot{}, err
+	}
+	s.activeID = request.TabID
+	return s.snapshot(), nil
+}
+
+func (s *stubBrowserCore) Click(_ context.Context, request browser.ClickRequest) (browser.Snapshot, error) {
+	if _, err := s.lookup(request.TabID); err != nil {
+		return browser.Snapshot{}, err
+	}
+	if strings.TrimSpace(request.Selector) == "" || strings.Contains(request.Selector, "missing") {
+		return browser.Snapshot{}, browser.ErrSelectorNotFound
+	}
+	snapshot := s.snapshot()
+	snapshot.ActiveTabID = request.TabID
+	snapshot.LatestActionSummary = fmt.Sprintf("browser click executed: %s", request.TabID)
+	return snapshot, nil
+}
+
+func (s *stubBrowserCore) Type(_ context.Context, request browser.TypeRequest) (browser.Snapshot, error) {
+	if _, err := s.lookup(request.TabID); err != nil {
+		return browser.Snapshot{}, err
+	}
+	if strings.TrimSpace(request.Selector) == "" || strings.Contains(request.Selector, "missing") {
+		return browser.Snapshot{}, browser.ErrSelectorNotFound
+	}
+	if s.values == nil {
+		s.values = map[string]string{}
+	}
+	s.values[request.Selector] = request.Text
+	snapshot := s.snapshot()
+	snapshot.ActiveTabID = request.TabID
+	snapshot.LatestActionSummary = fmt.Sprintf("browser type executed: %s", request.TabID)
+	return snapshot, nil
+}
+
+func (s *stubBrowserCore) Extract(_ context.Context, request browser.ExtractRequest) (browser.ExtractResult, error) {
+	if _, err := s.lookup(request.TabID); err != nil {
+		return browser.ExtractResult{}, err
+	}
+	if strings.TrimSpace(request.Selector) == "" || strings.Contains(request.Selector, "missing") {
+		return browser.ExtractResult{}, browser.ErrSelectorNotFound
+	}
+	text := ""
+	if s.values != nil {
+		text = s.values[request.Selector]
+		if text == "" && request.Selector == `[data-testid="result"]` {
+			text = s.values[`[data-testid="name"]`]
+		}
+	}
+	snapshot := s.snapshot()
+	snapshot.ActiveTabID = request.TabID
+	snapshot.LatestActionSummary = fmt.Sprintf("browser extract completed: %s", request.TabID)
+	return browser.ExtractResult{Snapshot: snapshot, Text: text}, nil
+}
+
+func (s *stubBrowserCore) Screenshot(_ context.Context, request browser.ScreenshotRequest) (browser.ScreenshotResult, error) {
+	if _, err := s.lookup(request.TabID); err != nil {
+		return browser.ScreenshotResult{}, err
+	}
+	snapshot := s.snapshot()
+	snapshot.ActiveTabID = request.TabID
+	snapshot.LatestActionSummary = fmt.Sprintf("browser screenshot captured: %s", request.TabID)
+	return browser.ScreenshotResult{Snapshot: snapshot, Bytes: []byte("stub")}, nil
+}
+
+func (s *stubBrowserCore) ensureTabs() {
+	if s.tabs == nil {
+		s.tabs = map[string]browser.Tab{}
+	}
+}
+
+func (s *stubBrowserCore) lookup(tabID string) (browser.Tab, error) {
+	s.ensureTabs()
+	tab, ok := s.tabs[tabID]
+	if !ok {
+		return browser.Tab{}, browser.ErrTabNotFound
+	}
+	return tab, nil
+}
+
+func (s *stubBrowserCore) snapshot() browser.Snapshot {
+	s.ensureTabs()
+	tabs := make([]browser.Tab, 0, len(s.order))
+	for _, id := range s.order {
+		tab, ok := s.tabs[id]
+		if ok {
+			tabs = append(tabs, tab)
+		}
+	}
+	return browser.Snapshot{
+		ActiveTabID: s.activeID,
+		Tabs:        tabs,
+	}
+}
+
+func stubBrowserURLAllowed(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	return strings.HasPrefix(raw, "http://localhost") || strings.HasPrefix(raw, "http://127.0.0.1")
 }
 
 func TestRunnerExecutesThreadLocalMessageTask(t *testing.T) {
@@ -254,6 +443,164 @@ func TestRunnerExecutesWorkspaceReadOnlyTools(t *testing.T) {
 	require.Equal(t, "completed", result.Status)
 	require.Contains(t, result.ResultSummary, "found 2 detailed matches")
 	require.Contains(t, result.ResultSummary, "README.md:1")
+}
+
+func TestRunnerExecutesBrowserTasks(t *testing.T) {
+	registry := session.NewRegistry(t.TempDir())
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Browser",
+		PermissionMode: policy.ReadOnly,
+	})
+	runner := New(registry, nil).WithBrowser(&stubBrowserCore{})
+
+	openTask, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Open tab",
+		Kind:  KindBrowserOpen,
+		Input: `{"url":"http://localhost:3000"}`,
+	})
+	require.True(t, ok)
+	result, err := runner.RunTask(context.Background(), thread.ID, openTask.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, "browser tab opened: browser-tab-1", result.ResultSummary)
+
+	navigateTask, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Navigate tab",
+		Kind:  KindBrowserNavigate,
+		Input: `{"tabId":"browser-tab-1","url":"http://127.0.0.1:4000/page"}`,
+	})
+	require.True(t, ok)
+	result, err = runner.RunTask(context.Background(), thread.ID, navigateTask.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, "browser tab navigated: browser-tab-1", result.ResultSummary)
+
+	for _, testCase := range []struct {
+		title   string
+		kind    string
+		input   string
+		summary string
+	}{
+		{title: "State", kind: KindBrowserState, input: `{}`, summary: "browser state captured"},
+		{title: "Back", kind: KindBrowserBack, input: `{"tabId":"browser-tab-1"}`, summary: "browser tab went back: browser-tab-1"},
+		{title: "Forward", kind: KindBrowserForward, input: `{"tabId":"browser-tab-1"}`, summary: "browser tab went forward: browser-tab-1"},
+		{title: "Reload", kind: KindBrowserReload, input: `{"tabId":"browser-tab-1"}`, summary: "browser tab reloaded: browser-tab-1"},
+		{title: "Activate", kind: KindBrowserActivateTab, input: `{"tabId":"browser-tab-1"}`, summary: "browser tab activated: browser-tab-1"},
+		{title: "Click", kind: KindBrowserClick, input: `{"tabId":"browser-tab-1","selector":"[data-testid=\"apply\"]"}`, summary: "browser click executed: browser-tab-1"},
+		{title: "Type", kind: KindBrowserType, input: `{"tabId":"browser-tab-1","selector":"[data-testid=\"name\"]","text":"browser"}`, summary: "browser type executed: browser-tab-1"},
+		{title: "Extract", kind: KindBrowserExtract, input: `{"tabId":"browser-tab-1","selector":"[data-testid=\"result\"]"}`, summary: "browser extract completed: browser-tab-1"},
+		{title: "Close", kind: KindBrowserCloseTab, input: `{"tabId":"browser-tab-1"}`, summary: "browser tab closed: browser-tab-1"},
+	} {
+		task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+			Title: testCase.title,
+			Kind:  testCase.kind,
+			Input: testCase.input,
+		})
+		require.True(t, ok)
+		result, err = runner.RunTask(context.Background(), thread.ID, task.ID)
+		require.NoError(t, err)
+		require.Equal(t, "completed", result.Status)
+		require.Equal(t, testCase.summary, result.ResultSummary)
+	}
+
+	toolCalls, ok := registry.ToolCalls(thread.ID)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 22)
+	require.Equal(t, KindBrowserOpen, toolCalls[0].ToolID)
+	require.Equal(t, "running", toolCalls[0].Status)
+	require.Equal(t, "completed", toolCalls[15].Status)
+}
+
+func TestRunnerExecutesBrowserScreenshotTaskAndAppendsArtifact(t *testing.T) {
+	registry := session.NewRegistry(t.TempDir())
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Browser Screenshot",
+		PermissionMode: policy.ReadOnly,
+	})
+	runner := New(registry, nil).WithBrowser(&stubBrowserCore{})
+
+	openTask, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Open tab",
+		Kind:  KindBrowserOpen,
+		Input: `{"url":"http://localhost:3000"}`,
+	})
+	require.True(t, ok)
+	_, err := runner.RunTask(context.Background(), thread.ID, openTask.ID)
+	require.NoError(t, err)
+
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Screenshot",
+		Kind:  KindBrowserScreenshot,
+		Input: `{"tabId":"browser-tab-1"}`,
+	})
+	require.True(t, ok)
+
+	result, err := runner.RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "browser screenshot captured:")
+
+	artifacts, ok := registry.Artifacts(thread.ID)
+	require.True(t, ok)
+	require.Len(t, artifacts, 1)
+	require.Equal(t, "browser.screenshot", artifacts[0].Kind)
+	require.FileExists(t, artifacts[0].Path)
+}
+
+func TestRunnerFailsBrowserOpenForBadURL(t *testing.T) {
+	registry := session.NewRegistry(t.TempDir())
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Browser Bad URL",
+		PermissionMode: policy.ReadOnly,
+	})
+	runner := New(registry, nil).WithBrowser(&stubBrowserCore{})
+
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Open disallowed URL",
+		Kind:  KindBrowserOpen,
+		Input: `{"url":"https://example.com"}`,
+	})
+	require.True(t, ok)
+
+	result, err := runner.RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", result.Status)
+	require.Contains(t, result.ResultSummary, browser.ErrURLNotAllowed.Error())
+
+	toolCalls, ok := registry.ToolCalls(thread.ID)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 2)
+	require.Equal(t, "running", toolCalls[0].Status)
+	require.Equal(t, "failed", toolCalls[1].Status)
+	require.Contains(t, toolCalls[1].Summary, browser.ErrURLNotAllowed.Error())
+}
+
+func TestRunnerFailsBrowserTaskForMissingTab(t *testing.T) {
+	registry := session.NewRegistry(t.TempDir())
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Browser Missing Tab",
+		PermissionMode: policy.ReadOnly,
+	})
+	runner := New(registry, nil).WithBrowser(&stubBrowserCore{})
+
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Reload missing tab",
+		Kind:  KindBrowserReload,
+		Input: `{"tabId":"browser-tab-404"}`,
+	})
+	require.True(t, ok)
+
+	result, err := runner.RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", result.Status)
+	require.Contains(t, result.ResultSummary, browser.ErrTabNotFound.Error())
+
+	toolCalls, ok := registry.ToolCalls(thread.ID)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 2)
+	require.Equal(t, "running", toolCalls[0].Status)
+	require.Equal(t, "failed", toolCalls[1].Status)
+	require.Contains(t, toolCalls[1].Summary, browser.ErrTabNotFound.Error())
 }
 
 func TestRunnerAllowsReadToolForAskUserMode(t *testing.T) {
@@ -707,6 +1054,55 @@ func TestRunnerExecutesAgentRunWithReadAndRespond(t *testing.T) {
 	require.NotEmpty(t, messages)
 	require.Equal(t, "assistant", messages[len(messages)-1].Role)
 	require.Equal(t, "README says hello agent.", messages[len(messages)-1].Content)
+}
+
+func TestRunnerExecutesAgentRunWithBrowserSequence(t *testing.T) {
+	registry := session.NewRegistry(t.TempDir())
+	thread := registry.CreateThread(session.CreateThreadInput{
+		Name:           "Agent Browser",
+		PermissionMode: policy.ReadOnly,
+	})
+	task, ok := registry.CreateTask(thread.ID, session.CreateTaskInput{
+		Title: "Agent browser run",
+		Kind:  KindAgentRun,
+		Input: `{"goal":"Open the local preview in the browser, type into the form, extract the result, capture a screenshot, then answer","maxSteps":6}`,
+	})
+	require.True(t, ok)
+
+	models := &scriptedModelExecutor{
+		results: []provider.ResponseResult{
+			{OutputText: `{"type":"browser_open","url":"http://127.0.0.1:3000","reasoningSummary":"Open the local preview"}`},
+			{OutputText: `{"type":"browser_type","tabId":"browser-tab-1","selector":"[data-testid=\"name\"]","text":"browser","reasoningSummary":"Fill the input"}`},
+			{OutputText: `{"type":"browser_extract","tabId":"browser-tab-1","selector":"[data-testid=\"result\"]","reasoningSummary":"Read the result"}`},
+			{OutputText: `{"type":"browser_screenshot","tabId":"browser-tab-1","reasoningSummary":"Capture a screenshot"}`},
+			{OutputText: `{"type":"respond","response":"Browser workflow complete.","reasoningSummary":"Done"}`},
+		},
+	}
+
+	runner := New(registry, models).WithBrowser(&stubBrowserCore{})
+	result, err := runner.RunTask(context.Background(), thread.ID, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Contains(t, result.ResultSummary, "agent completed")
+
+	tasks, ok := registry.Tasks(thread.ID)
+	require.True(t, ok)
+	require.Len(t, tasks, 5)
+	require.Equal(t, KindBrowserOpen, tasks[1].Kind)
+	require.Equal(t, KindBrowserType, tasks[2].Kind)
+	require.Equal(t, KindBrowserExtract, tasks[3].Kind)
+	require.Equal(t, KindBrowserScreenshot, tasks[4].Kind)
+	require.Equal(t, task.ID, tasks[4].ParentTaskID)
+
+	artifacts, ok := registry.Artifacts(thread.ID)
+	require.True(t, ok)
+	require.Len(t, artifacts, 1)
+	require.Equal(t, "browser.screenshot", artifacts[0].Kind)
+
+	messages, ok := registry.Messages(thread.ID)
+	require.True(t, ok)
+	require.NotEmpty(t, messages)
+	require.Equal(t, "Browser workflow complete.", messages[len(messages)-1].Content)
 }
 
 func TestRunnerExecutesAgentRunWithSecondBatchReadTools(t *testing.T) {
@@ -1221,7 +1617,7 @@ func TestBuildAgentPromptGuidesSecondBatchReadTools(t *testing.T) {
 		CurrentStepTitle: "Filter matching files",
 	})
 
-	require.Contains(t, prompt, "Allowed actions: respond, read_file, list_files, stat_file, read_files_batch, list_files_filtered, search_text, search_text_detailed, apply_patch.")
+	require.Contains(t, prompt, "Allowed actions: respond, read_file, list_files, stat_file, read_files_batch, list_files_filtered, search_text, search_text_detailed, apply_patch, browser_open, browser_state, browser_click, browser_type, browser_extract, browser_screenshot.")
 	require.Contains(t, prompt, "use stat_file for one file's existence or metadata")
 	require.Contains(t, prompt, "read_files_batch for multiple text files")
 	require.Contains(t, prompt, "list_files_filtered for directory filtering by pattern")
