@@ -122,6 +122,15 @@
 - `vercel-react-best-practices`
 - `vite`
 
+Current first promoted CC batch:
+
+- `breakdown-epic-arch`
+- `breakdown-epic-pm`
+- `breakdown-feature-prd`
+- `create-implementation-plan`
+- `tailwindcss`
+- `vite`
+
 #### Needs-Trim: CC
 
 - `agent-browser`
