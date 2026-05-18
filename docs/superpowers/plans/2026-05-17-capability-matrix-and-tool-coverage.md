@@ -130,3 +130,10 @@
 1. Decide whether to extend the current browser verified baseline beyond the current allowlist-backed managed-authenticated / multi-target public-read-only scope into broader arbitrary authenticated or public-web compatibility.
 2. Decide whether to extend the current verified MCP baseline beyond the current stdio multi-server execution lane into broader arbitrary third-party compatibility.
 3. Decide whether to extend the current per-skill static capability baseline into representative half-dynamic skill verification.
+
+## 10. `gstack` Governance Closeout
+
+- The `gstack` copied-skill split lane is closed for the current baseline.
+- Promoted `gstack` split skills are limited to the existing runtime-visible `cc` copied packages already present in `internal/core/skill/catalog/cc`.
+- `browse` is explicitly blocked as a runtime-heavy surface that does not currently collapse into a minimal project-local copied package.
+- Remaining `gstack` directory skills are treated as suite-only / long-term defer workflow surfaces, not pending runtime-visible promotions.

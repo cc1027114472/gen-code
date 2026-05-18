@@ -346,6 +346,9 @@ func TestLocalSkillCatalogUsesProjectLocalCopiedSkills(t *testing.T) {
 	if _, ok := found["cc:gstack"]; ok {
 		t.Fatal("expected deferred gstack suite to stay out of the runtime-visible fallback inventory")
 	}
+	if _, ok := found["cc:browse"]; ok {
+		t.Fatal("expected blocked gstack browse surface to stay out of the runtime-visible fallback inventory")
+	}
 }
 
 func TestDesktopFallbackPersistsAcrossAppRestart(t *testing.T) {

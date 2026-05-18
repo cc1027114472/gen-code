@@ -15,6 +15,7 @@ This note defines the minimum governance boundary for grouped skills in `gen-cod
 - `localization checked = true` only means the copied skill under `internal/core/skill/catalog` has passed the current 1:1 Chinese-localization audit baseline
 - `isolation status` only means the skill still sits within the expected `common` / `codex` / `cc` grouping boundary
 - the project-local copied catalog under `gen-code/internal/core/skill/catalog` is the only governance truth for copied `codex` / `cc` skills; sibling source directories are reference-only
+- the remaining staged `gstack` suite under `internal/core/skill/imports/cc/gstack` is governance evidence only: promoted split skills are already copied into `catalog/cc`, `browse` is explicitly blocked, and the rest are suite-only / long-term defer surfaces rather than pending runtime-visible skills
 
 ## CLI Baseline
 

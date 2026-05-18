@@ -222,10 +222,52 @@ Candidate sub-skills:
 - `careful`, `freeze`, `unfreeze`, and `guard` have already been extracted into standalone `cc` copied packages and promoted through the normal skill lane
 - `qa` and `review` have now also been extracted into standalone `cc` copied packages with their retained local markdown assets promoted alongside them
 
+Promoted and closed:
+
+- `careful`
+- `freeze`
+- `unfreeze`
+- `guard`
+- `setup-browser-cookies`
+- `connect-chrome`
+- `setup-deploy`
+- `qa`
+- `review`
+- `ship`
+- `land-and-deploy`
+
 Non-promotable suite-only surfaces:
 
 - telemetry, upgrade, routing, global-discover, repo-mode, learn/logging, and browser-daemon style flows that coordinate multiple skills or the broader suite runtime
 - shared build, compile, browser server, and extension-host flows that support the suite as a product rather than a single governed copied skill
+
+Suite-only / long-term defer surfaces:
+
+- `autoplan`
+- `benchmark`
+- `canary`
+- `codex`
+- `cso`
+- `design-consultation`
+- `design-html`
+- `design-review`
+- `design-shotgun`
+- `document-release`
+- `gstack-upgrade`
+- `investigate`
+- `learn`
+- `office-hours`
+- `plan-ceo-review`
+- `plan-design-review`
+- `plan-eng-review`
+- `qa-only`
+- `retro`
+
+Why these remain suite-only:
+
+- each one is a workflow-heavy orchestration surface rather than a minimal copied skill package
+- they continue to lean on shared gstack preamble, suite routing, learnings, review loops, browser runtime, or broader orchestration semantics
+- they are no longer tracked as pending promotion backlog in the current product baseline
 
 Stable blocker labels for future `gstack` split work:
 
@@ -251,7 +293,8 @@ Stable blocker labels for future `gstack` split work:
 
 Future split entry rule:
 
-- no further single-skill promotion work remains in the current `gstack` lane until `browse` gets a new suite-to-subskill design that can establish a true minimal project-local runtime package
+- no further single-skill promotion work remains in the current `gstack` lane
+- future work, if any, starts from a brand-new redesign decision for `browse` or keeps the remaining suite surfaces in long-term defer
 
 ## Current Boundaries
 

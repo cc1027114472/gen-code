@@ -563,6 +563,32 @@ func TestBrowseRemainsBlockedAsRuntimeHeavyGstackSurface(t *testing.T) {
 	_, err := os.Stat(filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", "browse", "SKILL.md"))
 	require.Error(t, err, "expected blocked browse skill to stay out of runtime-visible catalog")
 	require.True(t, os.IsNotExist(err), "expected blocked browse catalog path to be absent, got: %v", err)
+
+	for _, id := range []string{
+		"autoplan",
+		"benchmark",
+		"canary",
+		"codex",
+		"cso",
+		"design-consultation",
+		"design-html",
+		"design-review",
+		"design-shotgun",
+		"document-release",
+		"gstack-upgrade",
+		"investigate",
+		"learn",
+		"office-hours",
+		"plan-ceo-review",
+		"plan-design-review",
+		"plan-eng-review",
+		"qa-only",
+		"retro",
+	} {
+		_, err := os.Stat(filepath.Join(workspace, "internal", "core", "skill", "catalog", "cc", id, "SKILL.md"))
+		require.Error(t, err, "expected suite-only gstack surface %s to stay out of runtime-visible catalog", id)
+		require.True(t, os.IsNotExist(err), "expected suite-only gstack surface %s to be absent from catalog", id)
+	}
 }
 
 func TestNewSkillResolverPreservesGroupingSemantics(t *testing.T) {

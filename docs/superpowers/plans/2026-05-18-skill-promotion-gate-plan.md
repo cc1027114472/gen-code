@@ -201,6 +201,34 @@ Stable classification:
 - Non-promotable suite-only surfaces:
   - telemetry, upgrade, routing, global-discover, repo-mode, learn/logging, browser-daemon, and related cross-skill orchestration flows
 
+Final suite-only / long-term defer surfaces:
+
+- `autoplan`
+- `benchmark`
+- `canary`
+- `codex`
+- `cso`
+- `design-consultation`
+- `design-html`
+- `design-review`
+- `design-shotgun`
+- `document-release`
+- `gstack-upgrade`
+- `investigate`
+- `learn`
+- `office-hours`
+- `plan-ceo-review`
+- `plan-design-review`
+- `plan-eng-review`
+- `qa-only`
+- `retro`
+
+Final meaning:
+
+- these remaining directories are workflow-heavy suite surfaces, not pending copied-skill promotions
+- they stay outside `catalog/cc` in the current baseline
+- they should not be tracked as an open split backlog after this closeout
+
 Future `gstack` sub-skill eligibility rules:
 
 - must be a project-local self-contained copied package
@@ -241,7 +269,8 @@ Current product behavior lock:
 Next execution entry:
 
 - no further `gstack` single-skill promotion candidate remains open in the current baseline
-- any future work must start with a redesigned runtime-truth strategy for `browse`, or keep the entire remaining suite in long-term defer
+- the `gstack` governance lane is decision-complete and closed for the current product version
+- any future work would require a new top-level redesign decision, not another promotion batch
 
 ### Evidence behind current classification
 
