@@ -72,7 +72,7 @@
 | Shared runtime exposure of skill groups | verified | runtime status, discovery, `/api/skills`, `skills list` output | Inventory fields and grouped governance summaries are visible for verification. |
 | Grouped skill import audit against `AGENTS.md` localization and isolation rules | verified | `internal/core/runtime/discovery.go`, `desktop/app.go`, `cmd/cli/main.go`, governance tests | Current baseline audits project-local copied skills under `internal/core/skill/catalog` for `localization checked` and `isolation status` without claiming per-skill capability acceptance. |
 | Full 1:1 Chinese localization audit for copied skills | verified | `internal/core/runtime/discovery.go`, `desktop/app.go`, governance tests, baseline docs | `localizationChecked` now reflects an explicit 1:1 Chinese-localization audit conclusion for copied skills in `gen-code/internal/core/skill/catalog` instead of a loose heuristic. |
-| Capability-level verification for each grouped skill | verified | `internal/core/skill/capability.go`, `pkg/skillaudit/capability.go`, `internal/core/runtime/discovery.go`, `cmd/cli/main.go`, `desktop/app.go`, capability-focused governance tests | Verified as a document-asset baseline for project-local copied skills under `internal/core/skill/catalog`; this does not imply a runtime skill execution engine exists. |
+| Capability-level verification for each grouped skill | verified | `internal/core/skill/capability.go`, `pkg/skillaudit/capability.go`, `internal/core/runtime/discovery.go`, `cmd/cli/main.go`, `desktop/app.go`, capability-focused governance tests | Verified as a per-skill static capability baseline for project-local copied skills under `internal/core/skill/catalog`: main document exists, metadata parses, local references resolve, and the copied skill retains a minimal reusable capability structure. This does not imply a runtime skill execution engine exists. |
 
 ### Skill Governance Boundary
 
@@ -108,4 +108,5 @@
 ## 9. Highest-Priority Remaining Gaps
 
 1. Decide whether to extend the current verified MCP baseline beyond the current stdio multi-server execution lane into broader arbitrary third-party compatibility.
-2. Define how and when to add capability-level verification for each grouped skill.
+2. Decide whether to extend the current per-skill static capability baseline into representative half-dynamic skill verification.
+3. Decide whether to introduce a real skill execution lane instead of keeping capability verification static-only.
